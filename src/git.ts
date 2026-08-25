@@ -44,6 +44,10 @@ export async function commitAndPush(opts: CommitAndPushOptions): Promise<void> {
   await git(["commit", "-m", commitMessage], cwd);
 
   if (push) {
-    await git(["push", "-u", "origin", branchName], cwd);
+    // --force: the ai/* namespace is disposable and AI-owned (never main),
+    // so if a prior escalated run already pushed this same branch name (e.g.
+    // the issue was re-labeled to retry), the latest attempt should replace
+    // it rather than fail as a non-fast-forward push.
+    await git(["push", "--force", "-u", "origin", branchName], cwd);
   }
 }

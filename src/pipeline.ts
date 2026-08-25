@@ -8,7 +8,7 @@ import type { GithubAdapter } from "./github/index.js";
 import type { IssueTask, QaAttempt } from "./types.js";
 
 export interface PipelineResult {
-  status: "pushed" | "escalated-specs" | "escalated-qa";
+  status: "pushed" | "escalated-specs" | "escalated-qa" | "errored";
   branchName?: string;
 }
 
@@ -19,7 +19,39 @@ export interface PipelineOptions {
   push: boolean;
 }
 
+const MAX_COMMENT_CHARS = 50_000; // GitHub's limit is 65536; leave headroom.
+
+function truncate(text: string): string {
+  if (text.length <= MAX_COMMENT_CHARS) return text;
+  return `${text.slice(0, MAX_COMMENT_CHARS)}\n\n… (truncated)`;
+}
+
 export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult> {
+  const { issue, repoDir, github, push } = opts;
+
+  try {
+    return await runPipelineInner(opts);
+  } catch (error) {
+    console.error("Pipeline crashed:", error);
+    try {
+      await github.postComment(
+        issue.number,
+        [
+          "**AI pipeline stopped: an unexpected error occurred.**",
+          "",
+          "No further detail is posted here to avoid leaking internal error content; check the workflow run log.",
+          "",
+          "A human needs to review and take over from here.",
+        ].join("\n"),
+      );
+    } catch (commentError) {
+      console.error("Failed to post crash comment:", commentError);
+    }
+    return { status: "errored" };
+  }
+}
+
+async function runPipelineInner(opts: PipelineOptions): Promise<PipelineResult> {
   const { issue, repoDir, github, push } = opts;
 
   // --- Loop 1: Specs & Arch <-> Orchestrator review ---
@@ -45,10 +77,10 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult
           `${config.maxSpecAttempts} attempts.**`,
         "",
         "Last proposal:",
-        spec ?? "(none)",
+        truncate(spec ?? "(none)"),
         "",
         "Last reviewer feedback:",
-        feedback ?? "(none)",
+        truncate(feedback ?? "(none)"),
         "",
         "A human needs to clarify the issue or take over from here.",
       ].join("\n"),
@@ -72,7 +104,16 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult
       passed = true;
       break;
     }
-    qaFeedback = `${qa.summary}\nFailed checks: ${(qa.failedChecks ?? []).join(", ")}`;
+    const uncovered = (qa.acceptanceCriteria ?? [])
+      .filter((ac) => !ac.covered)
+      .map((ac) => `"${ac.criterion}" (${ac.evidence || "no evidence"})`);
+    qaFeedback = [
+      qa.summary,
+      `Failed checks: ${(qa.failedChecks ?? []).join(", ") || "(none listed)"}`,
+      uncovered.length ? `Uncovered acceptance criteria: ${uncovered.join("; ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   const commitMessage = passed
@@ -90,8 +131,8 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult
         `A work-in-progress branch \`${branchName}\` was pushed for inspection.`,
         "",
         "QA history:",
-        ...qaHistory.map(
-          (q) => `- attempt ${q.attempt}: ${q.verdict} — ${q.summary}`,
+        truncate(
+          qaHistory.map((q) => `- attempt ${q.attempt}: ${q.verdict} — ${q.summary}`).join("\n"),
         ),
         "",
         "A human needs to review and finish this from here.",

@@ -18,7 +18,11 @@ export async function runTextQuery(prompt: string, options: Options): Promise<Te
     }
     return { ok: false, error: "no result message received" };
   } catch (error) {
-    return { ok: false, error: String(error) };
+    // Log full detail server-side only — the message below can end up in a
+    // GitHub comment, so it must never carry raw exception text (stack
+    // frames, paths, etc.).
+    console.error("SDK query() threw:", error);
+    return { ok: false, error: "SDK call failed (see workflow run log for details)" };
   }
 }
 
@@ -52,6 +56,10 @@ export async function runStructuredQuery<T>(
     }
     return { ok: false, error: "no result message received" };
   } catch (error) {
-    return { ok: false, error: String(error) };
+    // Log full detail server-side only — the message below can end up in a
+    // GitHub comment, so it must never carry raw exception text (stack
+    // frames, paths, etc.).
+    console.error("SDK query() threw:", error);
+    return { ok: false, error: "SDK call failed (see workflow run log for details)" };
   }
 }

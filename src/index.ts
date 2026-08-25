@@ -23,7 +23,16 @@ function parseArgs(argv: string[]): { issueFile?: string; dryRun: boolean } {
 async function loadIssue(issueFile?: string): Promise<IssueTask> {
   if (issueFile) {
     const raw = await readFile(issueFile, "utf-8");
-    return JSON.parse(raw) as IssueTask;
+    const parsed = JSON.parse(raw) as Partial<IssueTask>;
+    if (!parsed.number || !parsed.title) {
+      throw new Error(`Issue file ${issueFile} is missing required "number"/"title" fields.`);
+    }
+    return {
+      number: parsed.number,
+      title: parsed.title,
+      body: parsed.body ?? "",
+      repoFullName: parsed.repoFullName ?? "",
+    };
   }
 
   const number = Number(process.env.ISSUE_NUMBER);

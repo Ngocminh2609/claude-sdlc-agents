@@ -1,19 +1,38 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config } from "../config.js";
+import { config, networkExfilBashBlocklist } from "../config.js";
 import type { IssueTask, QaVerdict } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the QA/Tester agent in an automated SDLC pipeline.
 Independently verify the implementation against the ORIGINAL issue, not the
-developer's claims. Run the test suite, check edge cases and acceptance
-criteria implied by the issue, and look for anything the implementation
-missed. You cannot edit files — only report what you find.`;
+developer's claims. Run the test suite, check edge cases, and look for
+anything the implementation missed. You cannot edit files — only report what
+you find.
+
+Extract every acceptance criterion stated or implied by the issue and list
+each one in "acceptanceCriteria" with concrete evidence (a specific passing
+test name, or a manual reproduction step you ran) — not the developer's
+say-so. A criterion with no concrete covering evidence must be marked
+covered=false. The overall verdict can only be "pass" if every acceptance
+criterion is covered=true and the test suite passes; otherwise "fail".`;
 
 const QA_SCHEMA = {
   type: "object",
   properties: {
     verdict: { type: "string", enum: ["pass", "fail"] },
     summary: { type: "string" },
+    acceptanceCriteria: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          criterion: { type: "string" },
+          covered: { type: "boolean" },
+          evidence: { type: "string" },
+        },
+        required: ["criterion", "covered", "evidence"],
+      },
+    },
     failedChecks: { type: "array", items: { type: "string" } },
   },
   required: ["verdict", "summary"],
@@ -25,7 +44,7 @@ export async function runQa(issue: IssueTask, proposal: string): Promise<QaVerdi
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Bash", "Glob", "Grep"],
-    disallowedTools: ["Write", "Edit"],
+    disallowedTools: ["Write", "Edit", ...networkExfilBashBlocklist],
     model: config.model,
     maxTurns: config.maxTurns.qa,
   };

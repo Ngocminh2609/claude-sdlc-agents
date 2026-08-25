@@ -11,9 +11,16 @@ export interface ReviewVerdict {
   concerns?: string[];
 }
 
+export interface AcceptanceCriterionCheck {
+  criterion: string;
+  covered: boolean;
+  evidence: string;
+}
+
 export interface QaVerdict {
   verdict: "pass" | "fail";
   summary: string;
+  acceptanceCriteria?: AcceptanceCriterionCheck[];
   failedChecks?: string[];
 }
 
