@@ -25,13 +25,15 @@ This repo calls the Agent SDK's `query()` directly (see `src/stages/`), rather t
 
 ## Setup
 
-1. Add the `ANTHROPIC_API_KEY` repository secret (Settings → Secrets and variables → Actions).
+1. Add an authentication secret (Settings → Secrets and variables → Actions → New repository secret) — one of:
+   - `ANTHROPIC_API_KEY`: pay-per-token, from the [Claude Console](https://platform.claude.com/) (needs its own billing setup, separate from a claude.ai subscription).
+   - `CLAUDE_CODE_OAUTH_TOKEN`: uses a Claude Pro/Max/Team/Enterprise subscription instead — generate it by running `claude setup-token` in a real interactive terminal (it opens a browser to log into claude.ai, then prints the token). Only one of the two secrets is needed; the workflow passes both through and the SDK uses whichever is present.
 2. Confirm Settings → Actions → General → **Workflow permissions** allows read/write (some orgs default to read-only, which overrides the `permissions:` block in the workflow file).
 3. Create a label named `ai-auto`.
 4. (Recommended) Enable branch protection on `main` (require PR review, disallow force-push). Don't extend the protection pattern to `ai/*`, since the pipeline needs to push those branches freely.
 5. (Recommended) Set a spend limit in GitHub Actions billing and in the Anthropic Console, as an account-level backstop against runaway cost.
 
-**You do not need to install the Claude GitHub App.** That app is only required by the `claude-code-action` wrapper and related first-party features (Code Review, web auto-fix). This repo authenticates directly with `ANTHROPIC_API_KEY` and the default `GITHUB_TOKEN`.
+**You do not need to install the Claude GitHub App.** That app is only required by the `claude-code-action` wrapper and related first-party features (Code Review, web auto-fix). This repo authenticates directly with `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, plus the default `GITHUB_TOKEN`.
 
 ## Usage
 
