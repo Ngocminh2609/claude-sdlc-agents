@@ -77,4 +77,40 @@ describe("runPipeline", () => {
     expect(commitAndPush).toHaveBeenCalledTimes(1);
     expect(github.postComment).toHaveBeenCalledTimes(1);
   });
+
+  it("feeds uncovered acceptance criteria back into the next coding attempt", async () => {
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    runCoding.mockResolvedValue("implemented");
+    runQa
+      .mockResolvedValueOnce({
+        verdict: "fail",
+        summary: "AC2 not covered",
+        acceptanceCriteria: [
+          { criterion: "rejects invalid input", covered: true, evidence: "test_rejects_invalid" },
+          { criterion: "returns 429 on rate limit", covered: false, evidence: "no test found" },
+        ],
+      })
+      .mockResolvedValueOnce({ verdict: "pass", summary: "all good" });
+    const github = fakeGithub();
+
+    await runPipeline({ issue, repoDir: "/tmp/repo", github, push: true });
+
+    expect(runCoding).toHaveBeenCalledTimes(2);
+    const secondCallFeedback = runCoding.mock.calls[1][2];
+    expect(secondCallFeedback).toContain("returns 429 on rate limit");
+    expect(secondCallFeedback).toContain("no test found");
+  });
+
+  it("catches an unexpected throw, posts a sanitized comment, and returns errored instead of crashing", async () => {
+    reviewSpecs.mockRejectedValue(new Error("ECONNRESET at /home/runner/secret/path.ts:42"));
+    const github = fakeGithub();
+
+    const result = await runPipeline({ issue, repoDir: "/tmp/repo", github, push: true });
+
+    expect(result.status).toBe("errored");
+    expect(github.postComment).toHaveBeenCalledTimes(1);
+    const [, body] = github.postComment.mock.calls[0];
+    expect(body).not.toContain("ECONNRESET");
+    expect(body).not.toContain("secret/path.ts");
+  });
 });
