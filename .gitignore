@@ -4,4 +4,10 @@ dist/
 *.log
 .DS_Store
 coverage/
-.claude/agent-memory/
+
+# Per-machine, not source: keep the folder tracked (with a README explaining
+# why) but ignore its actual generated contents.
+.claude/agent-memory/*
+!.claude/agent-memory/README.md
+runs/*
+!runs/README.md
