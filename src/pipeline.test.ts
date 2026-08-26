@@ -1,116 +1,98 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { IssueTask } from "./types.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SpecInput } from "./types.js";
 
 const runSpecsArch = vi.fn();
 const reviewSpecs = vi.fn();
+const breakDownTasks = vi.fn();
 const runCoding = vi.fn();
-const runQa = vi.fn();
-const createBranch = vi.fn();
-const commitAndPush = vi.fn();
-const branchNameFor = vi.fn(() => "ai/issue-1-test");
+const runE2eTest = vi.fn();
 
 vi.mock("./stages/specs-arch.js", () => ({ runSpecsArch }));
 vi.mock("./stages/orchestrator-review.js", () => ({ reviewSpecs }));
+vi.mock("./stages/task-breakdown.js", () => ({ breakDownTasks }));
 vi.mock("./stages/coding.js", () => ({ runCoding }));
-vi.mock("./stages/qa.js", () => ({ runQa }));
-vi.mock("./git.js", () => ({ createBranch, commitAndPush, branchNameFor }));
+vi.mock("./stages/e2e-test.js", () => ({ runE2eTest }));
 
 const { runPipeline } = await import("./pipeline.js");
 
-const issue: IssueTask = {
-  number: 1,
-  title: "Test issue",
-  body: "do the thing",
-  repoFullName: "org/repo",
-};
-
-function fakeGithub() {
-  return { postComment: vi.fn() };
-}
+const spec: SpecInput = { specMarkdown: "do the thing", projectPath: "/tmp/project" };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  branchNameFor.mockReturnValue("ai/issue-1-test");
   runSpecsArch.mockResolvedValue("a proposal");
+  breakDownTasks.mockResolvedValue({ tasks: [{ id: "task-1", description: "do it" }] });
 });
 
 describe("runPipeline", () => {
   it("escalates when the orchestrator never approves the proposal", async () => {
     reviewSpecs.mockResolvedValue({ decision: "reject", feedback: "not detailed enough" });
-    const github = fakeGithub();
 
-    const result = await runPipeline({ issue, repoDir: "/tmp/repo", github, push: true });
+    const result = await runPipeline({ spec });
 
     expect(result.status).toBe("escalated-specs");
     expect(reviewSpecs).toHaveBeenCalledTimes(3);
-    expect(createBranch).not.toHaveBeenCalled();
-    expect(github.postComment).toHaveBeenCalledTimes(1);
+    expect(breakDownTasks).not.toHaveBeenCalled();
+    expect(runCoding).not.toHaveBeenCalled();
   });
 
-  it("pushes when the design is approved and QA passes on the first attempt", async () => {
+  it("runs coding once per task and finishes when E2E passes on the first attempt", async () => {
     reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    breakDownTasks.mockResolvedValue({
+      tasks: [
+        { id: "task-1", description: "endpoint A" },
+        { id: "task-2", description: "endpoint B" },
+      ],
+    });
     runCoding.mockResolvedValue("implemented");
-    runQa.mockResolvedValue({ verdict: "pass", summary: "all good" });
-    const github = fakeGithub();
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
 
-    const result = await runPipeline({ issue, repoDir: "/tmp/repo", github, push: true });
+    const result = await runPipeline({ spec });
 
-    expect(result.status).toBe("pushed");
-    expect(result.branchName).toBe("ai/issue-1-test");
-    expect(runCoding).toHaveBeenCalledTimes(1);
-    expect(runQa).toHaveBeenCalledTimes(1);
-    expect(commitAndPush).toHaveBeenCalledWith(
-      expect.objectContaining({ branchName: "ai/issue-1-test", push: true }),
-    );
+    expect(result.status).toBe("done");
+    expect(runCoding).toHaveBeenCalledTimes(2);
+    expect(runE2eTest).toHaveBeenCalledTimes(1);
   });
 
-  it("escalates but still pushes a WIP branch when QA never passes", async () => {
+  it("escalates after E2E never passes, without discarding the code already on disk", async () => {
     reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
     runCoding.mockResolvedValue("implemented");
-    runQa.mockResolvedValue({ verdict: "fail", summary: "tests still failing", failedChecks: ["npm test"] });
-    const github = fakeGithub();
+    runE2eTest.mockResolvedValue({ verdict: "fail", summary: "still broken", failedScenarios: ["login flow"] });
 
-    const result = await runPipeline({ issue, repoDir: "/tmp/repo", github, push: true });
+    const result = await runPipeline({ spec });
 
-    expect(result.status).toBe("escalated-qa");
-    expect(runQa).toHaveBeenCalledTimes(3);
-    expect(commitAndPush).toHaveBeenCalledTimes(1);
-    expect(github.postComment).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("escalated-e2e");
+    expect(runE2eTest).toHaveBeenCalledTimes(3);
+    expect(runCoding).toHaveBeenCalledTimes(3);
   });
 
   it("feeds uncovered acceptance criteria back into the next coding attempt", async () => {
     reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
     runCoding.mockResolvedValue("implemented");
-    runQa
+    runE2eTest
       .mockResolvedValueOnce({
         verdict: "fail",
         summary: "AC2 not covered",
         acceptanceCriteria: [
-          { criterion: "rejects invalid input", covered: true, evidence: "test_rejects_invalid" },
-          { criterion: "returns 429 on rate limit", covered: false, evidence: "no test found" },
+          { criterion: "shows a success toast", covered: false, evidence: "no test found" },
         ],
       })
       .mockResolvedValueOnce({ verdict: "pass", summary: "all good" });
-    const github = fakeGithub();
 
-    await runPipeline({ issue, repoDir: "/tmp/repo", github, push: true });
+    await runPipeline({ spec });
 
     expect(runCoding).toHaveBeenCalledTimes(2);
     const secondCallFeedback = runCoding.mock.calls[1][2];
-    expect(secondCallFeedback).toContain("returns 429 on rate limit");
+    expect(secondCallFeedback).toContain("shows a success toast");
     expect(secondCallFeedback).toContain("no test found");
   });
 
-  it("catches an unexpected throw, posts a sanitized comment, and returns errored instead of crashing", async () => {
-    reviewSpecs.mockRejectedValue(new Error("ECONNRESET at /home/runner/secret/path.ts:42"));
-    const github = fakeGithub();
+  it("catches an unexpected throw and returns errored with a generic message", async () => {
+    reviewSpecs.mockRejectedValue(new Error("ECONNRESET at /home/user/secret/path.ts:42"));
 
-    const result = await runPipeline({ issue, repoDir: "/tmp/repo", github, push: true });
+    const result = await runPipeline({ spec });
 
     expect(result.status).toBe("errored");
-    expect(github.postComment).toHaveBeenCalledTimes(1);
-    const [, body] = github.postComment.mock.calls[0];
-    expect(body).not.toContain("ECONNRESET");
-    expect(body).not.toContain("secret/path.ts");
+    expect(result.message).not.toContain("ECONNRESET");
+    expect(result.message).not.toContain("secret/path.ts");
   });
 });

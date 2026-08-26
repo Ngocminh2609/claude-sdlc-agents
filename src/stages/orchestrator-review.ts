@@ -1,11 +1,11 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
-import type { IssueTask, ReviewVerdict } from "../types.js";
+import type { ReviewVerdict, SpecInput } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Orchestrator (tech lead) in an automated SDLC pipeline.
-Review the proposed design against the original issue. Approve only if the
-proposal fully addresses the issue and has no significant risk. Otherwise
+Review the proposed design against the original spec. Approve only if the
+proposal fully addresses the spec and has no significant risk. Otherwise
 reject with specific, actionable feedback the Specs & Arch agent can act on.`;
 
 const REVIEW_SCHEMA = {
@@ -18,7 +18,7 @@ const REVIEW_SCHEMA = {
   required: ["decision", "feedback"],
 };
 
-export async function reviewSpecs(issue: IssueTask, proposal: string): Promise<ReviewVerdict> {
+export async function reviewSpecs(spec: SpecInput, proposal: string): Promise<ReviewVerdict> {
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
@@ -27,9 +27,8 @@ export async function reviewSpecs(issue: IssueTask, proposal: string): Promise<R
   };
 
   const prompt = [
-    `Issue #${issue.number}: ${issue.title}`,
-    "",
-    issue.body,
+    "--- Spec ---",
+    spec.specMarkdown,
     "",
     "--- Proposed design ---",
     proposal,

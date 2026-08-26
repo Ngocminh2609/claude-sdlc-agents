@@ -1,77 +1,80 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import process from "node:process";
 import { runPipeline } from "./pipeline.js";
-import { getGithubAdapter } from "./github/index.js";
-import type { IssueTask } from "./types.js";
+import { RunLogger } from "./run-log.js";
+import type { DbInfo, SpecInput } from "./types.js";
 
-function parseArgs(argv: string[]): { issueFile?: string; dryRun: boolean } {
-  let issueFile: string | undefined;
-  let dryRun = process.env.DRY_RUN === "true";
-
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--issue-file") {
-      issueFile = argv[i + 1];
-      i++;
-    } else if (argv[i] === "--dry-run") {
-      dryRun = true;
-    }
-  }
-
-  return { issueFile, dryRun };
+interface Args {
+  specPath: string;
+  projectPath: string;
+  dbInfo?: DbInfo;
 }
 
-async function loadIssue(issueFile?: string): Promise<IssueTask> {
-  if (issueFile) {
-    const raw = await readFile(issueFile, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<IssueTask>;
-    if (!parsed.number || !parsed.title) {
-      throw new Error(`Issue file ${issueFile} is missing required "number"/"title" fields.`);
+function parseArgs(argv: string[]): Args {
+  let specPath: string | undefined;
+  let projectPath: string | undefined;
+  let dbInfo: DbInfo | undefined;
+
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case "--spec":
+        specPath = argv[++i];
+        break;
+      case "--project":
+        projectPath = argv[++i];
+        break;
+      case "--db-connection":
+        dbInfo = { kind: "connection", value: argv[++i] };
+        break;
+      case "--db-schema":
+        dbInfo = { kind: "schema-file", value: argv[++i] };
+        break;
     }
-    return {
-      number: parsed.number,
-      title: parsed.title,
-      body: parsed.body ?? "",
-      repoFullName: parsed.repoFullName ?? "",
-    };
   }
 
-  const number = Number(process.env.ISSUE_NUMBER);
-  const title = process.env.ISSUE_TITLE ?? "";
-  const body = process.env.ISSUE_BODY ?? "";
-  const repoFullName = process.env.REPO_FULL_NAME ?? "";
-
-  if (!number || !title) {
+  if (!specPath || !projectPath) {
     throw new Error(
-      "Missing issue input: pass --issue-file <path> or set ISSUE_NUMBER/ISSUE_TITLE/ISSUE_BODY/REPO_FULL_NAME.",
+      "Usage: npm run pipeline -- --spec <path.md> --project <path> [--db-connection <string> | --db-schema <path>]",
     );
   }
 
-  return { number, title, body, repoFullName };
+  return { specPath, projectPath, dbInfo };
+}
+
+async function loadSpec(args: Args): Promise<SpecInput> {
+  const specMarkdown = await readFile(args.specPath, "utf-8");
+  const projectPath = path.resolve(args.projectPath);
+
+  let dbInfo = args.dbInfo;
+  if (dbInfo?.kind === "schema-file") {
+    const schemaContent = await readFile(dbInfo.value, "utf-8");
+    dbInfo = { kind: "schema-file", value: schemaContent };
+  }
+
+  return { specMarkdown, projectPath, dbInfo };
 }
 
 async function main(): Promise<void> {
-  const { issueFile, dryRun } = parseArgs(process.argv.slice(2));
-  const issue = await loadIssue(issueFile);
+  const args = parseArgs(process.argv.slice(2));
+  const spec = await loadSpec(args);
+  const logger = new RunLogger(spec, args.specPath);
 
-  const github = getGithubAdapter({
-    dryRun,
-    repoFullName: issue.repoFullName,
-    token: process.env.GITHUB_TOKEN,
-  });
+  process.chdir(spec.projectPath);
 
   const result = await runPipeline({
-    issue,
-    repoDir: process.cwd(),
-    github,
-    push: !dryRun,
+    spec,
+    logger,
+    onProgress: (message) => console.log(`[pipeline] ${message}`),
   });
 
-  console.log(`Pipeline finished with status: ${result.status}`);
-  if (result.branchName) {
-    console.log(`Branch: ${result.branchName}`);
+  console.log(`\nPipeline finished with status: ${result.status}`);
+  console.log(result.message);
+  if (result.logPath) {
+    console.log(`\nFull run log: ${result.logPath}`);
   }
 
-  if (result.status !== "pushed") {
+  if (result.status !== "done") {
     process.exitCode = 1;
   }
 }

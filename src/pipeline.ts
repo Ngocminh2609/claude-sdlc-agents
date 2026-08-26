@@ -1,67 +1,54 @@
 import { config } from "./config.js";
-import { branchNameFor, createBranch, commitAndPush } from "./git.js";
 import { runSpecsArch } from "./stages/specs-arch.js";
 import { reviewSpecs } from "./stages/orchestrator-review.js";
+import { breakDownTasks } from "./stages/task-breakdown.js";
 import { runCoding } from "./stages/coding.js";
-import { runQa } from "./stages/qa.js";
-import type { GithubAdapter } from "./github/index.js";
-import type { IssueTask, QaAttempt } from "./types.js";
+import { runE2eTest } from "./stages/e2e-test.js";
+import type { RunLogger } from "./run-log.js";
+import type { E2eAttempt, SpecInput } from "./types.js";
 
 export interface PipelineResult {
-  status: "pushed" | "escalated-specs" | "escalated-qa" | "errored";
-  branchName?: string;
+  status: "done" | "escalated-specs" | "escalated-e2e" | "errored";
+  message: string;
+  logPath?: string;
 }
 
 export interface PipelineOptions {
-  issue: IssueTask;
-  repoDir: string;
-  github: GithubAdapter;
-  push: boolean;
-}
-
-const MAX_COMMENT_CHARS = 50_000; // GitHub's limit is 65536; leave headroom.
-
-function truncate(text: string): string {
-  if (text.length <= MAX_COMMENT_CHARS) return text;
-  return `${text.slice(0, MAX_COMMENT_CHARS)}\n\n… (truncated)`;
+  spec: SpecInput;
+  onProgress?: (message: string) => void;
+  logger?: RunLogger;
 }
 
 export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult> {
-  const { issue, repoDir, github, push } = opts;
-
   try {
-    return await runPipelineInner(opts);
+    const result = await runPipelineInner(opts);
+    opts.logger?.finish(result.status, result.message);
+    const logPath = await opts.logger?.write();
+    return { ...result, logPath };
   } catch (error) {
     console.error("Pipeline crashed:", error);
-    try {
-      await github.postComment(
-        issue.number,
-        [
-          "**AI pipeline stopped: an unexpected error occurred.**",
-          "",
-          "No further detail is posted here to avoid leaking internal error content; check the workflow run log.",
-          "",
-          "A human needs to review and take over from here.",
-        ].join("\n"),
-      );
-    } catch (commentError) {
-      console.error("Failed to post crash comment:", commentError);
-    }
-    return { status: "errored" };
+    const message = "An unexpected error occurred. Check the console output above for details.";
+    opts.logger?.finish("errored", message);
+    const logPath = await opts.logger?.write();
+    return { status: "errored", message, logPath };
   }
 }
 
-async function runPipelineInner(opts: PipelineOptions): Promise<PipelineResult> {
-  const { issue, repoDir, github, push } = opts;
+async function runPipelineInner(opts: PipelineOptions): Promise<Omit<PipelineResult, "logPath">> {
+  const { spec, onProgress = () => {}, logger } = opts;
 
   // --- Loop 1: Specs & Arch <-> Orchestrator review ---
-  let spec: string | null = null;
+  let proposal: string | null = null;
   let feedback: string | undefined;
   let approved = false;
 
   for (let attempt = 1; attempt <= config.maxSpecAttempts; attempt++) {
-    spec = await runSpecsArch(issue, spec, feedback);
-    const review = await reviewSpecs(issue, spec);
+    onProgress(`Specs & Arch: attempt ${attempt}/${config.maxSpecAttempts}`);
+    proposal = await runSpecsArch(spec, proposal, feedback);
+    logger?.recordSpecsArch(attempt, proposal);
+    const review = await reviewSpecs(spec, proposal);
+    logger?.recordReview(attempt, review);
+    onProgress(`Orchestrator review: ${review.decision}`);
     if (review.decision === "approve") {
       approved = true;
       break;
@@ -70,85 +57,78 @@ async function runPipelineInner(opts: PipelineOptions): Promise<PipelineResult> 
   }
 
   if (!approved) {
-    await github.postComment(
-      issue.number,
-      [
-        "**AI pipeline stopped: design proposal not approved after " +
-          `${config.maxSpecAttempts} attempts.**`,
+    return {
+      status: "escalated-specs",
+      message: [
+        `Design proposal not approved after ${config.maxSpecAttempts} attempts.`,
         "",
         "Last proposal:",
-        truncate(spec ?? "(none)"),
+        proposal ?? "(none)",
         "",
         "Last reviewer feedback:",
-        truncate(feedback ?? "(none)"),
-        "",
-        "A human needs to clarify the issue or take over from here.",
+        feedback ?? "(none)",
       ].join("\n"),
-    );
-    return { status: "escalated-specs" };
+    };
   }
 
-  // --- Loop 2: Coding & Unit Test <-> QA/Tester ---
-  const branchName = branchNameFor(issue.number, issue.title);
-  await createBranch(repoDir, branchName);
+  const approvedProposal = proposal as string;
 
-  let qaFeedback: string | undefined;
+  // --- Task breakdown ---
+  onProgress("Breaking approved design into tasks");
+  const { tasks } = await breakDownTasks(spec, approvedProposal);
+  logger?.recordTaskBreakdown(tasks);
+  onProgress(`${tasks.length} task(s) to implement`);
+
+  // --- Loop 2: Coding & Unit Test (per task) <-> E2E/QA (whole feature) ---
+  let e2eFeedback: string | undefined;
   let passed = false;
-  const qaHistory: QaAttempt[] = [];
+  const e2eHistory: E2eAttempt[] = [];
 
   for (let attempt = 1; attempt <= config.maxCodingAttempts; attempt++) {
-    await runCoding(issue, spec as string, qaFeedback);
-    const qa = await runQa(issue, spec as string);
-    qaHistory.push({ ...qa, attempt });
-    if (qa.verdict === "pass") {
+    for (const task of tasks) {
+      onProgress(`Coding: ${task.id} (attempt ${attempt}/${config.maxCodingAttempts})`);
+      const summary = await runCoding(spec, task, e2eFeedback);
+      logger?.recordCoding(attempt, task.id, summary);
+    }
+
+    onProgress(`E2E/QA: running (attempt ${attempt}/${config.maxCodingAttempts})`);
+    const e2e = await runE2eTest(spec, approvedProposal);
+    logger?.recordE2e(attempt, e2e);
+    e2eHistory.push({ ...e2e, attempt });
+    onProgress(`E2E/QA verdict: ${e2e.verdict}`);
+
+    if (e2e.verdict === "pass") {
       passed = true;
       break;
     }
-    const uncovered = (qa.acceptanceCriteria ?? [])
+
+    const uncovered = (e2e.acceptanceCriteria ?? [])
       .filter((ac) => !ac.covered)
       .map((ac) => `"${ac.criterion}" (${ac.evidence || "no evidence"})`);
-    qaFeedback = [
-      qa.summary,
-      `Failed checks: ${(qa.failedChecks ?? []).join(", ") || "(none listed)"}`,
+    e2eFeedback = [
+      e2e.summary,
+      `Failed scenarios: ${(e2e.failedScenarios ?? []).join(", ") || "(none listed)"}`,
       uncovered.length ? `Uncovered acceptance criteria: ${uncovered.join("; ")}` : "",
     ]
       .filter(Boolean)
       .join("\n");
   }
 
-  const commitMessage = passed
-    ? `feat: implement #${issue.number} ${issue.title}`
-    : `wip: partial implementation of #${issue.number} ${issue.title} (QA did not pass)`;
-
-  await commitAndPush({ cwd: repoDir, branchName, commitMessage, push });
-
   if (!passed) {
-    await github.postComment(
-      issue.number,
-      [
-        `**AI pipeline stopped: QA did not pass after ${config.maxCodingAttempts} attempts.**`,
+    return {
+      status: "escalated-e2e",
+      message: [
+        `E2E/QA did not pass after ${config.maxCodingAttempts} attempts.`,
+        "The code as-is is still on disk (not reverted) for you to inspect and finish by hand.",
         "",
-        `A work-in-progress branch \`${branchName}\` was pushed for inspection.`,
-        "",
-        "QA history:",
-        truncate(
-          qaHistory.map((q) => `- attempt ${q.attempt}: ${q.verdict} — ${q.summary}`).join("\n"),
-        ),
-        "",
-        "A human needs to review and finish this from here.",
+        "E2E history:",
+        ...e2eHistory.map((e) => `- attempt ${e.attempt}: ${e.verdict} — ${e.summary}`),
       ].join("\n"),
-    );
-    return { status: "escalated-qa", branchName };
+    };
   }
 
-  await github.postComment(
-    issue.number,
-    [
-      "**AI pipeline finished: QA passed.**",
-      "",
-      `Branch \`${branchName}\` was pushed. Open a pull request when you're ready to review it.`,
-    ].join("\n"),
-  );
-
-  return { status: "pushed", branchName };
+  return {
+    status: "done",
+    message: "E2E/QA passed. Review the changes in your working tree and commit when ready.",
+  };
 }

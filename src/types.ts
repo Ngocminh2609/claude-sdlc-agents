@@ -1,8 +1,12 @@
-export interface IssueTask {
-  number: number;
-  title: string;
-  body: string;
-  repoFullName: string;
+export interface DbInfo {
+  kind: "connection" | "schema-file";
+  value: string;
+}
+
+export interface SpecInput {
+  specMarkdown: string;
+  projectPath: string;
+  dbInfo?: DbInfo;
 }
 
 export interface ReviewVerdict {
@@ -11,29 +15,38 @@ export interface ReviewVerdict {
   concerns?: string[];
 }
 
+export interface TaskItem {
+  id: string;
+  description: string;
+  targetFiles?: string[];
+}
+
+export interface TaskBreakdown {
+  tasks: TaskItem[];
+}
+
 export interface AcceptanceCriterionCheck {
   criterion: string;
   covered: boolean;
   evidence: string;
 }
 
-export interface QaVerdict {
+export interface E2eVerdict {
   verdict: "pass" | "fail";
   summary: string;
   acceptanceCriteria?: AcceptanceCriterionCheck[];
-  failedChecks?: string[];
+  failedScenarios?: string[];
 }
 
-export interface QaAttempt extends QaVerdict {
+export interface E2eAttempt extends E2eVerdict {
   attempt: number;
 }
 
-export type EscalationStage = "specs-arch" | "qa";
+export type EscalationStage = "specs-arch" | "e2e";
 
 export interface EscalationDetails {
   stage: EscalationStage;
-  lastSpec?: string | null;
+  lastProposal?: string | null;
   lastFeedback?: string;
-  qaHistory?: QaAttempt[];
-  pushWip?: boolean;
+  e2eHistory?: E2eAttempt[];
 }

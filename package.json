@@ -2,7 +2,7 @@
   "name": "claude-sdlc-agents",
   "version": "0.1.0",
   "private": true,
-  "description": "Multi-agent SWE automation pipeline (Orchestrator, Specs & Arch, Coding & Unit Test, QA/Tester) built on the Claude Agent SDK, triggered by GitHub issues.",
+  "description": "Local multi-agent SWE automation pipeline (Orchestrator, Specs & Arch, Coding & Unit Test, E2E/QA) built on the Claude Agent SDK. Takes a spec .md and a target project path, implements the spec, and verifies it by running the project through a real browser with Playwright. Does not touch git.",
   "type": "module",
   "engines": {
     "node": ">=18"
@@ -14,8 +14,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.0",
-    "@octokit/rest": "^21.0.2"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

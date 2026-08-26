@@ -1,6 +1,0 @@
-{
-  "number": 1,
-  "title": "Add a hello-world CLI command",
-  "body": "## Acceptance Criteria\n- Running `npm run hello` prints `Hello, world!` to stdout\n- A unit test covers the command\n\n## Out of scope\n- No argument parsing needed",
-  "repoFullName": "example-org/example-repo"
-}
