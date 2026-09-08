@@ -1,6 +1,7 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
+import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
 import type { SpecInput, TaskItem } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Coding & Unit Test agent in an automated SDLC pipeline.
@@ -11,7 +12,9 @@ Never ignore a failing test, mock around it, or weaken an assertion just to
 make the suite pass — fix the root cause. Do not create or edit any files
 under an "e2e/" directory or named "*.spec.ts" — those belong to the
 independent E2E/QA stage that runs after you. Keep changes scoped to your
-assigned task.`;
+assigned task.
+
+${CODE_QUALITY_RULES}`;
 
 export async function runCoding(
   spec: SpecInput,

@@ -28,6 +28,8 @@ This repo calls the Agent SDK's `query()` directly (see `src/stages/`) rather th
 
 There is **no GitHub integration** in this version: no issue trigger, no GitHub Actions workflow, no automated commit or push. You invoke it as a local CLI command against any project directory, and you commit the result yourself after reviewing it.
 
+Prompt text shared by more than one stage lives in `src/prompts/`. `code-quality.ts` holds the clean-code and DRY rules, and both the Specs & Arch and Coding stages append it to their system prompt — so the design plans for reuse and the implementation writes clean code the first time, instead of leaving a cleanup pass for afterwards. Project-specific conventions (naming, layering, framework idioms) belong in your spec document, not in that file: it ships with the pipeline and runs against every target repo.
+
 ## Prerequisites
 
 - Node.js 20.12+ (the `aidev` launcher reads `.env` via `process.loadEnvFile`, added in 20.12)
