@@ -35,7 +35,7 @@ function parseArgs(argv: string[]): Args {
 
   if (!specPath || !projectPath) {
     throw new Error(
-      "Usage: npm run pipeline -- --spec <path.md> --project <path> [--db-connection <string> | --db-schema <path>]",
+      "Usage: aidev --spec <path.md> --project <path> [--db-connection <string> | --db-schema <path>]",
     );
   }
 

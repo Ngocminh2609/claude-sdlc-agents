@@ -4,8 +4,11 @@
   "private": true,
   "description": "Local multi-agent SWE automation pipeline (Orchestrator, Specs & Arch, Coding & Unit Test, E2E/QA) built on the Claude Agent SDK. Takes a spec .md and a target project path, implements the spec, and verifies it by running the project through a real browser with Playwright. Does not touch git.",
   "type": "module",
+  "bin": {
+    "aidev": "./bin/aidev.js"
+  },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.12.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

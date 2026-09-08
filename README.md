@@ -30,19 +30,48 @@ There is **no GitHub integration** in this version: no issue trigger, no GitHub 
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20.12+ (the `aidev` launcher reads `.env` via `process.loadEnvFile`, added in 20.12)
 - One of:
   - `ANTHROPIC_API_KEY` — pay-per-token, from the [Claude Console](https://platform.claude.com/).
   - `CLAUDE_CODE_OAUTH_TOKEN` — uses a Claude Pro/Max/Team/Enterprise subscription instead. Generate it by running `claude setup-token` in a real interactive terminal (it opens a browser to log into claude.ai, then prints the token). This must be run from a real terminal on your machine — it hangs with no output in a non-interactive shell.
 
-## Usage
+## Install
+
+One-time setup, run once per machine from this repo:
 
 ```bash
 npm install
-export ANTHROPIC_API_KEY=your-api-key   # or CLAUDE_CODE_OAUTH_TOKEN
+npm link                      # installs the global `aidev` command
+cp .env.example .env          # then fill in ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+```
 
+`npm link` puts an `aidev` shim in your npm global bin directory, so the command
+works from any shell and any directory. It runs `src/` through tsx rather than a
+compiled `dist/`, so edits to the source take effect immediately with no build step.
+
+The launcher loads this repo's `.env` itself, using the repo path resolved from the
+launcher's own location — not the caller's working directory. That is what makes the
+command usable from outside the repo: nothing reads `.env` from wherever you happen
+to be standing. Environment variables already exported in your shell still win, since
+`process.loadEnvFile` does not overwrite them.
+
+## Usage
+
+```bash
+aidev --spec ./specs/my-feature.md --project /path/to/target/project
+```
+
+Both paths may be relative — they resolve against your current directory, not the repo.
+
+Inside this repo you can skip the global command and use the npm script instead;
+it takes the same flags but does **not** load `.env`, so export the key yourself:
+
+```bash
+export ANTHROPIC_API_KEY=your-api-key   # or CLAUDE_CODE_OAUTH_TOKEN
 npm run pipeline -- --spec ./specs/my-feature.md --project /path/to/target/project
 ```
+
+To remove the global command later: `npm unlink -g claude-sdlc-agents`.
 
 Optional DB flags (pass at most one):
 - `--db-connection "postgres://user:pass@host/db"` — an existing database the code should integrate with.
