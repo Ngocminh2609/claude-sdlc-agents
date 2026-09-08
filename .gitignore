@@ -11,3 +11,6 @@ coverage/
 !.claude/agent-memory/README.md
 runs/*
 !runs/README.md
+
+# JetBrains IDE (per-machine settings)
+.idea/
