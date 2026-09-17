@@ -50,18 +50,24 @@ try {
   process.exit(1);
 }
 
+// `aidev ui` starts the local web console (src/ui/server.ts), which then runs
+// this same launcher per pipeline run. Anything else is a pipeline invocation,
+// so the existing flags keep working unchanged.
+const [subcommand, ...rest] = process.argv.slice(2);
+const isUi = subcommand === "ui";
+const entry = isUi
+  ? path.join(repoRoot, "src", "ui", "server.ts")
+  : path.join(repoRoot, "src", "index.ts");
+const entryArgs = isUi ? rest : process.argv.slice(2);
+
 // Invoke tsx via the current node binary rather than the node_modules/.bin
 // shim: on Windows that shim is a .cmd file, which Node refuses to spawn
 // without shell:true, and shell:true would then mangle any argument
 // containing a space (e.g. --project "C:\Program Files\app").
-const result = spawnSync(
-  process.execPath,
-  [tsxCli, path.join(repoRoot, "src", "index.ts"), ...process.argv.slice(2)],
-  { stdio: "inherit" },
-);
+const result = spawnSync(process.execPath, [tsxCli, entry, ...entryArgs], { stdio: "inherit" });
 
 if (result.error) {
-  console.error(`aidev: failed to start the pipeline: ${result.error.message}`);
+  console.error(`aidev: failed to start: ${result.error.message}`);
   process.exit(1);
 }
 process.exit(result.status ?? 1);

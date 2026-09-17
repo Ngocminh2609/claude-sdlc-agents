@@ -14,3 +14,6 @@ runs/*
 
 # JetBrains IDE (per-machine settings)
 .idea/
+
+# Web UI state: presets pointing at this machine's absolute paths.
+.aidev-ui.json

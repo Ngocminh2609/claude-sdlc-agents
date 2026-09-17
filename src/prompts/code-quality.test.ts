@@ -18,6 +18,7 @@ const SECTION_MARKERS = [
   "KEEP COUPLED DECISIONS ADJACENT",
   "NEVER INTERPOLATE CALLER INPUT INTO A COMMAND OR QUERY",
   "MATCH THE CODE AROUND YOU",
+  "USE THE PROJECT'S OWN FORMATTER AND LINTER",
   "LEAVE NOTHING HALF-DONE",
 ];
 
@@ -32,11 +33,26 @@ describe("CODE_QUALITY_RULES", () => {
     expect(CODE_QUALITY_RULES).toContain("Extract on the second real occurrence");
   });
 
+  it("forbids reformatting untouched code, which is what makes a diff unreviewable", () => {
+    const flat = CODE_QUALITY_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain("Never reformat code you did not otherwise change");
+    expect(flat).toContain("never run a formatter across the whole repo");
+  });
+
+  it("points at the target repo's own formatter instead of naming a style here", () => {
+    const flat = CODE_QUALITY_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain(".editorconfig");
+    expect(flat).toMatch(/Run that formatter and linter over the files you changed/);
+    // A concrete house style would be wrong for every repo that chose otherwise.
+    expect(CODE_QUALITY_RULES).not.toMatch(/\b(2|4) spaces\b/);
+    expect(CODE_QUALITY_RULES).not.toMatch(/\b(80|100|120) (columns|characters)\b/);
+  });
+
   it("reaches the coding stage's system prompt", async () => {
     runTextQuery.mockClear();
     runTextQuery.mockResolvedValue({ ok: true, text: "done" });
 
-    await runCoding(spec, task, undefined);
+    await runCoding({ spec, task, approvedProposal: "a design", completedTasks: [] });
 
     const [, options] = runTextQuery.mock.calls[0];
     expect(options.systemPrompt).toContain(CODE_QUALITY_RULES);
@@ -55,7 +71,7 @@ describe("CODE_QUALITY_RULES", () => {
   it("is defined once and shared, not pasted into each stage", async () => {
     runTextQuery.mockClear();
     runTextQuery.mockResolvedValue({ ok: true, text: "done" });
-    await runCoding(spec, task, undefined);
+    await runCoding({ spec, task, approvedProposal: "a design", completedTasks: [] });
     const [, codingOptions] = runTextQuery.mock.calls[0];
 
     runTextQuery.mockClear();

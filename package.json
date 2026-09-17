@@ -12,7 +12,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "pipeline": "tsx src/index.ts",
+    "pipeline": "tsx --env-file=.env src/index.ts",
+    "ui": "tsx --env-file=.env src/ui/server.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

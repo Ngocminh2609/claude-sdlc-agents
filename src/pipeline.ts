@@ -1,11 +1,12 @@
 import { config } from "./config.js";
 import { runSpecsArch } from "./stages/specs-arch.js";
 import { reviewSpecs } from "./stages/orchestrator-review.js";
+import { inventoryReferences } from "./stages/reference-inventory.js";
 import { breakDownTasks } from "./stages/task-breakdown.js";
 import { runCoding } from "./stages/coding.js";
 import { runE2eTest } from "./stages/e2e-test.js";
 import type { RunLogger } from "./run-log.js";
-import type { E2eAttempt, SpecInput } from "./types.js";
+import type { CompletedTask, E2eAttempt, ReferenceInventory, SpecInput } from "./types.js";
 
 export interface PipelineResult {
   status: "done" | "escalated-specs" | "escalated-e2e" | "errored";
@@ -37,6 +38,24 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult
 async function runPipelineInner(opts: PipelineOptions): Promise<Omit<PipelineResult, "logPath">> {
   const { spec, onProgress = () => {}, logger } = opts;
 
+  // --- Reference inventory (only when a sample project was given) ---
+  let inventory: ReferenceInventory | null = null;
+  if (spec.referencePaths?.length) {
+    onProgress("Reference inventory: scanning the reference repositories");
+    inventory = await inventoryReferences(spec);
+    // A failed scan is a degraded run, not a failed one: the later stages
+    // still have read access. Say so out loud rather than letting the run
+    // look like it had a file list when it did not.
+    onProgress(
+      inventory
+        ? `Reference inventory: ${inventory.files.length} file(s) to cover`
+        : "Reference inventory: unavailable — continuing without a file list",
+    );
+  } else {
+    onProgress("Reference inventory: skipped (no reference repository)");
+  }
+  logger?.recordReferenceInventory(inventory);
+
   // --- Loop 1: Specs & Arch <-> Orchestrator review ---
   let proposal: string | null = null;
   let feedback: string | undefined;
@@ -44,7 +63,7 @@ async function runPipelineInner(opts: PipelineOptions): Promise<Omit<PipelineRes
 
   for (let attempt = 1; attempt <= config.maxSpecAttempts; attempt++) {
     onProgress(`Specs & Arch: attempt ${attempt}/${config.maxSpecAttempts}`);
-    proposal = await runSpecsArch(spec, proposal, feedback);
+    proposal = await runSpecsArch(spec, proposal, feedback, inventory);
     logger?.recordSpecsArch(attempt, proposal);
     const review = await reviewSpecs(spec, proposal);
     logger?.recordReview(attempt, review);
@@ -75,7 +94,7 @@ async function runPipelineInner(opts: PipelineOptions): Promise<Omit<PipelineRes
 
   // --- Task breakdown ---
   onProgress("Breaking approved design into tasks");
-  const { tasks } = await breakDownTasks(spec, approvedProposal);
+  const { tasks } = await breakDownTasks(spec, approvedProposal, inventory);
   logger?.recordTaskBreakdown(tasks);
   onProgress(`${tasks.length} task(s) to implement`);
 
@@ -85,10 +104,22 @@ async function runPipelineInner(opts: PipelineOptions): Promise<Omit<PipelineRes
   const e2eHistory: E2eAttempt[] = [];
 
   for (let attempt = 1; attempt <= config.maxCodingAttempts; attempt++) {
+    // Reset per attempt: a retry re-runs every task from the first one, so
+    // "already implemented in this pass" starts empty again each time.
+    const completedTasks: CompletedTask[] = [];
+
     for (const task of tasks) {
       onProgress(`Coding: ${task.id} (attempt ${attempt}/${config.maxCodingAttempts})`);
-      const summary = await runCoding(spec, task, e2eFeedback);
+      const summary = await runCoding({
+        spec,
+        task,
+        approvedProposal,
+        completedTasks: [...completedTasks],
+        inventory,
+        priorE2eFeedback: e2eFeedback,
+      });
       logger?.recordCoding(attempt, task.id, summary);
+      completedTasks.push({ id: task.id, description: task.description, summary });
     }
 
     onProgress(`E2E/QA: running (attempt ${attempt}/${config.maxCodingAttempts})`);

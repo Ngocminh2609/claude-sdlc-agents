@@ -38,6 +38,53 @@ describe("runTextQuery", () => {
     expect(result.error).not.toContain("ECONNRESET");
     expect(result.error).not.toContain("secret/path.ts");
   });
+
+  // Reproduces a failure observed for real: this session's own usage limit
+  // was hit mid-run, and the SDK returned subtype "success" with is_error
+  // true and the account's own limit notice as the "result" text — accepted
+  // before this check existed.
+  it("fails closed on subtype success when is_error is true, instead of returning the notice as real output", async () => {
+    query.mockReturnValue(
+      messages({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result: "You've hit your session limit · resets 1:40pm (Asia/Ho_Chi_Minh)",
+      }),
+    );
+
+    const result = await runTextQuery("prompt", {});
+
+    expect(result.ok).toBe(false);
+    expect(result.text).toBeUndefined();
+    expect(result.error).not.toContain("session limit");
+  });
+
+  it("still succeeds on subtype success when is_error is explicitly false", async () => {
+    query.mockReturnValue(
+      messages({ type: "result", subtype: "success", is_error: false, result: "done" }),
+    );
+
+    const result = await runTextQuery("prompt", {});
+
+    expect(result).toEqual({ ok: true, text: "done" });
+  });
+
+  it("logs the assistant-reported error kind seen before the flagged result", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    query.mockReturnValue(
+      messages(
+        { type: "assistant", error: "rate_limit" },
+        { type: "result", subtype: "success", is_error: true, result: "…" },
+      ),
+    );
+
+    await runTextQuery("prompt", {});
+
+    const logged = consoleError.mock.calls.flat().join(" ");
+    expect(logged).toContain("rate_limit");
+    consoleError.mockRestore();
+  });
 });
 
 describe("runStructuredQuery", () => {
@@ -76,5 +123,21 @@ describe("runStructuredQuery", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).not.toContain("ENOENT");
+  });
+
+  it("fails closed when is_error is true, even if structured_output happens to be present", async () => {
+    query.mockReturnValue(
+      messages({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        structured_output: { verdict: "pass" },
+      }),
+    );
+
+    const result = await runStructuredQuery("prompt", {}, { type: "object" });
+
+    expect(result.ok).toBe(false);
+    expect(result.data).toBeUndefined();
   });
 });

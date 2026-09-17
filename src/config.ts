@@ -10,10 +10,25 @@ export const config = {
   // exploration before any output was produced.
   maxTurns: {
     specsArch: 40,
+    // A reference repo is a second tree to walk on the same budget, so the
+    // design stage gets more room when one is in play. The inventory stage
+    // ahead of it does the bulk of the walking, but the design still opens
+    // the files that matter.
+    specsArchWithReference: 60,
+    // This stage only lists files — no design, no code — but listing them
+    // exhaustively across a real repo is exactly what costs turns.
+    referenceInventory: 50,
     orchestratorReview: 25,
     taskBreakdown: 25,
     coding: 60,
     e2e: 40,
+    // Clone mode. Reading a whole target project to work out its conventions
+    // is exploration-heavy; mapping and porting then work from a decided list,
+    // so they spend turns on files rather than on searching.
+    targetConventions: 50,
+    cloneMapping: 40,
+    clonePort: 60,
+    cloneBuild: 30,
   },
 };
 

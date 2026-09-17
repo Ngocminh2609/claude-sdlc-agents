@@ -42,4 +42,42 @@ describe("RunLogger", () => {
     expect(json.specsArch[0].proposal).toBe("a proposal");
     expect(markdown).toContain("a proposal");
   });
+
+  it("writes the reference inventory into the report, as the checklist to diff against", async () => {
+    const logger = new RunLogger(
+      { ...spec, referencePaths: ["/tmp/sample-app"] },
+      "/tmp/specs/my-feature.md",
+    );
+    logger.recordReferenceInventory({
+      files: [{ path: "src/units/UnitController.java", role: "REST endpoints" }],
+      notes: "skipped target/",
+    });
+    logger.finish("done", "E2E/QA passed.");
+
+    writtenDir = await logger.write();
+
+    const { readFile } = await import("node:fs/promises");
+    const markdown = await readFile(`${writtenDir}/report.md`, "utf-8");
+
+    expect(markdown).toContain("/tmp/sample-app");
+    expect(markdown).toContain("src/units/UnitController.java");
+    expect(markdown).toContain("REST endpoints");
+    expect(markdown).toContain("skipped target/");
+  });
+
+  it("says so in the report when a reference run produced no inventory", async () => {
+    const logger = new RunLogger(
+      { ...spec, referencePaths: ["/tmp/sample-app"] },
+      "/tmp/specs/my-feature.md",
+    );
+    logger.recordReferenceInventory(null);
+    logger.finish("done", "E2E/QA passed.");
+
+    writtenDir = await logger.write();
+
+    const { readFile } = await import("node:fs/promises");
+    const markdown = await readFile(`${writtenDir}/report.md`, "utf-8");
+
+    expect(markdown).toContain("no file list for this run");
+  });
 });

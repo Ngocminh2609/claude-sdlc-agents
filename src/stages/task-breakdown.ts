@@ -1,7 +1,8 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
-import type { SpecInput, TaskBreakdown } from "../types.js";
+import { referenceDirectories, referencePromptSection } from "../reference-repos.js";
+import type { ReferenceInventory, SpecInput, TaskBreakdown } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Orchestrator, breaking an approved design into an
 ordered list of discrete implementation tasks (e.g. one per API endpoint or
@@ -29,7 +30,11 @@ const TASK_SCHEMA = {
   required: ["tasks"],
 };
 
-export async function breakDownTasks(spec: SpecInput, approvedProposal: string): Promise<TaskBreakdown> {
+export async function breakDownTasks(
+  spec: SpecInput,
+  approvedProposal: string,
+  inventory?: ReferenceInventory | null,
+): Promise<TaskBreakdown> {
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
@@ -37,9 +42,18 @@ export async function breakDownTasks(spec: SpecInput, approvedProposal: string):
     maxTurns: config.maxTurns.taskBreakdown,
   };
 
-  const prompt = ["--- Spec ---", spec.specMarkdown, "", "--- Approved design ---", approvedProposal].join(
-    "\n",
-  );
+  // Read-only stage: the directory list is enough here, no write guard needed.
+  const referenceDirs = referenceDirectories(spec.referencePaths);
+  if (referenceDirs.length) options.additionalDirectories = referenceDirs;
+
+  const prompt = [
+    "--- Spec ---",
+    spec.specMarkdown,
+    "",
+    "--- Approved design ---",
+    approvedProposal,
+    ...referencePromptSection(spec.referencePaths, inventory),
+  ].join("\n");
 
   const result = await runStructuredQuery<TaskBreakdown>(prompt, options, TASK_SCHEMA);
   if (!result.ok || !result.data || result.data.tasks.length === 0) {

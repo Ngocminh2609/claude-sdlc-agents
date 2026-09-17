@@ -2,7 +2,8 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
-import type { SpecInput } from "../types.js";
+import { referenceDirectories, referencePromptSection } from "../reference-repos.js";
+import type { ReferenceInventory, SpecInput } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Specs & Arch agent in an automated SDLC pipeline.
 Read the spec document and the existing project (current working directory),
@@ -32,15 +33,29 @@ export async function runSpecsArch(
   spec: SpecInput,
   priorProposal: string | null,
   reviewerFeedback: string | undefined,
+  inventory?: ReferenceInventory | null,
 ): Promise<string> {
+  // Read-only stage: the directory list is enough here, no write guard needed.
+  const referenceDirs = referenceDirectories(spec.referencePaths);
+
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
     model: config.model,
-    maxTurns: config.maxTurns.specsArch,
+    // A second tree to read needs more room than a single project does.
+    maxTurns: referenceDirs.length
+      ? config.maxTurns.specsArchWithReference
+      : config.maxTurns.specsArch,
   };
 
-  const parts = ["--- Spec ---", spec.specMarkdown, ...dbContext(spec)];
+  if (referenceDirs.length) options.additionalDirectories = referenceDirs;
+
+  const parts = [
+    "--- Spec ---",
+    spec.specMarkdown,
+    ...dbContext(spec),
+    ...referencePromptSection(spec.referencePaths, inventory),
+  ];
 
   if (priorProposal && reviewerFeedback) {
     parts.push(

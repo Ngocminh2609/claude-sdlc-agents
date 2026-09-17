@@ -1,5 +1,6 @@
 /**
- * Clean-code and DRY rules shared by every stage that writes or designs code.
+ * Clean-code, DRY and formatting rules shared by every stage that writes or
+ * designs code.
  *
  * These live in one place on purpose: the coding stage needs them to write clean
  * code the first time, and the specs/arch stage needs them so its proposal plans
@@ -9,6 +10,11 @@
  * Keep this language-agnostic. Project-specific conventions (naming, layering,
  * framework idioms) belong in the spec document, not here — this file ships with
  * the pipeline and runs against every target repo.
+ *
+ * That applies to formatting too, which is why the formatting section says to go
+ * find and obey the target repo's own formatter rather than naming an indent width
+ * here. A concrete style baked into this file would be wrong for every repo that
+ * chose differently, and there is no way to tell from here which those are.
  */
 export const CODE_QUALITY_RULES = `Clean code and DRY are part of the task, not a follow-up pass.
 
@@ -50,6 +56,21 @@ MATCH THE CODE AROUND YOU
   density, and idiom. Consistency with neighbours beats your personal preference.
 - Comments explain why a choice was made, or record a non-obvious constraint. Do not
   narrate what the next line plainly does.
+
+USE THE PROJECT'S OWN FORMATTER AND LINTER
+- Find the formatting setup the project already has before writing code: an
+  .editorconfig, a formatter config (Prettier, Biome, Spotless, Checkstyle,
+  clang-format, dotnet format, gofmt, black, ktlint), a linter config, or a
+  format/lint script in the build file. Obey the one that is there; do not bring
+  your own style to a repo that has already decided.
+- Run that formatter and linter over the files you changed before you finish, and
+  fix what they report about your own code. The task is not done while the code you
+  just wrote fails the project's own lint.
+- Where no configuration exists, copy the file you are editing: indentation, quote
+  style, line width, import order, brace placement.
+- Never reformat code you did not otherwise change, and never run a formatter across
+  the whole repo. A diff that mixes real changes with unrelated whitespace churn
+  cannot be reviewed, and a reviewer who cannot see the change cannot approve it.
 
 LEAVE NOTHING HALF-DONE
 - No commented-out code, no TODO placeholders, no unused imports or variables, no
