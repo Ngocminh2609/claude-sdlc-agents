@@ -50,6 +50,19 @@
   API: the server sends ids and stable error codes, never display text, and all
   wording lives in `src/ui/public/`. Adding a user-facing sentence to a `.ts`
   file puts it on the wrong side of that line.
+- Nothing after the design review is retried. A failed coding task or a failed
+  E2E stops the run and reports where; the pipeline does not loop back and
+  re-code from the first task. That loop existed and, on a real 8-task run,
+  re-spent the whole coding budget and hit the account's usage limit — adding
+  a retry back is a cost decision for a person, not a quiet default.
+- A stopped run resumes from `src/checkpoint.ts`: saved after the breakdown
+  and after every task (clone: after the mapping and every group), keyed by
+  a fingerprint of the inputs the plan came from. Save progress as each step
+  finishes, never only at the end — a killed process never reaches the end.
+  A checkpoint must never hold a `--db-connection` value.
+- Stages that start the target app (Coding, E2E) get free ports from
+  `findFreePorts` in the pipeline and the shared `runtimePortsPromptSection`
+  rule. Never hardcode or assume a default port in a stage prompt.
 - `src/sdk-helpers.ts` checks `is_error` on the terminal result, not just the
   subtype — a `"success"` subtype can still be an error the SDK didn't throw
   for (rate limit, auth, billing, an outage mid-turn), and that check exists

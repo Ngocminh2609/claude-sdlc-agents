@@ -2,12 +2,15 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
+import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
+import { StageError } from "../stage-error.js";
 import {
   isInsideReference,
   referenceDirectories,
   referencePromptSection,
 } from "../reference-repos.js";
-import type { CompletedTask, ReferenceInventory, SpecInput, TaskItem } from "../types.js";
+import { projectContextPromptSection } from "./project-context.js";
+import type { CompletedTask, ProjectContext, ReferenceInventory, SpecInput, TaskItem } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Coding & Unit Test agent in an automated SDLC pipeline.
 Implement the assigned task from the approved design: write the application
@@ -45,7 +48,10 @@ export interface CodingRequest {
   completedTasks: CompletedTask[];
   /** The reference file list, when a reference repo was scanned. */
   inventory?: ReferenceInventory | null;
-  priorE2eFeedback?: string;
+  /** The one-time scan of the target project itself, shared across the whole run. */
+  projectContext?: ProjectContext | null;
+  /** Ports checked free just before this call, for any server the task starts. */
+  runtimePorts?: number[];
 }
 
 /**
@@ -80,7 +86,8 @@ export function guardReferenceRepos(referencePaths: string[] | undefined): CanUs
 }
 
 export async function runCoding(request: CodingRequest): Promise<string> {
-  const { spec, task, approvedProposal, completedTasks, inventory, priorE2eFeedback } = request;
+  const { spec, task, approvedProposal, completedTasks, inventory, projectContext, runtimePorts = [] } =
+    request;
 
   // The SDK operates on the current process working directory, so the caller
   // (src/index.ts) must chdir into the target project before this runs.
@@ -110,6 +117,7 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     "--- Approved design (implement your task within it; do not redesign) ---",
     approvedProposal,
     ...referencePromptSection(spec.referencePaths, inventory),
+    ...projectContextPromptSection(projectContext),
     "",
     `--- Your assigned task (${task.id}) ---`,
     task.description,
@@ -126,17 +134,11 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     }
   }
 
-  if (priorE2eFeedback) {
-    parts.push(
-      "",
-      "--- E2E/QA feedback from the previous attempt (fix these before returning) ---",
-      priorE2eFeedback,
-    );
-  }
+  parts.push(...runtimePortsPromptSection(runtimePorts));
 
   const result = await runTextQuery(parts.join("\n"), options);
   if (!result.ok) {
-    throw new Error(`coding stage failed on task ${task.id}: ${result.error ?? "unknown error"}`);
+    throw new StageError(`coding stage failed on task ${task.id}: ${result.error ?? "unknown error"}`);
   }
   return result.text ?? "";
 }

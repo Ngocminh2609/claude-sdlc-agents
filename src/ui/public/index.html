@@ -199,6 +199,18 @@
             </span>
           </label>
 
+          <label class="precheck">
+            <input type="checkbox" id="run-fresh" />
+            <span>
+              Chạy lại từ đầu (bỏ tiến độ đã lưu)
+              <span class="hint-inline">
+                Mặc định: nếu lần trước bị dừng giữa chừng với cùng project + cùng spec, hệ thống tự
+                chạy tiếp từ chỗ dừng (bỏ qua thiết kế và các task đã xong). Tick khi bạn đã xoá code và
+                muốn làm lại sạch từ đầu.
+              </span>
+            </span>
+          </label>
+
           <div class="actions">
             <button class="btn btn-primary" id="run-start" disabled>▶ Chạy pipeline</button>
             <button class="btn btn-danger" id="run-stop" disabled>■ Dừng</button>
@@ -282,7 +294,10 @@
           <div class="card card-runs">
             <div class="card-head">
               <h2>Các lần chạy</h2>
-              <button class="btn btn-ghost" id="runs-refresh">Tải lại</button>
+              <div class="card-head-actions">
+                <button class="btn btn-ghost" id="runs-refresh">Tải lại</button>
+                <button class="btn btn-danger" id="runs-clear">Xóa tất cả</button>
+              </div>
             </div>
             <ul class="run-list" id="run-list"></ul>
           </div>
@@ -377,8 +392,9 @@
             </li>
             <li>
               <strong>Kiểm thử E2E</strong> — mở trình duyệt thật bằng Playwright, tự viết test theo
-              đúng tiêu chí nghiệm thu trong spec và chấm đạt/không đạt. Không đạt thì quay lại bước
-              4, tối đa 3 vòng.
+              đúng tiêu chí nghiệm thu trong spec và chấm đạt/không đạt. Không đạt thì dừng lại và báo
+              tiêu chí nào trượt — không tự code lại từ task đầu. Hệ thống tự cấp port còn trống để bật
+              app, nên port mặc định (8080, 5173…) bị chiếm cũng không làm fail.
             </li>
           </ol>
           <p class="guide-note">
@@ -510,13 +526,17 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
             <tr>
               <td><span class="badge" data-status="escalated-e2e">E2E chưa đạt</span></td>
               <td>
-                Đã viết code nhưng qua 3 vòng vẫn chưa đạt tiêu chí nghiệm thu. Code vẫn nằm trên
-                đĩa, không bị xoá — xem báo cáo để biết tiêu chí nào trượt rồi làm nốt bằng tay.
+                Đã viết code nhưng E2E chưa đạt tiêu chí nghiệm thu. Hệ thống dừng ngay, không code
+                lại. Code vẫn nằm trên đĩa, không bị xoá — xem báo cáo để biết tiêu chí nào trượt, sửa
+                rồi chạy lại.
               </td>
             </tr>
             <tr>
               <td><span class="badge" data-status="errored">Lỗi</span></td>
-              <td>Pipeline chết giữa chừng (mất mạng, hết credential…). Xem nhật ký để biết lý do.</td>
+              <td>
+                Pipeline dừng giữa chừng (hết hạn mức <code>rate_limit</code>, mất mạng, hết
+                credential…) và không tự chạy lại. Kết quả nói rõ dừng ở task nào, task nào đã xong.
+              </td>
             </tr>
           </table>
           <p>

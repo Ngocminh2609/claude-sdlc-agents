@@ -114,12 +114,13 @@ const NEXT_STEPS = {
   "escalated-specs":
     "Qua 3 lần mà bên duyệt vẫn từ chối thiết kế — thường là spec còn mơ hồ. Code <strong>chưa bị đụng tới</strong>. Bước tiếp theo: mở báo cáo, đọc phản hồi của bên duyệt, làm rõ spec rồi chạy lại.",
   "escalated-e2e":
-    "Hết 3 vòng mà E2E vẫn chưa đạt. Code đã viết <strong>vẫn nằm trên đĩa, không bị hoàn tác</strong>. Bước tiếp theo: mở báo cáo xem tiêu chí nào trượt, rồi hoàn thiện nốt bằng tay.",
+    "E2E chưa đạt — hệ thống <strong>dừng ngay, không tự code lại từ task đầu</strong>. Code đã viết <strong>vẫn nằm trên đĩa, không bị hoàn tác</strong>. Bước tiếp theo: xem kết quả bên dưới để biết kịch bản/tiêu chí nào trượt, sửa (hoặc làm rõ spec) rồi chạy lại — tiến độ đã lưu, chạy lại sẽ vào thẳng bước E2E.",
   incomplete:
     "Còn thiếu: hoặc có file trong bảng ánh xạ chưa được ghi ra, hoặc dự án đích build không qua. Code đã port <strong>vẫn nằm trên đĩa</strong>. Mở báo cáo xem danh sách thiếu và lỗi biên dịch, rồi hoàn thiện nốt.",
-  errored: "Pipeline dừng vì lỗi ngoài dự kiến. Xem nhật ký bên dưới để biết chi tiết rồi chạy lại.",
+  errored:
+    "Pipeline dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở giai đoạn/task nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Tiến độ đã lưu: bấm Chạy lại với cùng spec sẽ <strong>tiếp tục từ chỗ dừng</strong>, bỏ qua thiết kế và các task đã xong.",
   stopped:
-    "Anh đã bấm Dừng. Các file AI đã ghi vào dự án <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án.",
+    "Anh đã bấm Dừng. Các file AI đã ghi vào dự án <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án. Bấm Chạy lại với cùng spec sẽ tiếp tục từ task đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
 };
 
 const RUN_ERROR_TEXT = {
@@ -563,6 +564,8 @@ el.runStart.addEventListener("click", async () => {
   try {
     await api("/api/run", { method: "POST", body: JSON.stringify(runBody()) });
     saveForm();
+    // A one-off choice: the next Run should resume again unless asked otherwise.
+    $("run-fresh").checked = false;
   } catch (error) {
     showRunError(error);
   }
@@ -582,6 +585,7 @@ function runBody() {
       // case this exists for — porting one feature out of one project.
       referencePaths: el.cloneFrom.value.trim() ? [el.cloneFrom.value.trim()] : [],
       skipBuild: el.cloneSkipBuild.checked,
+      fresh: $("run-fresh").checked,
     };
   }
   return {
@@ -592,6 +596,7 @@ function runBody() {
     dbMode: el.dbMode.value,
     dbConnection: el.dbConnection.value,
     dbSchemaPath: el.dbSchemaPath.value,
+    fresh: $("run-fresh").checked,
   };
 }
 
@@ -854,6 +859,7 @@ async function loadRuns() {
         <span class="badge" data-status="${escapeHtml(run.status)}">${escapeHtml(
           STATUS_BADGE[run.status] ?? run.status,
         )}</span>
+        <button class="run-item-delete" data-delete-run="${escapeHtml(run.id)}" title="Xóa lần chạy này">✕</button>
       </div>
       <div class="run-item-meta">${escapeHtml(run.projectName ?? "—")} · ${
         run.startedAt ? new Date(run.startedAt).toLocaleString("vi-VN") : "không rõ thời gian"
@@ -862,12 +868,31 @@ async function loadRuns() {
   }
 }
 
-el.runList.addEventListener("click", (event) => {
+el.runList.addEventListener("click", async (event) => {
+  const deleteId = event.target.closest("[data-delete-run]")?.dataset.deleteRun;
+  if (deleteId) {
+    if (!confirm("Xóa lần chạy này? Không thể hoàn tác.")) return;
+    await api("/api/runs/delete", { method: "POST", body: JSON.stringify({ id: deleteId }) });
+    if (el.runList.querySelector(".run-item.is-active")?.dataset.id === deleteId) {
+      el.reportTitle.textContent = "Báo cáo";
+      el.report.innerHTML = '<p class="hint">Chọn một lần chạy ở cột bên trái để xem báo cáo đầy đủ.</p>';
+    }
+    await loadRuns();
+    return;
+  }
   const item = event.target.closest(".run-item");
   if (item) selectRun(item.dataset.id);
 });
 
 $("runs-refresh").addEventListener("click", loadRuns);
+
+$("runs-clear").addEventListener("click", async () => {
+  if (!confirm("Xóa TOÀN BỘ lịch sử chạy? Không thể hoàn tác.")) return;
+  await api("/api/runs/clear", { method: "POST" });
+  el.reportTitle.textContent = "Báo cáo";
+  el.report.innerHTML = '<p class="hint">Chọn một lần chạy ở cột bên trái để xem báo cáo đầy đủ.</p>';
+  await loadRuns();
+});
 
 async function selectRun(id) {
   for (const item of el.runList.querySelectorAll(".run-item")) {

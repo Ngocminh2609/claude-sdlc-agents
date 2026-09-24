@@ -14,7 +14,7 @@ import {
   type DbMode,
   type RunnerEvent,
 } from "./runner.js";
-import { listRuns, readRun, RunNotFoundError } from "./runs.js";
+import { clearRuns, deleteRun, listRuns, readRun, RunNotFoundError } from "./runs.js";
 import { STAGE_IDS_BY_MODE, type RunMode } from "./stages.js";
 
 /**
@@ -120,6 +120,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     case "GET /api/run-detail":
       return runDetail(res, url);
 
+    case "POST /api/runs/delete":
+      return removeRun(req, res);
+
+    case "POST /api/runs/clear":
+      return clearAllRuns(res);
+
     case "GET /api/presets":
       return sendJson(res, 200, { presets: await listPresets() });
 
@@ -153,6 +159,7 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
       specPath: String(body.specPath ?? ""),
       what: String(body.what ?? ""),
       skipBuild: body.skipBuild === true,
+      fresh: body.fresh === true,
       projectPath: String(body.projectPath ?? ""),
       dbMode,
       dbConnection: typeof body.dbConnection === "string" ? body.dbConnection : undefined,
@@ -246,6 +253,22 @@ async function runDetail(res: ServerResponse, url: URL): Promise<void> {
     if (error instanceof RunNotFoundError) return sendJson(res, 404, { error: error.message });
     throw error;
   }
+}
+
+async function removeRun(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req);
+  try {
+    await deleteRun(String(body.id ?? ""));
+    sendJson(res, 200, { runs: await listRuns() });
+  } catch (error) {
+    if (error instanceof RunNotFoundError) return sendJson(res, 404, { error: error.message });
+    throw error;
+  }
+}
+
+async function clearAllRuns(res: ServerResponse): Promise<void> {
+  const deleted = await clearRuns();
+  sendJson(res, 200, { deleted, runs: await listRuns() });
 }
 
 async function upsertPreset(req: IncomingMessage, res: ServerResponse): Promise<void> {

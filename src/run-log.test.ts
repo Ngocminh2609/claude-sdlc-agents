@@ -80,4 +80,51 @@ describe("RunLogger", () => {
 
     expect(markdown).toContain("no file list for this run");
   });
+
+  it("writes the project context into the report", async () => {
+    const logger = new RunLogger(spec, "/tmp/specs/my-feature.md");
+    logger.recordProjectContext({
+      conventions: "kebab-case files, tests alongside source",
+      relevantFiles: [{ path: "src/widget-base.ts", role: "base class to extend" }],
+      notes: "skipped dist/",
+    });
+    logger.finish("done", "E2E/QA passed.");
+
+    writtenDir = await logger.write();
+
+    const { readFile } = await import("node:fs/promises");
+    const markdown = await readFile(`${writtenDir}/report.md`, "utf-8");
+
+    expect(markdown).toContain("kebab-case files");
+    expect(markdown).toContain("src/widget-base.ts");
+    expect(markdown).toContain("skipped dist/");
+  });
+
+  it("says in the report when a run continued a stopped one, and what it reused", async () => {
+    const logger = new RunLogger(spec, "/tmp/specs/my-feature.md");
+    logger.recordResume("2026-09-24T01:00:00Z", ["task-1", "task-2"]);
+    logger.finish("done", "E2E/QA passed.");
+
+    writtenDir = await logger.write();
+
+    const { readFile } = await import("node:fs/promises");
+    const markdown = await readFile(`${writtenDir}/report.md`, "utf-8");
+
+    expect(markdown).toContain("Resumed run");
+    expect(markdown).toContain("2026-09-24T01:00:00Z");
+    expect(markdown).toContain("task-1, task-2");
+  });
+
+  it("says so in the report when the project context scan produced nothing", async () => {
+    const logger = new RunLogger(spec, "/tmp/specs/my-feature.md");
+    logger.recordProjectContext(null);
+    logger.finish("done", "E2E/QA passed.");
+
+    writtenDir = await logger.write();
+
+    const { readFile } = await import("node:fs/promises");
+    const markdown = await readFile(`${writtenDir}/report.md`, "utf-8");
+
+    expect(markdown).toContain("explored the target project on its own");
+  });
 });

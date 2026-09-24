@@ -62,6 +62,8 @@ export interface RunRequest {
   referencePaths?: string[];
   /** Clone mode only: skip the build check. */
   skipBuild?: boolean;
+  /** Discard progress saved by a stopped run instead of resuming from it. */
+  fresh?: boolean;
 }
 
 export interface RunLine {
@@ -195,6 +197,7 @@ export class PipelineRunner {
       : ["--spec", specPath as string, "--project", projectPath];
 
     for (const reference of referencePaths) args.push(clone ? "--from" : "--reference", reference);
+    if (request.fresh) args.push("--fresh");
 
     if (clone) {
       if (request.skipBuild) args.push("--no-build");

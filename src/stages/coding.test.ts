@@ -7,6 +7,7 @@ const runTextQuery = vi.fn();
 vi.mock("../sdk-helpers.js", () => ({ runTextQuery }));
 
 const { runCoding } = await import("./coding.js");
+const { StageError } = await import("../stage-error.js");
 
 const spec: SpecInput = { specMarkdown: "build a widget", projectPath: "/tmp/project" };
 const task: TaskItem = { id: "task-1", description: "implement the widget endpoint" };
@@ -85,10 +86,34 @@ describe("runCoding", () => {
     expect(prompt.length).toBeLessThan(5000);
   });
 
-  it("throws when the underlying query fails", async () => {
+  it("throws a StageError naming the task when the underlying query fails", async () => {
     runTextQuery.mockResolvedValue({ ok: false, error: "boom" });
 
-    await expect(runCoding(request())).rejects.toThrow(/coding stage failed/);
+    await expect(runCoding(request())).rejects.toBeInstanceOf(StageError);
+    await expect(runCoding(request())).rejects.toThrow(/coding stage failed on task task-1/);
+  });
+
+  it("includes the free ports for any server the task starts", async () => {
+    await runCoding(request({ runtimePorts: [50001, 50002] }));
+
+    const [prompt] = runTextQuery.mock.calls[0];
+    expect(prompt).toContain("50001, 50002");
+  });
+
+  it("includes the shared project context in the prompt when given", async () => {
+    await runCoding(
+      request({
+        projectContext: {
+          conventions: "kebab-case files, tests alongside source",
+          relevantFiles: [{ path: "src/widget-base.ts", role: "base class to extend" }],
+          notes: "",
+        },
+      }),
+    );
+
+    const [prompt] = runTextQuery.mock.calls[0];
+    expect(prompt).toContain("kebab-case files");
+    expect(prompt).toContain("src/widget-base.ts");
   });
 });
 

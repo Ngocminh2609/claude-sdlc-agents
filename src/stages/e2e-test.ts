@@ -1,18 +1,24 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
-import type { E2eVerdict, SpecInput } from "../types.js";
+import { projectContextPromptSection } from "./project-context.js";
+import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
+import type { E2eVerdict, ProjectContext, SpecInput } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the E2E/QA agent in an automated SDLC pipeline.
 Independently verify the implementation against the ORIGINAL spec by actually
 running the project and driving it through a real browser — not by reading
 the developer's claims.
 
-1. Inspect package.json for how to start the project (dev/start script).
+1. Work out how to start the WHOLE app from its own build and run files
+   (package.json, pom.xml, build.gradle, README, ...). An app can need more
+   than one server — e.g. a Spring Boot API plus a Vite frontend — and every
+   one of them must be running for a browser test to mean anything.
 2. If Playwright isn't already set up, install it (@playwright/test) and
    install browser binaries, then create/update playwright.config with a
-   "webServer" block so Playwright starts the app itself and waits for it
-   to be ready before running tests.
+   "webServer" entry for EACH server the app needs (webServer accepts an
+   array), so Playwright starts all of them itself and waits for each to be
+   ready before running tests. Use the free ports you are given below.
 3. Write your OWN Playwright test files (do not trust or reuse tests the
    Coding agent wrote) under an "e2e/" directory, covering every acceptance
    criterion in the spec by driving the real user flows through the browser.
@@ -69,7 +75,12 @@ const restrictWritesToE2eFiles: CanUseTool = async (toolName, input) => {
   return { behavior: "deny", message: `Tool "${toolName}" is not permitted in the E2E stage.` };
 };
 
-export async function runE2eTest(spec: SpecInput, approvedProposal: string): Promise<E2eVerdict> {
+export async function runE2eTest(
+  spec: SpecInput,
+  approvedProposal: string,
+  projectContext?: ProjectContext | null,
+  runtimePorts: number[] = [],
+): Promise<E2eVerdict> {
   // Deliberately a fresh query() call (no continue/resume) so this stage has
   // no memory of the Coding stage's own session — independent verification.
   // Write/Edit are intentionally NOT in allowedTools: they are gated by
@@ -90,6 +101,11 @@ export async function runE2eTest(spec: SpecInput, approvedProposal: string): Pro
     "",
     "--- Approved design (what the implementation should satisfy) ---",
     approvedProposal,
+    // Only the "how this project is organised/started" half — the
+    // relevant-files list is a coding concern and would blur this stage's
+    // independence from what the Coding stage claims to have done.
+    ...projectContextPromptSection(projectContext, { includeRelevantFiles: false }),
+    ...runtimePortsPromptSection(runtimePorts),
   ].join("\n");
 
   const result = await runStructuredQuery<E2eVerdict>(prompt, options, E2E_SCHEMA);

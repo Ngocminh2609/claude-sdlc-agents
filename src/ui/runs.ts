@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { runsDir } from "./paths.js";
 
@@ -127,6 +127,52 @@ export function specNameFromRunId(id: string, projectPath: string | null): strin
   const marker = `-${projectName}-`;
   const at = id.indexOf(marker);
   return at === -1 ? null : id.slice(at + marker.length);
+}
+
+/**
+ * Deletes one run's folder — the run itself, not just its listing entry.
+ * `isValidRunId` (already the gate `readRun` uses) keeps this from resolving
+ * outside `runs/`, so a bad id fails closed as "not found" rather than
+ * deleting something it wasn't given permission to.
+ */
+export async function deleteRun(id: string): Promise<void> {
+  if (!isValidRunId(id)) throw new RunNotFoundError(id);
+  const dir = path.join(runsDir, id);
+  try {
+    if (!(await stat(dir)).isDirectory()) throw new RunNotFoundError(id);
+  } catch {
+    throw new RunNotFoundError(id);
+  }
+  await rm(dir, { recursive: true, force: true });
+}
+
+/**
+ * Clears every run folder under `runs/`. Best-effort per entry: one folder
+ * a concurrent process is touching (or a permissions hiccup) must not stop
+ * the rest from being cleared, so a failed entry is skipped rather than
+ * aborting the whole clear.
+ */
+export async function clearRuns(): Promise<number> {
+  let entries: string[];
+  try {
+    entries = (await readdir(runsDir, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return 0; // No runs/ folder yet — nothing to clear.
+  }
+
+  let cleared = 0;
+  for (const id of entries) {
+    if (!isValidRunId(id)) continue;
+    try {
+      await rm(path.join(runsDir, id), { recursive: true, force: true });
+      cleared++;
+    } catch {
+      // Skip and keep going — see doc comment above.
+    }
+  }
+  return cleared;
 }
 
 function asString(value: unknown): string | null {

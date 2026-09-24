@@ -1,12 +1,25 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { config } from "./config.js";
 import { runSpecsArch } from "./stages/specs-arch.js";
 import { reviewSpecs } from "./stages/orchestrator-review.js";
 import { inventoryReferences } from "./stages/reference-inventory.js";
+import { inventoryProjectContext } from "./stages/project-context.js";
 import { breakDownTasks } from "./stages/task-breakdown.js";
 import { runCoding } from "./stages/coding.js";
 import { runE2eTest } from "./stages/e2e-test.js";
+import { clearCheckpoint, fingerprint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import { findFreePorts } from "./free-ports.js";
+import { StageError } from "./stage-error.js";
 import type { RunLogger } from "./run-log.js";
-import type { CompletedTask, E2eAttempt, ReferenceInventory, SpecInput } from "./types.js";
+import type {
+  CompletedTask,
+  E2eVerdict,
+  ProjectContext,
+  ReferenceInventory,
+  SpecInput,
+  TaskItem,
+} from "./types.js";
 
 export interface PipelineResult {
   status: "done" | "escalated-specs" | "escalated-e2e" | "errored";
@@ -18,7 +31,24 @@ export interface PipelineOptions {
   spec: SpecInput;
   onProgress?: (message: string) => void;
   logger?: RunLogger;
+  /** Discard any progress saved by a stopped run and start from the beginning. */
+  fresh?: boolean;
 }
+
+/**
+ * Everything a stopped run leaves for the next run to pick up: the approved
+ * plan and the tasks already finished. Saved after the breakdown and after
+ * every task (see `checkpoint.ts`), so it survives a run that is killed.
+ */
+export interface FeatureCheckpoint {
+  inventory: ReferenceInventory | null;
+  projectContext: ProjectContext | null;
+  approvedProposal: string;
+  tasks: TaskItem[];
+  completedTasks: CompletedTask[];
+}
+
+type RunOutcome = Omit<PipelineResult, "logPath">;
 
 export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult> {
   try {
@@ -28,14 +58,139 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult
     return { ...result, logPath };
   } catch (error) {
     console.error("Pipeline crashed:", error);
-    const message = "An unexpected error occurred. Check the console output above for details.";
+    const message =
+      error instanceof StageError
+        ? `${error.message}\n\nThe run stopped here and was not retried. Any progress saved before this point is picked up by the next run.`
+        : "An unexpected error occurred. Check the console output above for details.";
     opts.logger?.finish("errored", message);
     const logPath = await opts.logger?.write();
     return { status: "errored", message, logPath };
   }
 }
 
-async function runPipelineInner(opts: PipelineOptions): Promise<Omit<PipelineResult, "logPath">> {
+async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
+  const { spec, onProgress = () => {}, logger } = opts;
+  const checkpointKey = featureFingerprint(spec);
+
+  const plan = await resumeOrPlan(opts, checkpointKey);
+  if (!("approvedProposal" in plan)) return plan;
+
+  const { inventory, projectContext, approvedProposal, tasks } = plan;
+  const completedTasks = [...plan.completedTasks];
+  const saveProgress = () =>
+    saveCheckpoint<FeatureCheckpoint>("feature", spec.projectPath, checkpointKey, {
+      inventory,
+      projectContext,
+      approvedProposal,
+      tasks,
+      completedTasks: [...completedTasks],
+    });
+
+  // --- Coding & Unit Test, once per task, then E2E/QA once ---
+  // One pass only, by design. The earlier loop re-coded every task from the
+  // first one after an E2E failure — on a real 8-task run that re-spent the
+  // whole coding budget, hit the account's usage limit and crashed. A failure
+  // now stops the run and says exactly where, so a person decides what next;
+  // the checkpoint lets the next run carry on from that point.
+  for (const [index, task] of tasks.entries()) {
+    if (completedTasks.some((done) => done.id === task.id)) continue;
+
+    onProgress(`Coding: ${task.id} (${index + 1}/${tasks.length})`);
+    let summary: string;
+    try {
+      summary = await runCoding({
+        spec,
+        task,
+        approvedProposal,
+        completedTasks: [...completedTasks],
+        inventory,
+        projectContext,
+        runtimePorts: await findFreePorts(RUNTIME_PORT_COUNT),
+      });
+    } catch (error) {
+      if (!(error instanceof StageError)) throw error;
+      return {
+        status: "errored",
+        message: codingStoppedMessage(error, task.id, index, tasks.map((t) => t.id), completedTasks),
+      };
+    }
+    logger?.recordCoding(1, task.id, summary);
+    completedTasks.push({ id: task.id, description: task.description, summary });
+    await saveProgress();
+  }
+
+  onProgress("E2E/QA: running");
+  const e2e = await runE2eTest(spec, approvedProposal, projectContext, await findFreePorts(RUNTIME_PORT_COUNT));
+  logger?.recordE2e(1, e2e);
+  onProgress(`E2E/QA verdict: ${e2e.verdict}`);
+
+  if (e2e.verdict !== "pass") {
+    return { status: "escalated-e2e", message: e2eFailedMessage(e2e) };
+  }
+
+  // Finished: nothing left to resume, and a later run of the same spec should
+  // plan from the code as it now is.
+  await clearCheckpoint("feature", spec.projectPath);
+  return {
+    status: "done",
+    message: "E2E/QA passed. Review the changes in your working tree and commit when ready.",
+  };
+}
+
+/**
+ * Picks up a stopped run's saved plan when there is one for this exact spec,
+ * otherwise plans from scratch. Returns the plan, or the outcome that ends the
+ * run early (a design that was never approved).
+ */
+async function resumeOrPlan(opts: PipelineOptions, checkpointKey: string): Promise<FeatureCheckpoint | RunOutcome> {
+  const { spec, onProgress = () => {}, logger, fresh = false } = opts;
+
+  if (fresh) {
+    await clearCheckpoint("feature", spec.projectPath);
+    onProgress("Resume: fresh start requested — any saved progress was discarded");
+    return planFromScratch(opts, checkpointKey);
+  }
+
+  const saved = await loadCheckpoint<FeatureCheckpoint>("feature", spec.projectPath, checkpointKey);
+  if (saved.status === "stale") {
+    onProgress("Resume: the saved progress is for a different spec or reference set — starting fresh");
+  }
+  if (saved.status !== "found") return planFromScratch(opts, checkpointKey);
+
+  if (!isFeatureCheckpoint(saved.data)) {
+    onProgress("Resume: the saved progress is unreadable — starting fresh");
+    return planFromScratch(opts, checkpointKey);
+  }
+  if (finishedCodeIsGone(saved.data, spec.projectPath)) {
+    onProgress("Resume: none of the files the finished tasks wrote are on disk any more — starting fresh");
+    return planFromScratch(opts, checkpointKey);
+  }
+
+  const data = saved.data;
+  const doneIds = data.completedTasks.map((task) => task.id);
+  onProgress(
+    `Resume: continuing the run stopped at ${saved.savedAt} — ${doneIds.length}/${data.tasks.length} task(s) already done (start fresh to redo everything)`,
+  );
+  // The same stage messages a normal run emits, so the UI's stage strip and
+  // task count come out right on a resumed run too.
+  onProgress("Reference inventory: reused from the stopped run");
+  onProgress("Specs & Arch: reused the approved design from the stopped run");
+  onProgress("Orchestrator review: approve (from the stopped run)");
+  onProgress(`${data.tasks.length} task(s) to implement`);
+
+  logger?.recordResume(saved.savedAt, doneIds);
+  logger?.recordReferenceInventory(data.inventory);
+  logger?.recordProjectContext(data.projectContext);
+  logger?.recordSpecsArch(1, data.approvedProposal);
+  logger?.recordReview(1, { decision: "approve", feedback: `Reused from the run stopped at ${saved.savedAt}.` });
+  logger?.recordTaskBreakdown(data.tasks);
+  for (const task of data.completedTasks) {
+    logger?.recordCoding(1, task.id, `(finished in the stopped run) ${task.summary}`);
+  }
+  return data;
+}
+
+async function planFromScratch(opts: PipelineOptions, checkpointKey: string): Promise<FeatureCheckpoint | RunOutcome> {
   const { spec, onProgress = () => {}, logger } = opts;
 
   // --- Reference inventory (only when a sample project was given) ---
@@ -56,14 +211,25 @@ async function runPipelineInner(opts: PipelineOptions): Promise<Omit<PipelineRes
   }
   logger?.recordReferenceInventory(inventory);
 
-  // --- Loop 1: Specs & Arch <-> Orchestrator review ---
+  // --- Project context: one scan of the target project itself, shared by
+  // every stage below instead of each one rediscovering it independently ---
+  onProgress("Project context: scanning the target project");
+  const projectContext: ProjectContext | null = await inventoryProjectContext(spec);
+  onProgress(
+    projectContext
+      ? "Project context: conventions and relevant files gathered"
+      : "Project context: unavailable — stages will explore the project themselves",
+  );
+  logger?.recordProjectContext(projectContext);
+
+  // --- Specs & Arch <-> Orchestrator review ---
   let proposal: string | null = null;
   let feedback: string | undefined;
   let approved = false;
 
   for (let attempt = 1; attempt <= config.maxSpecAttempts; attempt++) {
     onProgress(`Specs & Arch: attempt ${attempt}/${config.maxSpecAttempts}`);
-    proposal = await runSpecsArch(spec, proposal, feedback, inventory);
+    proposal = await runSpecsArch(spec, proposal, feedback, inventory, projectContext);
     logger?.recordSpecsArch(attempt, proposal);
     const review = await reviewSpecs(spec, proposal);
     logger?.recordReview(attempt, review);
@@ -94,72 +260,96 @@ async function runPipelineInner(opts: PipelineOptions): Promise<Omit<PipelineRes
 
   // --- Task breakdown ---
   onProgress("Breaking approved design into tasks");
-  const { tasks } = await breakDownTasks(spec, approvedProposal, inventory);
+  const { tasks } = await breakDownTasks(spec, approvedProposal, inventory, projectContext);
   logger?.recordTaskBreakdown(tasks);
   onProgress(`${tasks.length} task(s) to implement`);
 
-  // --- Loop 2: Coding & Unit Test (per task) <-> E2E/QA (whole feature) ---
-  let e2eFeedback: string | undefined;
-  let passed = false;
-  const e2eHistory: E2eAttempt[] = [];
+  // Saved before any code is written: from here on, a stopped run costs the
+  // next one nothing for design, review or breakdown.
+  const plan: FeatureCheckpoint = { inventory, projectContext, approvedProposal, tasks, completedTasks: [] };
+  await saveCheckpoint("feature", spec.projectPath, checkpointKey, plan);
+  return plan;
+}
 
-  for (let attempt = 1; attempt <= config.maxCodingAttempts; attempt++) {
-    // Reset per attempt: a retry re-runs every task from the first one, so
-    // "already implemented in this pass" starts empty again each time.
-    const completedTasks: CompletedTask[] = [];
+/**
+ * The inputs the saved plan was built from. A database connection string is
+ * deliberately left out: it can carry a password, and changing it does not
+ * change what was designed. A schema file's content is kept — it shaped the
+ * design.
+ */
+function featureFingerprint(spec: SpecInput): string {
+  return fingerprint([
+    spec.specMarkdown,
+    spec.dbInfo?.kind ?? null,
+    spec.dbInfo?.kind === "schema-file" ? spec.dbInfo.value : null,
+    [...(spec.referencePaths ?? [])].sort(),
+  ]);
+}
 
-    for (const task of tasks) {
-      onProgress(`Coding: ${task.id} (attempt ${attempt}/${config.maxCodingAttempts})`);
-      const summary = await runCoding({
-        spec,
-        task,
-        approvedProposal,
-        completedTasks: [...completedTasks],
-        inventory,
-        priorE2eFeedback: e2eFeedback,
-      });
-      logger?.recordCoding(attempt, task.id, summary);
-      completedTasks.push({ id: task.id, description: task.description, summary });
-    }
+function isFeatureCheckpoint(data: unknown): data is FeatureCheckpoint {
+  const candidate = data as FeatureCheckpoint;
+  return (
+    typeof candidate?.approvedProposal === "string" &&
+    Array.isArray(candidate.tasks) &&
+    candidate.tasks.length > 0 &&
+    Array.isArray(candidate.completedTasks)
+  );
+}
 
-    onProgress(`E2E/QA: running (attempt ${attempt}/${config.maxCodingAttempts})`);
-    const e2e = await runE2eTest(spec, approvedProposal);
-    logger?.recordE2e(attempt, e2e);
-    e2eHistory.push({ ...e2e, attempt });
-    onProgress(`E2E/QA verdict: ${e2e.verdict}`);
+/**
+ * Whether the finished tasks' code has plainly been deleted since the run
+ * stopped — the case of someone clearing the project to start over but
+ * forgetting to say so. Only decided when the finished tasks named the files
+ * they own, and only when every one of them is missing: one missing file is a
+ * rename, all of them is a wiped project. A false positive costs a fresh run,
+ * never a wrong result.
+ */
+function finishedCodeIsGone(data: FeatureCheckpoint, projectPath: string): boolean {
+  const doneIds = new Set(data.completedTasks.map((task) => task.id));
+  const files = data.tasks
+    .filter((task) => doneIds.has(task.id))
+    .flatMap((task) => task.targetFiles ?? []);
+  if (!files.length) return false;
+  return files.every((file) => !existsSync(path.resolve(projectPath, file)));
+}
 
-    if (e2e.verdict === "pass") {
-      passed = true;
-      break;
-    }
+/** Backend, frontend, and one spare — enough for the two-server apps this runs against. */
+const RUNTIME_PORT_COUNT = 3;
 
-    const uncovered = (e2e.acceptanceCriteria ?? [])
-      .filter((ac) => !ac.covered)
-      .map((ac) => `"${ac.criterion}" (${ac.evidence || "no evidence"})`);
-    e2eFeedback = [
-      e2e.summary,
-      `Failed scenarios: ${(e2e.failedScenarios ?? []).join(", ") || "(none listed)"}`,
-      uncovered.length ? `Uncovered acceptance criteria: ${uncovered.join("; ")}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
+function codingStoppedMessage(
+  error: StageError,
+  taskId: string,
+  index: number,
+  allTaskIds: string[],
+  completed: CompletedTask[],
+): string {
+  const notStarted = allTaskIds.slice(index + 1);
+  return [
+    `Coding stopped at task ${taskId} (${index + 1}/${allTaskIds.length}): ${error.message}`,
+    "",
+    `Finished before it: ${completed.map((t) => t.id).join(", ") || "(none)"} — that code is on disk, not reverted.`,
+    `Not started: ${notStarted.join(", ") || "(none)"}.`,
+    "",
+    "Nothing was retried, so no further usage was spent. Progress is saved: fix the cause (for",
+    `rate_limit, wait for the usage limit to reset) and run the same spec again — it resumes at ${taskId},`,
+    "skipping the design and the finished tasks. Start fresh (--fresh) to redo everything.",
+  ].join("\n");
+}
 
-  if (!passed) {
-    return {
-      status: "escalated-e2e",
-      message: [
-        `E2E/QA did not pass after ${config.maxCodingAttempts} attempts.`,
-        "The code as-is is still on disk (not reverted) for you to inspect and finish by hand.",
-        "",
-        "E2E history:",
-        ...e2eHistory.map((e) => `- attempt ${e.attempt}: ${e.verdict} — ${e.summary}`),
-      ].join("\n"),
-    };
-  }
-
-  return {
-    status: "done",
-    message: "E2E/QA passed. Review the changes in your working tree and commit when ready.",
-  };
+function e2eFailedMessage(e2e: E2eVerdict): string {
+  const uncovered = (e2e.acceptanceCriteria ?? [])
+    .filter((ac) => !ac.covered)
+    .map((ac) => `- ${ac.criterion} (${ac.evidence || "no evidence"})`);
+  const failed = (e2e.failedScenarios ?? []).map((scenario) => `- ${scenario}`);
+  return [
+    "E2E/QA did not pass. The run stops here — the tasks are not re-coded automatically.",
+    "",
+    `Summary: ${e2e.summary}`,
+    ...(failed.length ? ["", "Failed scenarios:", ...failed] : []),
+    ...(uncovered.length ? ["", "Uncovered acceptance criteria:", ...uncovered] : []),
+    "",
+    "The code is on disk, not reverted. Fix what is listed above (or clarify the spec) and run again.",
+    "Progress is saved: running the same spec again goes straight to E2E. Start fresh (--fresh) to",
+    "redo everything.",
+  ].join("\n");
 }

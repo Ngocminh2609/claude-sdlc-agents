@@ -40,4 +40,17 @@ describe("breakDownTasks", () => {
 
     expect(result.tasks).toHaveLength(1);
   });
+
+  it("includes the shared project context in the prompt when given", async () => {
+    runStructuredQuery.mockResolvedValue({ ok: true, data: { tasks: [{ id: "t1", description: "a" }] } });
+
+    await breakDownTasks(spec, "an approved proposal", null, {
+      conventions: "one module per endpoint",
+      relevantFiles: [],
+      notes: "",
+    });
+
+    const [prompt] = runStructuredQuery.mock.calls[0];
+    expect(prompt).toContain("one module per endpoint");
+  });
 });

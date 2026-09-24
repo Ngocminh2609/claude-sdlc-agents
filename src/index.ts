@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs, parseCloneArgs, resolveReferencePaths, type Args } from "./cli-args.js";
+import { missingBuildManifestWarning } from "./clone-build-manifest-check.js";
 import { runClonePipeline } from "./clone-pipeline.js";
 import { encodeEvent, eventStreamEnabled, type PipelineEvent } from "./events.js";
 import { runPipeline } from "./pipeline.js";
@@ -54,7 +55,7 @@ async function runFeature(argv: string[]): Promise<void> {
 
   process.chdir(spec.projectPath);
 
-  const result = await runPipeline({ spec, logger, onProgress });
+  const result = await runPipeline({ spec, logger, onProgress, fresh: args.fresh });
   report(result.status, result.message, result.logPath);
 }
 
@@ -68,6 +69,16 @@ async function runClone(argv: string[]): Promise<void> {
   };
   const logger = new CloneRunLogger(clone);
 
+  // Advisory only — narrowing --project to cut exploration is good practice
+  // (same principle --from's own guidance already applies), but narrowed past
+  // the project's own build boundary the Clone Build stage has nothing to
+  // build from, and that fails late rather than up front. Skipped entirely
+  // under --no-build: there is nothing to warn about if it won't run.
+  if (!args.skipBuild) {
+    const warning = missingBuildManifestWarning(clone.projectPath);
+    if (warning) onProgress(`Warning: ${warning}`);
+  }
+
   // Same contract as the feature pipeline: stages operate on the process
   // working directory, so the target project has to be it.
   process.chdir(clone.projectPath);
@@ -77,6 +88,7 @@ async function runClone(argv: string[]): Promise<void> {
     logger,
     onProgress,
     skipBuild: args.skipBuild,
+    fresh: args.fresh,
   });
   report(result.status, result.message, result.logPath);
 }

@@ -48,6 +48,20 @@ describe("runSpecsArch", () => {
     expect(prompt).toContain("add more detail on rollback");
   });
 
+  it("includes the shared project context in the prompt when given", async () => {
+    runTextQuery.mockResolvedValue({ ok: true, text: "a proposal" });
+
+    await runSpecsArch(spec, null, undefined, null, {
+      conventions: "kebab-case files, tests alongside source",
+      relevantFiles: [{ path: "src/widget-base.ts", role: "base class to extend" }],
+      notes: "",
+    });
+
+    const [prompt] = runTextQuery.mock.calls[0];
+    expect(prompt).toContain("kebab-case files");
+    expect(prompt).toContain("src/widget-base.ts");
+  });
+
   it("throws when the underlying query fails", async () => {
     runTextQuery.mockResolvedValue({ ok: false, error: "boom" });
 

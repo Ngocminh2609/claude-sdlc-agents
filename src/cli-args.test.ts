@@ -65,12 +65,24 @@ describe("parseCloneArgs", () => {
       fromPaths: ["/tkdt/be", "/tkdt/fe"],
       projectPath: "/vimo",
       skipBuild: false,
+      fresh: false,
     });
   });
 
   it("takes --no-build as a flag, not a value", () => {
     const args = parseCloneArgs(["--what", "X", "--from", "/a", "--project", "/p", "--no-build"]);
     expect(args.skipBuild).toBe(true);
+  });
+
+  it("takes --fresh as a flag", () => {
+    expect(parseCloneArgs(["--what", "X", "--from", "/a", "--project", "/p", "--fresh"]).fresh).toBe(true);
+  });
+});
+
+describe("--fresh on a feature run", () => {
+  it("defaults to resuming, and --fresh turns it off", () => {
+    expect(parseArgs(["--spec", "a.md", "--project", "/p"]).fresh).toBe(false);
+    expect(parseArgs(["--spec", "a.md", "--project", "/p", "--fresh"]).fresh).toBe(true);
   });
 });
 

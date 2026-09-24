@@ -4,8 +4,11 @@ import { mapCloneTargets } from "./stages/clone-mapping.js";
 import { portCloneGroup, portGroups } from "./stages/clone-port.js";
 import { inventoryReferences } from "./stages/reference-inventory.js";
 import { readTargetConventions } from "./stages/target-conventions.js";
+import { StageError } from "./stage-error.js";
+import { clearCheckpoint, fingerprint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import { getCachedTargetConventions, storeTargetConventions } from "./target-conventions-cache.js";
 import type { CloneRunLogger } from "./run-log.js";
-import type { CloneInput, CloneMapping, TargetConventions } from "./types.js";
+import type { CloneInput, CloneMapping, ReferenceInventory, TargetConventions } from "./types.js";
 
 /**
  * Clone mode: port an existing feature from a reference repo into a target
@@ -35,6 +38,8 @@ export interface ClonePipelineOptions {
   logger?: CloneRunLogger;
   /** Skip the build check — for a target that cannot build on this machine. */
   skipBuild?: boolean;
+  /** Discard any progress saved by a stopped run and start from the beginning. */
+  fresh?: boolean;
 }
 
 export async function runClonePipeline(opts: ClonePipelineOptions): Promise<ClonePipelineResult> {
@@ -45,17 +50,144 @@ export async function runClonePipeline(opts: ClonePipelineOptions): Promise<Clon
     return { ...result, logPath };
   } catch (error) {
     console.error("Clone pipeline crashed:", error);
-    const message = "An unexpected error occurred. Check the console output above for details.";
+    const message =
+      error instanceof StageError
+        ? `${error.message}\n\nThe run stopped here and was not retried. Groups ported before it are on disk, and progress is saved: running the same clone again resumes at this group. Start fresh (--fresh) to redo everything.`
+        : "An unexpected error occurred. Check the console output above for details.";
     opts.logger?.finish("errored", message);
     const logPath = await opts.logger?.write();
     return { status: "errored", message, logPath };
   }
 }
 
-async function runCloneInner(
-  opts: ClonePipelineOptions,
-): Promise<Omit<ClonePipelineResult, "logPath">> {
+/**
+ * What a stopped clone run leaves for the next one: the decided mapping and
+ * the groups already written. Saved after the mapping and after every group.
+ */
+export interface CloneCheckpoint {
+  inventory: ReferenceInventory;
+  conventions: TargetConventions | null;
+  mapping: CloneMapping;
+  completedGroups: { group: string; summary: string }[];
+}
+
+type CloneOutcome = Omit<ClonePipelineResult, "logPath">;
+
+async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> {
   const { clone, onProgress = () => {}, logger, skipBuild = false } = opts;
+  const checkpointKey = fingerprint([clone.what, [...clone.referencePaths].sort()]);
+
+  const plan = await resumeOrPlanClone(opts, checkpointKey);
+  if (!("mapping" in plan)) return plan;
+
+  const { inventory, conventions, mapping } = plan;
+  const completedGroups = [...plan.completedGroups];
+  const uncertain = mapping.entries.filter((entry) => entry.uncertain).length;
+
+  // --- 4. Port, group by group ---
+  const groups = portGroups(mapping);
+
+  for (const [index, group] of groups.entries()) {
+    if (completedGroups.some((done) => done.group === group)) continue;
+
+    onProgress(`Clone port: ${group} (${index + 1}/${groups.length})`);
+    const summary = await portCloneGroup({
+      clone,
+      mapping,
+      conventions,
+      group,
+      completedGroups: [...completedGroups],
+    });
+    logger?.recordClonePort(group, summary);
+    completedGroups.push({ group, summary });
+    await saveCheckpoint<CloneCheckpoint>("clone", clone.projectPath, checkpointKey, {
+      inventory,
+      conventions,
+      mapping,
+      completedGroups: [...completedGroups],
+    });
+  }
+
+  // --- 5. Coverage: settled by the filesystem, not by an opinion ---
+  const coverage = checkCoverage(mapping, clone.projectPath);
+  logger?.recordCloneCoverage(coverage);
+  onProgress(`Clone coverage: ${describeCoverage(coverage)}`);
+  // A separate line rather than leaving the shortfall to be read out of a
+  // fraction: this is the one number that says whether the clone is whole, so
+  // a front end should not have to parse "2/3" to notice.
+  if (coverage.missing.length) {
+    onProgress(`Clone coverage: ${coverage.missing.length} file(s) missing`);
+  }
+
+  // --- 6. Build ---
+  let build: CloneBuildVerdict | null = null;
+  if (skipBuild) {
+    onProgress("Clone build: skipped (--no-build)");
+  } else {
+    onProgress("Clone build: compiling the target project");
+    build = await verifyCloneBuild(mapping);
+    logger?.recordCloneBuild(build);
+    onProgress(`Clone build: ${build.ok ? "pass" : "fail"}`);
+  }
+
+  const outcome = summarise(clone, mapping, coverage, build, uncertain);
+  // A finished port has nothing to resume; an incomplete one keeps its
+  // progress, so re-running after a hand fix goes straight to coverage + build.
+  if (outcome.status === "done") await clearCheckpoint("clone", clone.projectPath);
+  return outcome;
+}
+
+/**
+ * Picks up a stopped clone run's mapping when there is one for this exact
+ * request, otherwise locates, reads conventions and maps from scratch.
+ */
+async function resumeOrPlanClone(
+  opts: ClonePipelineOptions,
+  checkpointKey: string,
+): Promise<CloneCheckpoint | CloneOutcome> {
+  const { clone, onProgress = () => {}, logger, fresh = false } = opts;
+
+  if (fresh) {
+    await clearCheckpoint("clone", clone.projectPath);
+    onProgress("Resume: fresh start requested — any saved progress was discarded");
+    return planClone(opts, checkpointKey);
+  }
+
+  const saved = await loadCheckpoint<CloneCheckpoint>("clone", clone.projectPath, checkpointKey);
+  if (saved.status === "stale") {
+    onProgress("Resume: the saved progress is for a different clone request — starting fresh");
+  }
+  if (saved.status !== "found") return planClone(opts, checkpointKey);
+
+  if (!isCloneCheckpoint(saved.data)) {
+    onProgress("Resume: the saved progress is unreadable — starting fresh");
+    return planClone(opts, checkpointKey);
+  }
+  if (portedFilesAreGone(saved.data, clone.projectPath)) {
+    onProgress("Resume: none of the files the finished groups wrote are on disk any more — starting fresh");
+    return planClone(opts, checkpointKey);
+  }
+
+  const data = saved.data;
+  const groups = portGroups(data.mapping);
+  onProgress(
+    `Resume: continuing the clone stopped at ${saved.savedAt} — ${data.completedGroups.length}/${groups.length} group(s) already ported (start fresh to redo everything)`,
+  );
+  onProgress(`Clone locate: reused from the stopped run — ${data.inventory.files.length} source file(s)`);
+  onProgress("Clone conventions: reused from the stopped run");
+  onProgress(`Clone mapping: reused from the stopped run — ${data.mapping.entries.length} file(s) mapped`);
+
+  logger?.recordReferenceInventory(data.inventory);
+  logger?.recordTargetConventions(data.conventions);
+  logger?.recordCloneMapping(data.mapping);
+  for (const done of data.completedGroups) {
+    logger?.recordClonePort(done.group, `(ported in the stopped run) ${done.summary}`);
+  }
+  return data;
+}
+
+async function planClone(opts: ClonePipelineOptions, checkpointKey: string): Promise<CloneCheckpoint | CloneOutcome> {
+  const { clone, onProgress = () => {}, logger } = opts;
 
   // --- 1. Locate: what in the reference belongs to this feature ---
   onProgress("Clone locate: searching the reference repositories");
@@ -82,13 +214,19 @@ async function runCloneInner(
 
   // --- 2. Conventions: how the target is organised ---
   onProgress("Clone conventions: reading the target project");
-  const conventions: TargetConventions | null = await readTargetConventions(clone);
+  let conventions: TargetConventions | null = await getCachedTargetConventions(clone.projectPath);
+  if (conventions) {
+    onProgress("Clone conventions: reused from a previous run (target project unchanged)");
+  } else {
+    conventions = await readTargetConventions(clone);
+    if (conventions) await storeTargetConventions(clone.projectPath, conventions);
+    onProgress(
+      conventions
+        ? "Clone conventions: target layout understood"
+        : "Clone conventions: unavailable — mapping will read the target itself",
+    );
+  }
   logger?.recordTargetConventions(conventions);
-  onProgress(
-    conventions
-      ? "Clone conventions: target layout understood"
-      : "Clone conventions: unavailable — mapping will read the target itself",
-  );
 
   // --- 3. Mapping: where each file goes ---
   onProgress("Clone mapping: deciding where each file goes");
@@ -112,46 +250,34 @@ async function runCloneInner(
     `Clone mapping: ${mapping.entries.length} file(s) mapped${uncertain ? `, ${uncertain} uncertain` : ""}`,
   );
 
-  // --- 4. Port, group by group ---
-  const groups = portGroups(mapping);
-  const completedGroups: { group: string; summary: string }[] = [];
+  // Saved before any file is written: from here on, a stopped run costs the
+  // next one nothing for locate, conventions or mapping.
+  const plan: CloneCheckpoint = { inventory, conventions, mapping, completedGroups: [] };
+  await saveCheckpoint("clone", clone.projectPath, checkpointKey, plan);
+  return plan;
+}
 
-  for (const [index, group] of groups.entries()) {
-    onProgress(`Clone port: ${group} (${index + 1}/${groups.length})`);
-    const summary = await portCloneGroup({
-      clone,
-      mapping,
-      conventions,
-      group,
-      completedGroups: [...completedGroups],
-    });
-    logger?.recordClonePort(group, summary);
-    completedGroups.push({ group, summary });
-  }
+function isCloneCheckpoint(data: unknown): data is CloneCheckpoint {
+  const candidate = data as CloneCheckpoint;
+  return (
+    Array.isArray(candidate?.inventory?.files) &&
+    Array.isArray(candidate.mapping?.entries) &&
+    candidate.mapping.entries.length > 0 &&
+    Array.isArray(candidate.completedGroups)
+  );
+}
 
-  // --- 5. Coverage: settled by the filesystem, not by an opinion ---
-  const coverage = checkCoverage(mapping, clone.projectPath);
-  logger?.recordCloneCoverage(coverage);
-  onProgress(`Clone coverage: ${describeCoverage(coverage)}`);
-  // A separate line rather than leaving the shortfall to be read out of a
-  // fraction: this is the one number that says whether the clone is whole, so
-  // a front end should not have to parse "2/3" to notice.
-  if (coverage.missing.length) {
-    onProgress(`Clone coverage: ${coverage.missing.length} file(s) missing`);
-  }
-
-  // --- 6. Build ---
-  let build: CloneBuildVerdict | null = null;
-  if (skipBuild) {
-    onProgress("Clone build: skipped (--no-build)");
-  } else {
-    onProgress("Clone build: compiling the target project");
-    build = await verifyCloneBuild(mapping);
-    logger?.recordCloneBuild(build);
-    onProgress(`Clone build: ${build.ok ? "pass" : "fail"}`);
-  }
-
-  return summarise(clone, mapping, coverage, build, uncertain);
+/**
+ * Whether the finished groups' files have plainly been deleted since the run
+ * stopped. Every target in a finished group missing means a wiped project, not
+ * a rename; a false positive costs a fresh run, never a wrong result.
+ */
+function portedFilesAreGone(data: CloneCheckpoint, projectPath: string): boolean {
+  const done = new Set(data.completedGroups.map((entry) => entry.group));
+  const targets = data.mapping.entries.filter((entry) => done.has(entry.group));
+  if (!targets.length) return false;
+  const missing = checkCoverage({ entries: targets, notes: "" }, projectPath).missing;
+  return missing.length === targets.length;
 }
 
 function summarise(

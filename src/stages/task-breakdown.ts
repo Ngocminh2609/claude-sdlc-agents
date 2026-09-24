@@ -2,7 +2,8 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
 import { referenceDirectories, referencePromptSection } from "../reference-repos.js";
-import type { ReferenceInventory, SpecInput, TaskBreakdown } from "../types.js";
+import { projectContextPromptSection } from "./project-context.js";
+import type { ProjectContext, ReferenceInventory, SpecInput, TaskBreakdown } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Orchestrator, breaking an approved design into an
 ordered list of discrete implementation tasks (e.g. one per API endpoint or
@@ -34,6 +35,7 @@ export async function breakDownTasks(
   spec: SpecInput,
   approvedProposal: string,
   inventory?: ReferenceInventory | null,
+  projectContext?: ProjectContext | null,
 ): Promise<TaskBreakdown> {
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
@@ -53,6 +55,7 @@ export async function breakDownTasks(
     "--- Approved design ---",
     approvedProposal,
     ...referencePromptSection(spec.referencePaths, inventory),
+    ...projectContextPromptSection(projectContext),
   ].join("\n");
 
   const result = await runStructuredQuery<TaskBreakdown>(prompt, options, TASK_SCHEMA);

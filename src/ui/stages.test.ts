@@ -15,8 +15,8 @@ describe("stageOfProgress", () => {
     expect(stageOfProgress("Orchestrator review: reject")).toBe("review");
     expect(stageOfProgress("Breaking approved design into tasks")).toBe("tasks");
     expect(stageOfProgress("4 task(s) to implement")).toBe("tasks");
-    expect(stageOfProgress("Coding: task-2 (attempt 1/3)")).toBe("coding");
-    expect(stageOfProgress("E2E/QA: running (attempt 1/3)")).toBe("e2e");
+    expect(stageOfProgress("Coding: task-2 (2/3)")).toBe("coding");
+    expect(stageOfProgress("E2E/QA: running")).toBe("e2e");
     expect(stageOfProgress("E2E/QA verdict: pass")).toBe("e2e");
   });
 
@@ -38,12 +38,12 @@ describe("stageOfProgress", () => {
 describe("taskCountOfProgress", () => {
   it("reads the count only from the breakdown message", () => {
     expect(taskCountOfProgress("4 task(s) to implement")).toBe(4);
-    expect(taskCountOfProgress("Coding: task-2 (attempt 1/3)")).toBeNull();
+    expect(taskCountOfProgress("Coding: task-2 (2/3)")).toBeNull();
   });
 });
 
 describe("isSetbackProgress", () => {
-  it("flags a rejected design, a failed E2E round and a lost inventory", () => {
+  it("flags a rejected design, a failed E2E and a lost inventory", () => {
     expect(isSetbackProgress("Orchestrator review: reject")).toBe(true);
     expect(isSetbackProgress("E2E/QA verdict: fail")).toBe(true);
     expect(isSetbackProgress("Reference inventory: unavailable — continuing without a file list")).toBe(
@@ -95,7 +95,7 @@ describe("the wording this file depends on", () => {
       'onProgress("Breaking approved design into tasks")',
       "task(s) to implement`)",
       "onProgress(`Coding: ${task.id}",
-      "onProgress(`E2E/QA: running",
+      'onProgress("E2E/QA: running")',
       "onProgress(`E2E/QA verdict: ${e2e.verdict}`)",
     ]) {
       expect(pipelineSource).toContain(literal);

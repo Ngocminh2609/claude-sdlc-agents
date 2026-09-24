@@ -29,6 +29,21 @@ export interface ReferenceInventory {
 }
 
 /**
+ * One shared scan of the target project itself, produced once before Specs &
+ * Arch and reused by every later stage in a feature-spec run — the same
+ * "scan once, share the list" principle `ReferenceInventory` applies to
+ * `--reference` repos, applied here to the project the spec is implemented
+ * against, so specs-arch/task-breakdown/coding/e2e don't each rediscover it.
+ */
+export interface ProjectContext {
+  /** How the project is organised — the same answer regardless of which spec runs against it. */
+  conventions: string;
+  /** Existing files/helpers this specific spec's work should read or reuse. */
+  relevantFiles: ReferenceFile[];
+  notes: string;
+}
+
+/**
  * Clone mode: porting an existing feature from a reference repo into a target
  * project, rather than building something new from a spec.
  *

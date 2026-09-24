@@ -2,6 +2,7 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
+import { StageError } from "../stage-error.js";
 import { referenceDirectories } from "../reference-repos.js";
 import { guardReferenceRepos } from "./coding.js";
 import type { CloneInput, CloneMapping, CloneMappingEntry, TargetConventions } from "../types.js";
@@ -110,7 +111,7 @@ export async function portCloneGroup(request: ClonePortRequest): Promise<string>
 
   const result = await runTextQuery(parts.join("\n"), options);
   if (!result.ok) {
-    throw new Error(`clone port failed on group ${group}: ${result.error ?? "unknown error"}`);
+    throw new StageError(`clone port failed on group ${group}: ${result.error ?? "unknown error"}`);
   }
   return result.text ?? "";
 }

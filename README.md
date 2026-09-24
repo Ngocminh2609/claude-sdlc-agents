@@ -1,6 +1,6 @@
 # claude-sdlc-agents
 
-Local multi-agent software-engineering pipeline built on the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview). You run it against a spec document and a target project directory; it implements the spec and verifies it by actually running the project through a real browser (Playwright), looping back to fix bugs until everything passes.
+Local multi-agent software-engineering pipeline built on the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview). You run it against a spec document and a target project directory; it implements the spec and verifies it by actually running the project through a real browser (Playwright). A failed verification stops the run and reports what failed — it does not loop back and re-code.
 
 ```
 Spec (.md) + optional DB info + optional reference repo(s)
@@ -15,15 +15,20 @@ Orchestrator (review) <──feedback──> Specs & Arch
                                   Task breakdown
                                           │
                                           ▼
-                         Coding & Unit Test (per task) ──> E2E/QA (Playwright, real browser)
-                                          ▲                        │
-                                          └────── feedback ────────┘ fail
-                                                                    │ pass
-                                                                    ▼
-                                                    done — files on disk, git left to you
+                         Coding & Unit Test (once per task) ──> E2E/QA (Playwright, real browser)
+                                  │ a task fails                          │ fail        │ pass
+                                  ▼                                       ▼             ▼
+                    stop: which task, why, what finished      stop: what failed    done — files on disk,
+                                                                                   git left to you
 ```
 
-If the Orchestrator never approves a design, or E2E/QA never passes after retrying, the pipeline stops and prints why — it never pretends something is done when it isn't, and it never touches git.
+If the Orchestrator never approves a design, a coding task fails, or E2E/QA fails, the pipeline stops and prints why — it never pretends something is done when it isn't, and it never touches git.
+
+Nothing after the design review is retried automatically. An earlier version re-coded every task from the first one after an E2E failure; on a real 8-task run that re-spent the whole coding budget, hit the account's usage limit, and crashed. Now a failure stops the run with the failing task or scenarios, the tasks already finished (their code stays on disk), and the SDK's reason code — `rate_limit` means wait for the usage limit to reset, `error_max_turns` means the stage ran out of turns. The next run's Project Context stage reads whatever is already on disk.
+
+**Resuming a stopped run.** Progress is saved after the task breakdown and after every finished task (clone mode: after the mapping and after every ported group) — to `runs/.checkpoint-<kind>-<hash>.json`, never into the target project, and never with a `--db-connection` value in it. It is written step by step rather than at the end because the end is what a killed run (Stop, out of memory, a crash) never reaches. Running the same spec against the same project again picks up from there: design, review, breakdown and the finished tasks are skipped, and the report says what was reused. It starts over instead when the spec (or reference repos) changed since, when every file the finished tasks wrote has been deleted, or when you pass `--fresh` (UI: "Chạy lại từ đầu"). A run that finishes successfully clears its saved progress; one that stops at E2E keeps it, so running again goes straight to E2E.
+
+**Ports.** Every Coding and E2E session is handed a set of TCP ports checked free just before it starts (`src/free-ports.ts`), and told to start the app's servers on those via env vars or CLI flags rather than on defaults — a machine running other projects often has 8080 or 5173 taken, and a real run lost its whole E2E budget to exactly that. The agent is told never to kill a process it did not start, and to stop the servers it started before finishing.
 
 ## How it's built
 
@@ -141,7 +146,7 @@ Clone the "Danh mục đơn vị tính" screen from the reference project
 
 When it finishes:
 - **Success**: the message says E2E/QA passed. Review the diff (`git status` / `git diff` in the target project) and commit yourself.
-- **Escalation**: it prints why it stopped (design never approved, or E2E/QA never passed after retrying) and exits non-zero. Code already written stays on disk for you to inspect and finish by hand — nothing is reverted.
+- **Escalation / stop**: it prints why it stopped (design never approved, a coding task failed, or E2E/QA failed) and exits non-zero. Code already written stays on disk for you to inspect and finish by hand — nothing is reverted.
 
 Every run — success, escalation, or crash — writes a full log to `runs/<timestamp>-<project>-<spec>/` in **this** repo (not the target project): `log.json` (structured) and `report.md` (every proposal, review decision, task, coding attempt, and E2E verdict with acceptance-criteria evidence). The path is printed at the end. The raw value of `--db-connection` is never written to it (only whether one was provided) — a run log is not a safe place for a real credential. `runs/` is not gitignored on purpose, since it's the audit trail of what the AI actually did; commit it or not, that's your call.
 
@@ -278,7 +283,7 @@ Unit tests cover the pure control-flow logic and every stage's tool-permission c
 - **A reference tree is read-only against `Write`/`Edit`, not against `Bash`.** The Coding stage has a shell, and no permission callback can honestly claim to parse arbitrary shell for writes. The prompt forbids modifying a reference repo and the direct file-writing path is blocked; commit anything you point `--reference` at before a run.
 - Structured output (`outputFormat: json_schema`) is validated by the SDK, but a `success` result with no `structured_output` is possible in rare cases. Every stage that relies on structured output treats that case as a failure (fail-closed), not a silent success.
 - The account hitting its plan usage limit, an auth problem, a billing error, or an outage mid-turn does not make the SDK throw. Per its own types, the affected assistant message carries `error` (e.g. `rate_limit`), and the terminal `result` message can still carry `subtype: "success"` while `is_error` is `true` — a success shape whose text is that notice, not real output. `src/sdk-helpers.ts` checks `is_error` on every result rather than trusting the subtype alone; this was found by hitting it for real, not by reading the docs — a run's own usage limit was hit mid-pipeline, and the Coding stage's "summary" became the literal limit notice, accepted before this check existed.
-- Retry caps (3 attempts per loop) and per-stage `maxTurns` are starting defaults — tune them once you have real run data.
+- The design-review cap (3 attempts) and per-stage `maxTurns` are starting defaults — tune them once you have real run data. E2E got 60 turns after a Spring Boot + Vite run ran out of the original 40 before reaching a verdict; with a single E2E attempt, running out of turns is a stopped run.
 - **Prompt injection / secret exfiltration risk (residual, not fully closed).** The spec/DB content flows unsanitized into every stage's prompt. The Coding and E2E stages have `Bash`, and the process's environment carries `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` — if the Bash tool's subprocess inherits that environment (unverified from this repo), a sufficiently crafted injected instruction (e.g. pasted from a compromised page into the spec) could try to exfiltrate them. `curl`/`wget` are explicitly blocked in `disallowedTools` as a first layer, but a disallow-list can't rule out every network-capable interpreter, so this isn't a complete fix.
-- If the pipeline throws an unexpected error mid-run (network failure, SDK bug, etc.), it's caught at the top level, logs full detail to the console, and reports a generic "unexpected error" message rather than leaking internal error text — but it does **not** retry; you have to re-run after checking the log.
+- A stage failure the pipeline recognises (a `StageError`, `src/stage-error.ts`: stage, task and the SDK's reason code, all text this repo wrote) is reported verbatim. Anything else thrown mid-run (network failure, SDK bug, etc.) is caught at the top level, logged in full to the console, and reported as a generic "unexpected error" rather than leaking internal error text. Neither is retried; you re-run after dealing with the cause.
 - No sandboxing beyond the tool-permission restrictions above: the Coding and E2E stages run with real filesystem and network (minus curl/wget) access in your target project. Only point this at projects/directories you're comfortable an AI agent editing directly.

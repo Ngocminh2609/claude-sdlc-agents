@@ -57,6 +57,30 @@ describe("runE2eTest", () => {
     expect(result.behavior).toBe("deny");
   });
 
+  it("includes project conventions but not the relevant-files list (a coding concern)", async () => {
+    runStructuredQuery.mockResolvedValue({ ok: true, data: { verdict: "pass", summary: "ok" } });
+
+    await runE2eTest(spec, "an approved proposal", {
+      conventions: "npm run dev starts the app on :3000",
+      relevantFiles: [{ path: "src/widget-base.ts", role: "base class to extend" }],
+      notes: "",
+    });
+
+    const [prompt] = runStructuredQuery.mock.calls[0];
+    expect(prompt).toContain("npm run dev starts the app");
+    expect(prompt).not.toContain("src/widget-base.ts");
+  });
+
+  it("gives the free ports to the agent and tells it to start every server the app needs", async () => {
+    runStructuredQuery.mockResolvedValue({ ok: true, data: { verdict: "pass", summary: "ok" } });
+
+    await runE2eTest(spec, "an approved proposal", null, [50001, 50002]);
+
+    const [prompt, options] = runStructuredQuery.mock.calls[0];
+    expect(prompt).toContain("50001, 50002");
+    expect(options.systemPrompt).toMatch(/EACH server/);
+  });
+
   it("fails closed (does not silently pass) when the underlying query fails", async () => {
     runStructuredQuery.mockResolvedValue({ ok: false, error: "boom" });
 

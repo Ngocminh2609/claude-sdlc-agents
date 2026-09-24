@@ -7,6 +7,7 @@ import type {
   CloneInput,
   CloneMapping,
   E2eVerdict,
+  ProjectContext,
   ReferenceInventory,
   ReviewVerdict,
   SpecInput,
@@ -75,6 +76,8 @@ export class RunLogger {
   private readonly reviews: ReviewEntry[] = [];
   private tasks: TaskItem[] = [];
   private referenceInventory: ReferenceInventory | null = null;
+  private projectContext: ProjectContext | null = null;
+  private resumedFrom: { savedAt: string; doneTaskIds: string[] } | null = null;
   private readonly coding: CodingEntry[] = [];
   private readonly e2e: E2eEntry[] = [];
   private finalStatus = "in-progress";
@@ -102,6 +105,16 @@ export class RunLogger {
   /** null when no reference repo was given, or when the scan failed. */
   recordReferenceInventory(inventory: ReferenceInventory | null): void {
     this.referenceInventory = inventory;
+  }
+
+  /** null when the scan failed — every stage still falls back to its own exploration. */
+  recordProjectContext(context: ProjectContext | null): void {
+    this.projectContext = context;
+  }
+
+  /** This run continued a stopped one: design and these tasks were reused, not redone. */
+  recordResume(savedAt: string, doneTaskIds: string[]): void {
+    this.resumedFrom = { savedAt, doneTaskIds };
   }
 
   recordCoding(attempt: number, taskId: string, summary: string): void {
@@ -132,6 +145,8 @@ export class RunLogger {
         referencePaths: this.spec.referencePaths ?? [],
       },
       referenceInventory: this.referenceInventory,
+      projectContext: this.projectContext,
+      resumedFrom: this.resumedFrom,
       specsArch: this.specsArch,
       reviews: this.reviews,
       tasks: this.tasks,
@@ -150,6 +165,8 @@ export class RunLogger {
     finishedAt: string;
     spec: { projectPath: string; dbInfoKind: string | null; referencePaths: string[] };
     referenceInventory: ReferenceInventory | null;
+    projectContext: ProjectContext | null;
+    resumedFrom: { savedAt: string; doneTaskIds: string[] } | null;
     specsArch: SpecsArchEntry[];
     reviews: ReviewEntry[];
     tasks: TaskItem[];
@@ -168,6 +185,37 @@ export class RunLogger {
       `- Final status: **${data.finalStatus}**`,
       "",
     ];
+
+    if (data.resumedFrom) {
+      lines.push(
+        "## Resumed run",
+        "",
+        `Continued the run stopped at ${data.resumedFrom.savedAt}. The design, the task list and ` +
+          `${data.resumedFrom.doneTaskIds.length} finished task(s) were reused, not redone: ` +
+          `${data.resumedFrom.doneTaskIds.join(", ") || "(none)"}.`,
+        "",
+      );
+    }
+
+    if (!data.projectContext) {
+      lines.push(
+        "_The project context stage produced nothing for this run — every stage",
+        "below explored the target project on its own instead of sharing one scan._",
+        "",
+      );
+    } else {
+      lines.push("## Project context", "", "**Conventions:**", "", data.projectContext.conventions, "");
+      if (data.projectContext.relevantFiles.length) {
+        lines.push(`**Relevant existing files (${data.projectContext.relevantFiles.length}):**`, "");
+        for (const file of data.projectContext.relevantFiles) {
+          lines.push(`- \`${file.path}\` — ${file.role}`);
+        }
+        lines.push("");
+      }
+      if (data.projectContext.notes.trim()) {
+        lines.push(`**Notes:** ${data.projectContext.notes.trim()}`, "");
+      }
+    }
 
     // Written before the design section on purpose: this is the checklist a
     // reader diffs the delivered files against.

@@ -155,6 +155,12 @@ main {
   margin-bottom: 12px;
 }
 
+.card-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .card-log {
   flex: 1;
   min-height: 260px;
@@ -851,6 +857,23 @@ textarea {
   margin-top: 3px;
   font: 11px var(--mono);
   color: var(--muted);
+}
+
+.run-item-delete {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.run-item-delete:hover {
+  color: var(--err);
+  background: rgba(240, 86, 74, 0.12);
 }
 
 .badge {

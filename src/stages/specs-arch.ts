@@ -2,8 +2,10 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
+import { StageError } from "../stage-error.js";
 import { referenceDirectories, referencePromptSection } from "../reference-repos.js";
-import type { ReferenceInventory, SpecInput } from "../types.js";
+import { projectContextPromptSection } from "./project-context.js";
+import type { ProjectContext, ReferenceInventory, SpecInput } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Specs & Arch agent in an automated SDLC pipeline.
 Read the spec document and the existing project (current working directory),
@@ -34,6 +36,7 @@ export async function runSpecsArch(
   priorProposal: string | null,
   reviewerFeedback: string | undefined,
   inventory?: ReferenceInventory | null,
+  projectContext?: ProjectContext | null,
 ): Promise<string> {
   // Read-only stage: the directory list is enough here, no write guard needed.
   const referenceDirs = referenceDirectories(spec.referencePaths);
@@ -55,6 +58,7 @@ export async function runSpecsArch(
     spec.specMarkdown,
     ...dbContext(spec),
     ...referencePromptSection(spec.referencePaths, inventory),
+    ...projectContextPromptSection(projectContext),
   ];
 
   if (priorProposal && reviewerFeedback) {
@@ -70,7 +74,7 @@ export async function runSpecsArch(
 
   const result = await runTextQuery(parts.join("\n"), options);
   if (!result.ok || !result.text) {
-    throw new Error(`specs-arch stage failed: ${result.error ?? "empty response"}`);
+    throw new StageError(`specs-arch stage failed: ${result.error ?? "empty response"}`);
   }
   return result.text;
 }

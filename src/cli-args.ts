@@ -13,13 +13,15 @@ export interface Args {
   projectPath: string;
   dbInfo?: DbInfo;
   referencePaths: string[];
+  /** Ignore progress saved by a stopped run and start from the beginning. */
+  fresh: boolean;
 }
 
 export const USAGE =
-  "Usage: aidev --spec <path.md> --project <path> [--db-connection <string> | --db-schema <path>] [--reference <dir>]...";
+  "Usage: aidev --spec <path.md> --project <path> [--db-connection <string> | --db-schema <path>] [--reference <dir>]... [--fresh]";
 
 export const CLONE_USAGE =
-  'Usage: aidev clone --what "<feature>" --from <dir> [--from <dir>]... --project <dir> [--no-build]';
+  'Usage: aidev clone --what "<feature>" --from <dir> [--from <dir>]... --project <dir> [--no-build] [--fresh]';
 
 /** Clone mode: port an existing feature from one repo into another. */
 export interface CloneArgs {
@@ -27,12 +29,14 @@ export interface CloneArgs {
   fromPaths: string[];
   projectPath: string;
   skipBuild: boolean;
+  fresh: boolean;
 }
 
 export function parseCloneArgs(argv: string[]): CloneArgs {
   let what: string | undefined;
   let projectPath: string | undefined;
   let skipBuild = false;
+  let fresh = false;
   const fromPaths: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -49,18 +53,22 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
       case "--no-build":
         skipBuild = true;
         break;
+      case "--fresh":
+        fresh = true;
+        break;
     }
   }
 
   if (!what?.trim() || !projectPath || !fromPaths.length) throw new Error(CLONE_USAGE);
 
-  return { what: what.trim(), fromPaths, projectPath, skipBuild };
+  return { what: what.trim(), fromPaths, projectPath, skipBuild, fresh };
 }
 
 export function parseArgs(argv: string[]): Args {
   let specPath: string | undefined;
   let projectPath: string | undefined;
   let dbInfo: DbInfo | undefined;
+  let fresh = false;
   const referencePaths: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -81,12 +89,15 @@ export function parseArgs(argv: string[]): Args {
       case "--reference":
         referencePaths.push(argv[++i]);
         break;
+      case "--fresh":
+        fresh = true;
+        break;
     }
   }
 
   if (!specPath || !projectPath) throw new Error(USAGE);
 
-  return { specPath, projectPath, dbInfo, referencePaths };
+  return { specPath, projectPath, dbInfo, referencePaths, fresh };
 }
 
 /**

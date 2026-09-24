@@ -1,6 +1,5 @@
 export const config = {
   maxSpecAttempts: 3,
-  maxCodingAttempts: 3,
   model: process.env.CLAUDE_MODEL ?? "claude-sonnet-5",
   playwrightTestCommand: "npx playwright test",
   // The three planning stages get Read/Glob/Grep and throw on exhaustion,
@@ -18,10 +17,17 @@ export const config = {
     // This stage only lists files — no design, no code — but listing them
     // exhaustively across a real repo is exactly what costs turns.
     referenceInventory: 50,
+    // Combines what target-conventions and reference-inventory each do for
+    // clone mode (organisation + relevant-file listing) into one pass over
+    // the target project, so it gets roughly both budgets.
+    projectContext: 60,
     orchestratorReview: 25,
     taskBreakdown: 25,
     coding: 60,
-    e2e: 40,
+    // E2E gets one attempt only (a failure stops the run), and a real app can
+    // need several servers started — Spring Boot + a Vite frontend ran out of
+    // the original 40 turns before producing any verdict.
+    e2e: 60,
     // Clone mode. Reading a whole target project to work out its conventions
     // is exploration-heavy; mapping and porting then work from a decided list,
     // so they spend turns on files rather than on searching.

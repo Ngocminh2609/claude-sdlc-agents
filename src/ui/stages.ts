@@ -71,9 +71,10 @@ export function taskCountOfProgress(message: string): number | null {
 
 /**
  * Whether a progress message is a verdict the UI should show as a setback
- * rather than as progress. None of these are terminal on their own — the
- * feature pipeline retries, and a clone run carries on to report the whole
- * picture — so this only colors the strip.
+ * rather than as progress. This only colors the strip: whether the run then
+ * stops (a failed E2E ends a feature run) or carries on (a rejected design is
+ * revised, a clone run reports the whole picture) is the pipeline's call, and
+ * the final status says which.
  */
 export function isSetbackProgress(message: string): boolean {
   return (

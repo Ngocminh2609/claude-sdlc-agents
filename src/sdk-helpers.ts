@@ -69,9 +69,12 @@ async function runQueryLoop<T>(
           lastAssistantError ? `Last assistant-reported error: ${lastAssistantError}.` : "",
           `subtype: ${message.subtype}`,
         );
+        // The reason is the SDK's own code ("rate_limit", "error_max_turns",
+        // ...), not raw exception text, so it is safe to surface — and it is
+        // the one word that tells a user whether to wait, re-auth, or fix code.
         return {
           ok: false,
-          error: "SDK reported an error mid-run (see console output above for details)",
+          error: `SDK reported an error mid-run: ${lastAssistantError ?? message.subtype} (see console output above for details)`,
         };
       }
 
