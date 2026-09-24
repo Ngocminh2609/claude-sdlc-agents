@@ -6,6 +6,7 @@ import { inventoryReferences } from "./stages/reference-inventory.js";
 import { readTargetConventions } from "./stages/target-conventions.js";
 import { StageError } from "./stage-error.js";
 import { clearCheckpoint, fingerprint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import { findFreePorts } from "./free-ports.js";
 import { getCachedTargetConventions, storeTargetConventions } from "./target-conventions-cache.js";
 import type { CloneRunLogger } from "./run-log.js";
 import type { CloneInput, CloneMapping, ReferenceInventory, TargetConventions } from "./types.js";
@@ -97,6 +98,7 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
       conventions,
       group,
       completedGroups: [...completedGroups],
+      runtimePorts: await findFreePorts(),
     });
     logger?.recordClonePort(group, summary);
     completedGroups.push({ group, summary });
@@ -125,7 +127,7 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
     onProgress("Clone build: skipped (--no-build)");
   } else {
     onProgress("Clone build: compiling the target project");
-    build = await verifyCloneBuild(mapping);
+    build = await verifyCloneBuild(mapping, await findFreePorts());
     logger?.recordCloneBuild(build);
     onProgress(`Clone build: ${build.ok ? "pass" : "fail"}`);
   }

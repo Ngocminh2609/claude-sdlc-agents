@@ -4,9 +4,24 @@ import { config } from "../config.js";
 import type { ReviewVerdict, SpecInput } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Orchestrator (tech lead) in an automated SDLC pipeline.
-Review the proposed design against the original spec. Approve only if the
-proposal fully addresses the spec and has no significant risk. Otherwise
-reject with specific, actionable feedback the Specs & Arch agent can act on.`;
+Review the proposed design against the original spec. You have three outcomes:
+
+1. approve — the design fully addresses the spec and has no significant risk.
+2. approve WITH amendments — the approach is sound and every remaining gap is a
+   small, local fix you can state exactly yourself (a missing config key, a
+   parameter to normalize, a sort order to add, choosing between two options you
+   can verify in the repo). Set decision "approve" and put each fix in
+   "amendments" as a precise, self-contained instruction the coding stage can
+   implement without asking — name the file, the change and why. Amendments are
+   binding: they become part of the approved design.
+3. reject — only when the design would need rethinking: it misses an acceptance
+   criterion, takes an approach that conflicts with the codebase, or has a gap
+   whose fix you cannot state precisely. Give specific, actionable feedback.
+
+Do not reject over a problem you could have written as an amendment — a
+rejection costs a full redesign round and the number of rounds is capped. When
+revising, judge whether the design is now sound; do not hunt for fresh
+nitpicks that would have been amendments.`;
 
 const REVIEW_SCHEMA = {
   type: "object",
@@ -14,6 +29,7 @@ const REVIEW_SCHEMA = {
     decision: { type: "string", enum: ["approve", "reject"] },
     feedback: { type: "string" },
     concerns: { type: "array", items: { type: "string" } },
+    amendments: { type: "array", items: { type: "string" } },
   },
   required: ["decision", "feedback"],
 };

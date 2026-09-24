@@ -31,4 +31,18 @@ describe("reviewSpecs", () => {
 
     expect(result.decision).toBe("reject");
   });
+
+  it("lets the reviewer approve with exact fixes instead of rejecting over them", async () => {
+    runStructuredQuery.mockResolvedValue({
+      ok: true,
+      data: { decision: "approve", feedback: "ok", amendments: ["add sql.init.mode"] },
+    });
+
+    const verdict = await reviewSpecs(spec, "a proposal");
+
+    const [, options, schema] = runStructuredQuery.mock.calls[0];
+    expect(schema.properties.amendments).toBeDefined();
+    expect(options.systemPrompt).toMatch(/Do not reject over a problem you could have written as an amendment/);
+    expect(verdict.amendments).toEqual(["add sql.init.mode"]);
+  });
 });

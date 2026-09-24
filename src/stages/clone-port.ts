@@ -2,6 +2,7 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
+import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { StageError } from "../stage-error.js";
 import { referenceDirectories } from "../reference-repos.js";
 import { guardReferenceRepos } from "./coding.js";
@@ -59,12 +60,14 @@ export interface ClonePortRequest {
   group: string;
   /** Groups already ported in this run, with what each reported. */
   completedGroups: { group: string; summary: string }[];
+  /** Ports checked free just before this call, for any server the agent starts to check its work. */
+  runtimePorts?: number[];
 }
 
 const MAX_SUMMARY_CHARS = 1200;
 
 export async function portCloneGroup(request: ClonePortRequest): Promise<string> {
-  const { clone, mapping, conventions, group, completedGroups } = request;
+  const { clone, mapping, conventions, group, completedGroups, runtimePorts = [] } = request;
   const entries = mapping.entries.filter((entry) => entry.group === group);
 
   const options: Options = {
@@ -108,6 +111,8 @@ export async function portCloneGroup(request: ClonePortRequest): Promise<string>
       parts.push(`- ${done.group}: ${truncate(done.summary)}`);
     }
   }
+
+  parts.push(...runtimePortsPromptSection(runtimePorts));
 
   const result = await runTextQuery(parts.join("\n"), options);
   if (!result.ok) {

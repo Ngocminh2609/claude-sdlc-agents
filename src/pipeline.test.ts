@@ -46,6 +46,7 @@ beforeEach(() => {
 });
 
 const savedPlan = {
+  phase: "build",
   inventory: null,
   projectContext: null,
   approvedProposal: "the saved design",
@@ -56,6 +57,102 @@ const savedPlan = {
   ],
   completedTasks: [{ id: "task-1", description: "a", summary: "did a" }],
 };
+
+describe("runPipeline — design review with amendments", () => {
+  it("builds the reviewer's amendments into the approved design every later stage sees", async () => {
+    runSpecsArch.mockResolvedValue("the design");
+    reviewSpecs.mockResolvedValue({
+      decision: "approve",
+      feedback: "sound, two small fixes",
+      amendments: ["Add spring.sql.init.mode: always to application.yml", "Normalize blank category to null"],
+    });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+    const progress: string[] = [];
+
+    await runPipeline({ spec, onProgress: (message) => progress.push(message) });
+
+    expect(reviewSpecs).toHaveBeenCalledTimes(1); // no redesign round spent on small fixes
+    const approved = breakDownTasks.mock.calls[0][1] as string;
+    expect(approved).toContain("the design");
+    expect(approved).toContain("spring.sql.init.mode: always");
+    expect(approved).toContain("Normalize blank category to null");
+    expect(runCoding.mock.calls[0][0].approvedProposal).toBe(approved);
+    expect(runE2eTest.mock.calls[0][1]).toBe(approved);
+    expect(progress).toContain("Orchestrator review: approved with 2 amendment(s) for the coding stage");
+  });
+
+  it("passes a plain approval through unchanged", async () => {
+    runSpecsArch.mockResolvedValue("the design");
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec });
+
+    expect(breakDownTasks.mock.calls[0][1]).toBe("the design");
+  });
+});
+
+describe("runPipeline — resuming a stopped design", () => {
+  it("saves the scan before designing and the proposal after every rejected round", async () => {
+    runSpecsArch.mockResolvedValueOnce("draft 1").mockResolvedValueOnce("draft 2").mockResolvedValueOnce("draft 3");
+    reviewSpecs.mockResolvedValue({ decision: "reject", feedback: "needs work" });
+
+    const result = await runPipeline({ spec });
+
+    expect(result.status).toBe("escalated-specs");
+    const designSaves = saveCheckpoint.mock.calls
+      .map(([, , , data]) => data)
+      .filter((data) => data.phase === "design")
+      .map((data) => data.lastProposal);
+    expect(designSaves).toEqual([null, "draft 1", "draft 2", "draft 3"]);
+    expect(result.message).toContain("keeps revising this last proposal");
+  });
+
+  it("resumes by revising the last proposal with its feedback, without re-scanning", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-09-24T03:48:02Z",
+      data: {
+        phase: "design",
+        inventory: null,
+        projectContext: { conventions: "saved scan", relevantFiles: [], notes: "" },
+        lastProposal: "revision 3",
+        lastFeedback: "add a blank-param addendum",
+      },
+    });
+    runSpecsArch.mockResolvedValue("revision 4");
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec });
+
+    expect(inventoryProjectContext).not.toHaveBeenCalled();
+    const [, priorProposal, feedback, , projectContext] = runSpecsArch.mock.calls[0];
+    expect(priorProposal).toBe("revision 3");
+    expect(feedback).toBe("add a blank-param addendum");
+    expect(projectContext.conventions).toBe("saved scan");
+    expect(breakDownTasks.mock.calls[0][1]).toBe("revision 4");
+  });
+
+  it("reuses the scan but writes a first proposal when it stopped before one existed", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-09-24T03:36:22Z",
+      data: { phase: "design", inventory: null, projectContext: null, lastProposal: null, lastFeedback: null },
+    });
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec });
+
+    expect(inventoryProjectContext).not.toHaveBeenCalled();
+    expect(runSpecsArch.mock.calls[0][1]).toBeNull();
+  });
+});
 
 describe("runPipeline — resuming a stopped run", () => {
   it("skips design, review, breakdown and finished tasks, and codes only what is left", async () => {
@@ -109,7 +206,10 @@ describe("runPipeline — resuming a stopped run", () => {
 
     await runPipeline({ spec });
 
-    const saves = saveCheckpoint.mock.calls.map(([, , , data]) => data.completedTasks.length);
+    const saves = saveCheckpoint.mock.calls
+      .map(([, , , data]) => data)
+      .filter((data) => data.phase === "build")
+      .map((data) => data.completedTasks.length);
     expect(saves).toEqual([0, 1, 2]);
     // An E2E failure keeps the progress, so the next run goes straight to E2E.
     expect(clearCheckpoint).not.toHaveBeenCalled();

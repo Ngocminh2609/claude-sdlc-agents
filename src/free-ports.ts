@@ -14,7 +14,10 @@ import { createServer } from "node:net";
  * another port on "address already in use" rather than treating these as
  * guaranteed.
  */
-export async function findFreePorts(count: number): Promise<number[]> {
+/** Backend, frontend, and one spare — enough for the two-server apps these pipelines run against. */
+export const RUNTIME_PORT_COUNT = 3;
+
+export async function findFreePorts(count: number = RUNTIME_PORT_COUNT): Promise<number[]> {
   const servers = await Promise.all(
     Array.from({ length: count }, () => {
       const server = createServer();

@@ -1,6 +1,7 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
+import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import type { CloneMapping } from "../types.js";
 
 /**
@@ -52,7 +53,10 @@ export interface CloneBuildVerdict {
   errors?: string[];
 }
 
-export async function verifyCloneBuild(mapping: CloneMapping): Promise<CloneBuildVerdict> {
+export async function verifyCloneBuild(
+  mapping: CloneMapping,
+  runtimePorts: number[] = [],
+): Promise<CloneBuildVerdict> {
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep", "Bash"],
@@ -78,6 +82,9 @@ export async function verifyCloneBuild(mapping: CloneMapping): Promise<CloneBuil
     ...mapping.entries.map((entry) => `- ${entry.target}`),
     "",
     "Determine how this project builds, build what these files affect, and report.",
+    // A build normally starts no server, but a check that boots the app (a
+    // Spring context test, a dev server) must not assume a default port.
+    ...runtimePortsPromptSection(runtimePorts),
   ].join("\n");
 
   const result = await runStructuredQuery<CloneBuildVerdict>(prompt, options, BUILD_SCHEMA);

@@ -254,6 +254,11 @@ export class RunLogger {
           `**Feedback:** ${review.review.feedback}`,
           "",
         );
+        if (review.review.amendments?.length) {
+          lines.push("**Required amendments (part of the approved design):**", "");
+          for (const amendment of review.review.amendments) lines.push(`- ${amendment}`);
+          lines.push("");
+        }
       }
     }
 

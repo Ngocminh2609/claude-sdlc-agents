@@ -64,7 +64,10 @@ const STAGE_TEXT = {
     tip: "Quét repo mẫu một lần, lập danh sách file cần clone cho các giai đoạn sau. Bỏ qua khi không khai báo repo mẫu.",
   },
   "specs-arch": { label: "2. Thiết kế & kiến trúc", tip: "Đọc spec và mã nguồn, đề xuất phương án." },
-  review: { label: "3. Duyệt thiết kế", tip: "Một AI khác review phương án, tối đa 3 lần." },
+  review: {
+    label: "3. Duyệt thiết kế",
+    tip: "Một AI khác review phương án, tối đa 3 lần. Lỗi nhỏ đã rõ cách sửa thì duyệt kèm yêu cầu sửa, chỉ reject khi cần thiết kế lại.",
+  },
   tasks: { label: "4. Chia việc", tip: "Cắt thiết kế đã duyệt thành các task nhỏ." },
   coding: { label: "5. Viết code & unit test", tip: "Làm lần lượt từng task." },
   e2e: { label: "6. Kiểm thử E2E", tip: "Playwright chạy trình duyệt thật, chấm theo tiêu chí nghiệm thu." },
@@ -112,7 +115,7 @@ const STATUS_BADGE = {
 const NEXT_STEPS = {
   done: "E2E đã đạt. Bước tiếp theo: mở thư mục dự án, chạy <code>git diff</code> để xem AI đã sửa gì, tự review rồi commit.",
   "escalated-specs":
-    "Qua 3 lần mà bên duyệt vẫn từ chối thiết kế — thường là spec còn mơ hồ. Code <strong>chưa bị đụng tới</strong>. Bước tiếp theo: mở báo cáo, đọc phản hồi của bên duyệt, làm rõ spec rồi chạy lại.",
+    "Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Code <strong>chưa bị đụng tới</strong>. Tiến độ thiết kế đã lưu: bấm Chạy lại với cùng spec sẽ <strong>sửa tiếp từ bản thiết kế cuối</strong> theo phản hồi (thêm 3 lượt), không làm lại từ đầu. Nếu phản hồi cho thấy spec còn mơ hồ, sửa spec rồi chạy — khi đó thiết kế làm lại từ đầu.",
   "escalated-e2e":
     "E2E chưa đạt — hệ thống <strong>dừng ngay, không tự code lại từ task đầu</strong>. Code đã viết <strong>vẫn nằm trên đĩa, không bị hoàn tác</strong>. Bước tiếp theo: xem kết quả bên dưới để biết kịch bản/tiêu chí nào trượt, sửa (hoặc làm rõ spec) rồi chạy lại — tiến độ đã lưu, chạy lại sẽ vào thẳng bước E2E.",
   incomplete:

@@ -93,6 +93,11 @@ export interface ReviewVerdict {
   decision: "approve" | "reject";
   feedback: string;
   concerns?: string[];
+  /**
+   * On an approval: small, exact fixes the reviewer requires, which become part
+   * of the approved design instead of costing a full redesign round.
+   */
+  amendments?: string[];
 }
 
 export interface TaskItem {

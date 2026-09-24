@@ -379,8 +379,9 @@
               phương án thực hiện.
             </li>
             <li>
-              <strong>Duyệt thiết kế</strong> — một AI khác đóng vai người review, chỉ duyệt khi
-              phương án đủ chặt. Bị từ chối thì quay lại bước 1, tối đa 3 lần.
+              <strong>Duyệt thiết kế</strong> — một AI khác đóng vai người review. Phương án đúng hướng
+              mà chỉ còn lỗi nhỏ đã rõ cách sửa thì <em>duyệt kèm yêu cầu sửa</em> (bước code làm luôn);
+              chỉ từ chối khi cần thiết kế lại. Bị từ chối thì sửa lại phương án, tối đa 3 lần.
             </li>
             <li><strong>Chia việc</strong> — cắt thiết kế đã duyệt thành các task nhỏ.</li>
             <li>
@@ -519,8 +520,9 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
             <tr>
               <td><span class="badge" data-status="escalated-specs">Chưa duyệt</span></td>
               <td>
-                Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Thường là spec còn mơ hồ — đọc phản hồi
-                trong báo cáo, làm rõ spec rồi chạy lại. Giai đoạn này chưa đụng tới code.
+                Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Giai đoạn này chưa đụng tới code. Chạy lại
+                với cùng spec sẽ sửa tiếp từ bản thiết kế cuối theo phản hồi; nếu phản hồi cho thấy spec
+                còn mơ hồ thì sửa spec (khi đó thiết kế làm lại từ đầu).
               </td>
             </tr>
             <tr>

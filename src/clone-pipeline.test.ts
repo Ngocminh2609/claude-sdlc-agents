@@ -12,6 +12,9 @@ const storeTargetConventions = vi.fn();
 const loadCheckpoint = vi.fn();
 const saveCheckpoint = vi.fn();
 const clearCheckpoint = vi.fn();
+const findFreePorts = vi.fn();
+
+vi.mock("./free-ports.js", () => ({ findFreePorts }));
 
 vi.mock("./checkpoint.js", () => ({
   fingerprint: (parts: unknown[]) => JSON.stringify(parts),
@@ -63,6 +66,7 @@ beforeEach(() => {
   loadCheckpoint.mockResolvedValue({ status: "none" });
   saveCheckpoint.mockResolvedValue(undefined);
   clearCheckpoint.mockResolvedValue(undefined);
+  findFreePorts.mockResolvedValue([50001, 50002, 50003]);
   mapCloneTargets.mockResolvedValue(mapping);
   portCloneGroup.mockResolvedValue("ported");
   verifyCloneBuild.mockResolvedValue({ ok: true, summary: "compiled" });
@@ -230,6 +234,16 @@ describe("runClonePipeline", () => {
     await runClonePipeline({ clone });
 
     expect(clearCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("hands every port group and the build check a fresh set of free ports", async () => {
+    await runClonePipeline({ clone });
+
+    for (const [request] of portCloneGroup.mock.calls) {
+      expect(request.runtimePorts).toEqual([50001, 50002, 50003]);
+    }
+    expect(verifyCloneBuild.mock.calls[0][1]).toEqual([50001, 50002, 50003]);
+    expect(findFreePorts).toHaveBeenCalledTimes(3); // two groups + the build
   });
 
   it("ignores saved progress when asked to start fresh", async () => {

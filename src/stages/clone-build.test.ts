@@ -52,6 +52,15 @@ describe("verifyCloneBuild", () => {
     expect(verdict.errors).toEqual(["Ctl.java:12"]);
   });
 
+  it("gives the agent free ports in case the build check boots the app", async () => {
+    runStructuredQuery.mockResolvedValue({ ok: true, data: { ok: true, summary: "compiled" } });
+
+    await verifyCloneBuild(mapping, [50001, 50002]);
+
+    const [prompt] = runStructuredQuery.mock.calls[0];
+    expect(prompt).toContain("50001, 50002");
+  });
+
   it("fails closed: no verdict is not a pass", async () => {
     runStructuredQuery.mockResolvedValue({ ok: false, error: "boom" });
 

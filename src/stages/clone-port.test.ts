@@ -39,6 +39,13 @@ describe("portGroups", () => {
 });
 
 describe("portCloneGroup", () => {
+  it("gives the agent free ports for any server it starts to check its work", async () => {
+    await portCloneGroup({ ...request("BE"), runtimePorts: [50001, 50002] });
+
+    const [prompt] = runTextQuery.mock.calls[0];
+    expect(prompt).toContain("50001, 50002");
+  });
+
   it("gives the agent its own group's files with their required changes", async () => {
     await portCloneGroup(request("BE"));
 
