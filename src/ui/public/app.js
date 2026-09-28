@@ -34,6 +34,7 @@ const el = {
   dbSchemaRow: $("db-schema-row"),
   dbSchemaPath: $("db-schema-path"),
   precheck: $("precheck"),
+  metadataStandardsMode: $("metadata-standards-mode"),
   presetSelect: $("preset-select"),
   runStart: $("run-start"),
   runStop: $("run-stop"),
@@ -599,6 +600,7 @@ el.runStart.addEventListener("click", async () => {
  * the shape of each request is readable in one place.
  */
 function runBody() {
+  const noMetadataStandards = el.metadataStandardsMode.value === "skip";
   if (formMode === "clone") {
     return {
       mode: "clone",
@@ -610,6 +612,7 @@ function runBody() {
       skipBuild: el.cloneSkipBuild.checked,
       skipTests: el.cloneSkipTests.checked,
       fresh: $("run-fresh").checked,
+      noMetadataStandards,
     };
   }
   return {
@@ -622,6 +625,7 @@ function runBody() {
     dbConnection: el.dbConnection.value,
     dbSchemaPath: el.dbSchemaPath.value,
     fresh: $("run-fresh").checked,
+    noMetadataStandards,
   };
 }
 

@@ -1,4 +1,5 @@
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { config } from "./config.js";
 import { recordUsage, usageOfResult } from "./token-usage.js";
 
 export interface TextRunResult {
@@ -50,8 +51,10 @@ function isFlaggedError(message: SDKMessage): boolean {
 async function runQueryLoop<T>(
   prompt: string,
   options: Options,
-  onResult: (message: Extract<SDKMessage, { type: "result" }>) => { ok: true; value: T } | { ok: false; error: string },
-): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+  onResult: (
+    message: Extract<SDKMessage, { type: "result" }>,
+  ) => { ok: true; value: T } | { ok: false; error: string; subtype?: string },
+): Promise<{ ok: true; value: T } | { ok: false; error: string; subtype?: string }> {
   let lastAssistantError: string | undefined;
 
   // A unit test that forgets to mock a stage must fail, not start a real agent.
@@ -87,6 +90,10 @@ async function runQueryLoop<T>(
         return {
           ok: false,
           error: `SDK reported an error mid-run: ${lastAssistantError ?? message.subtype} (see console output above for details)`,
+          // The raw subtype, not the interpolated text above — so a caller
+          // (see runStructuredQuery's retry) can act on it without parsing a
+          // human-readable message that also embeds the assistant's own error.
+          subtype: message.subtype,
         };
       }
 
@@ -118,25 +125,42 @@ export interface StructuredRunResult<T> {
   error?: string;
 }
 
+/**
+ * The one subtype this file retries on its own — see `config.maxStructuredOutputRetries`
+ * for why it, and only it, gets a bounded automatic retry.
+ */
+const RETRYABLE_SUBTYPE = "error_max_structured_output_retries";
+
 export async function runStructuredQuery<T>(
   prompt: string,
   options: Options,
   schema: Record<string, unknown>,
+  maxRetries: number = config.maxStructuredOutputRetries,
 ): Promise<StructuredRunResult<T>> {
-  const result = await runQueryLoop<T>(
-    prompt,
-    { ...options, outputFormat: { type: "json_schema", schema } },
-    (message) => {
-      if (message.subtype === "success" && message.structured_output) {
-        return { ok: true, value: message.structured_output as T };
-      }
-      if (message.subtype === "error_max_structured_output_retries") {
-        return { ok: false, error: "could not produce valid structured output" };
-      }
-      // Fail-closed: a "success" result with no structured_output is treated
-      // as a failure too (documented SDK edge case), not a silent pass.
-      return { ok: false, error: `run ended without structured output: ${message.subtype}` };
-    },
-  );
-  return result.ok ? { ok: true, data: result.value } : { ok: false, error: result.error };
+  const queryOptions: Options = { ...options, outputFormat: { type: "json_schema", schema } };
+  const onResult = (message: Extract<SDKMessage, { type: "result" }>) => {
+    if (message.subtype === "success" && message.structured_output) {
+      return { ok: true as const, value: message.structured_output as T };
+    }
+    if (message.subtype === RETRYABLE_SUBTYPE) {
+      return { ok: false as const, error: "could not produce valid structured output", subtype: message.subtype };
+    }
+    // Fail-closed: a "success" result with no structured_output is treated
+    // as a failure too (documented SDK edge case), not a silent pass.
+    return { ok: false as const, error: `run ended without structured output: ${message.subtype}`, subtype: message.subtype };
+  };
+
+  let last: { ok: false; error: string; subtype?: string } | undefined;
+  for (let attempt = 1; attempt <= 1 + maxRetries; attempt++) {
+    const result = await runQueryLoop<T>(prompt, queryOptions, onResult);
+    if (result.ok) return { ok: true, data: result.value };
+    if (result.subtype !== RETRYABLE_SUBTYPE || attempt > maxRetries) return { ok: false, error: result.error };
+    last = result;
+    // A retry here is a brand-new session (see config.ts) — worth a line in
+    // the console the same way the is_error branch already logs its detail.
+    console.error(`Structured output retry ${attempt}/${maxRetries} after ${RETRYABLE_SUBTYPE}.`);
+  }
+  // Unreachable given the loop bounds above; satisfies the type checker and
+  // fails closed rather than returning undefined if that ever changes.
+  return { ok: false, error: last?.error ?? "could not produce valid structured output" };
 }

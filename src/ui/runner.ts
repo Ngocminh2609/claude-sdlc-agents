@@ -76,6 +76,8 @@ export interface RunRequest {
   skipTests?: boolean;
   /** Discard progress saved by a stopped run instead of resuming from it. */
   fresh?: boolean;
+  /** Ignore the target's `.metadata-standards.yml` for this run, even if present. Default: apply it. */
+  noMetadataStandards?: boolean;
 }
 
 export interface RunLine {
@@ -237,6 +239,7 @@ export class PipelineRunner {
       args.push(root.role === "be" ? "--from-be" : root.role === "fe" ? "--from-fe" : "--from", root.path);
     }
     if (request.fresh) args.push("--fresh");
+    if (request.noMetadataStandards) args.push("--no-metadata-standards");
 
     if (clone) {
       if (request.skipBuild) args.push("--no-build");

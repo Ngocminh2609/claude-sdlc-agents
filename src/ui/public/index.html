@@ -244,6 +244,19 @@
             </span>
           </label>
 
+          <div class="field">
+            <label for="metadata-standards-mode">Áp dụng metadata standards (DDI/GSIM/SDC…)</label>
+            <select id="metadata-standards-mode">
+              <option value="apply">Có — theo file .metadata-standards.yml của thư mục dự án (mặc định)</option>
+              <option value="skip">Không — bỏ qua cho riêng lần chạy này, dù thư mục dự án có file đó</option>
+            </select>
+            <p class="hint">
+              Dự án chưa có file <code>.metadata-standards.yml</code> thì chọn "Có" cũng không tác động
+              gì — không có gì để áp dụng. Chọn "Không" không xoá hay sửa file đó, chỉ bỏ qua cho một
+              lần chạy này.
+            </p>
+          </div>
+
           <div class="actions">
             <button class="btn btn-primary" id="run-start" disabled>▶ Chạy pipeline</button>
             <button class="btn btn-danger" id="run-stop" disabled>■ Dừng</button>
@@ -418,11 +431,14 @@
             </li>
             <li><strong>Chia việc</strong> — cắt thiết kế đã duyệt thành các task nhỏ.</li>
             <li>
-              <strong>Viết code &amp; unit test</strong> — làm lần lượt từng task. Mỗi phiên đều được
-              nạp sẵn bộ quy tắc chung: DRY (tìm helper có sẵn trước khi viết mới, tách khi trùng lần
-              thứ hai), chống SQL/shell injection, và bám formatter/linter <em>của chính dự án đích</em>
-              (<code>.editorconfig</code>, Prettier, Spotless, Checkstyle…) — kèm lệnh cấm format lại
-              code không đụng tới, để diff không phình vì whitespace.
+              <strong>Viết code</strong> — làm lần lượt từng task. Sau khi code xong, tự chạy thử luồng
+              chính (gọi API mới, chạy thử hàm mới…) để xác nhận thông luồng — <strong>không viết file
+              unit test riêng</strong>, vì giai đoạn E2E ngay sau đó đã kiểm toàn bộ tiêu chí nghiệm thu
+              qua trình duyệt thật rồi, viết thêm test ở đây chỉ lặp lại việc đó mà làm chậm vòng lặp.
+              Mỗi phiên đều được nạp sẵn bộ quy tắc chung: DRY (tìm helper có sẵn trước khi viết mới,
+              tách khi trùng lần thứ hai), chống SQL/shell injection, và bám formatter/linter <em>của
+              chính dự án đích</em> (<code>.editorconfig</code>, Prettier, Spotless, Checkstyle…) — kèm
+              lệnh cấm format lại code không đụng tới, để diff không phình vì whitespace.
             </li>
             <li>
               <strong>Kiểm thử E2E</strong> — mở trình duyệt thật bằng Playwright, tự viết test theo

@@ -2,6 +2,7 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
+import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { ReviewVerdict, SpecInput } from "../types.js";
 
@@ -47,7 +48,7 @@ export async function reviewSpecs(spec: SpecInput, proposal: string): Promise<Re
   // The reviewer checks the proposal's claims against the code itself, so it
   // needs every target folder a separate BE/FE project has.
   const roots = rootsOf(spec);
-  const secondary = secondaryRootDirs(roots);
+  const secondary = withSkillDirs(secondaryRootDirs(roots), spec.skillCatalog);
   if (secondary.length) options.additionalDirectories = secondary;
 
   const prompt = [
@@ -55,6 +56,7 @@ export async function reviewSpecs(spec: SpecInput, proposal: string): Promise<Re
     spec.specMarkdown,
     ...targetRootsPromptSection(roots),
     ...metadataStandardsPromptSection(spec.metadataStandards, "review"),
+    ...skillCatalogPromptSection(spec.skillCatalog),
     "",
     "--- Proposed design ---",
     proposal,

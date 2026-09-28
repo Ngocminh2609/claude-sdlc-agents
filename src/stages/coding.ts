@@ -4,6 +4,7 @@ import { config, networkExfilBashBlocklist } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
+import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { StageError } from "../stage-error.js";
 import { extraDirectories, isInsideReference, referencePromptSection } from "../reference-repos.js";
@@ -11,15 +12,23 @@ import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
 import type { CompletedTask, ProjectContext, ReferenceInventory, SpecInput, TaskItem } from "../types.js";
 
-const SYSTEM_PROMPT = `You are the Coding & Unit Test agent in an automated SDLC pipeline.
+const SYSTEM_PROMPT = `You are the Coding agent in an automated SDLC pipeline.
 Implement the assigned task from the approved design: write the application
-code and add unit tests for the new behavior, running the test suite until
-it passes. Cover error scenarios and edge cases, not just the happy path.
-Never ignore a failing test, mock around it, or weaken an assertion just to
-make the suite pass — fix the root cause. Do not create or edit any files
-under an "e2e/" directory or named "*.spec.ts" — those belong to the
-independent E2E/QA stage that runs after you. Keep changes scoped to your
-assigned task.
+code, then confirm it actually works by exercising the main flow directly —
+run the app (or the relevant part of it) and drive the new/changed behavior
+yourself (a request against the new endpoint, a script invoking the new
+function, a build-and-run smoke check), the way a person would try it by
+hand. Cover the happy path and the obvious failure case (bad input, not
+found), not an exhaustive matrix. Do not write a persisted unit test file for
+this: the pipeline's own end-to-end stage, run once after every task in this
+pass is done, proves the whole feature against the spec's acceptance
+criteria through a real browser — a per-task test file would duplicate that
+proof at the cost of a slower loop, not add a check that stage does not
+already make. If your change breaks an existing test already in the repo,
+fix the root cause — never weaken the assertion or skip the test to make the
+suite pass. Do not create or edit any files under an "e2e/" directory or
+named "*.spec.ts" — those belong to the independent E2E/QA stage that runs
+after you. Keep changes scoped to your assigned task.
 
 Other agents implement the other tasks of the same design, each in its own
 session, before and after you. Follow the approved design and the interfaces
@@ -54,28 +63,31 @@ export interface CodingRequest {
 }
 
 /**
- * Keeps output out of the reference repositories.
+ * Keeps output out of the reference repositories and the global skills
+ * directory.
  *
  * `additionalDirectories` (below) grants read *and* write to those trees, but
  * "reference" here means read-only: a run must never modify the project it is
- * copying patterns from. Same mechanism the E2E stage uses — and, as noted
- * there, Write/Edit have to stay OUT of `allowedTools`, because a tool listed
- * there bypasses `canUseTool` entirely.
+ * copying patterns from, or the FIS skill catalog it is told to follow. Same
+ * mechanism the E2E stage uses — and, as noted there, Write/Edit have to stay
+ * OUT of `allowedTools`, because a tool listed there bypasses `canUseTool`
+ * entirely.
  *
  * Residual gap, stated rather than papered over: Bash is allowed, so a shell
- * command could still write into a reference tree. The prompt forbids it and
- * this closes the direct path; parsing arbitrary shell to close the rest is
- * not something a permission callback can do honestly.
+ * command could still write into one of these trees. The prompt forbids it
+ * and this closes the direct path; parsing arbitrary shell to close the rest
+ * is not something a permission callback can do honestly.
  */
-export function guardReferenceRepos(referencePaths: string[] | undefined): CanUseTool {
+export function guardReferenceRepos(referencePaths: string[] | undefined, readOnlyDirs: string[] = []): CanUseTool {
+  const guarded = [...(referencePaths ?? []), ...readOnlyDirs];
   return async (toolName, input) => {
     if (toolName === "Write" || toolName === "Edit") {
       const filePath = String((input as { file_path?: string }).file_path ?? "");
-      if (isInsideReference(filePath, referencePaths)) {
+      if (isInsideReference(filePath, guarded)) {
         return {
           behavior: "deny",
           message:
-            "Reference repositories are read-only. Write into the target project (the current working directory) instead.",
+            "That path is read-only (a reference repository or the skills catalog). Write into the target project (the current working directory) instead.",
         };
       }
       return { behavior: "allow" };
@@ -100,16 +112,17 @@ export async function runCoding(request: CodingRequest): Promise<string> {
       "Bash(git checkout*)",
       ...networkExfilBashBlocklist,
     ],
-    canUseTool: guardReferenceRepos(spec.referencePaths),
+    canUseTool: guardReferenceRepos(spec.referencePaths, spec.skillCatalog?.readOnlyDirs),
     systemPrompt: SYSTEM_PROMPT,
     model: config.model,
     maxTurns: config.maxTurns.coding,
   };
 
-  // Reference repos are readable only (canUseTool above); a second target
-  // folder (FE when BE is the working directory) is readable and writable.
+  // Reference repos and the skills catalog are readable only (canUseTool
+  // above); a second target folder (FE when BE is the working directory) is
+  // readable and writable.
   const roots = rootsOf(spec);
-  const extraDirs = extraDirectories(spec.referencePaths, roots);
+  const extraDirs = withSkillDirs(extraDirectories(spec.referencePaths, roots), spec.skillCatalog);
   if (extraDirs.length) options.additionalDirectories = extraDirs;
   withIndexAccess(options, spec.projectIndexes);
 
@@ -124,6 +137,7 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     ...indexPromptSection(spec.projectIndexes),
     ...projectContextPromptSection(projectContext),
     ...metadataStandardsPromptSection(spec.metadataStandards, "code"),
+    ...skillCatalogPromptSection(spec.skillCatalog),
     "",
     `--- Your assigned task (${task.id}) ---`,
     task.description,

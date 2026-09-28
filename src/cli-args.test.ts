@@ -67,12 +67,21 @@ describe("parseCloneArgs", () => {
       skipBuild: false,
       skipTests: false,
       fresh: false,
+      noMetadataStandards: false,
     });
   });
 
   it("reads --no-tests", () => {
     const args = parseCloneArgs(["--what", "x", "--from", "/a", "--project", "/b", "--no-tests"]);
     expect(args.skipTests).toBe(true);
+  });
+
+  it("defaults --no-metadata-standards to false, and reads it when given", () => {
+    expect(parseCloneArgs(["--what", "x", "--from", "/a", "--project", "/b"]).noMetadataStandards).toBe(false);
+    expect(
+      parseCloneArgs(["--what", "x", "--from", "/a", "--project", "/b", "--no-metadata-standards"])
+        .noMetadataStandards,
+    ).toBe(true);
   });
 
   it("takes separate BE/FE sources and targets", () => {
@@ -136,6 +145,15 @@ describe("--fresh on a feature run", () => {
   it("defaults to resuming, and --fresh turns it off", () => {
     expect(parseArgs(["--spec", "a.md", "--project", "/p"]).fresh).toBe(false);
     expect(parseArgs(["--spec", "a.md", "--project", "/p", "--fresh"]).fresh).toBe(true);
+  });
+});
+
+describe("--no-metadata-standards on a feature run", () => {
+  it("defaults to applying the target's .metadata-standards.yml, and the flag skips it for this run", () => {
+    expect(parseArgs(["--spec", "a.md", "--project", "/p"]).noMetadataStandards).toBe(false);
+    expect(parseArgs(["--spec", "a.md", "--project", "/p", "--no-metadata-standards"]).noMetadataStandards).toBe(
+      true,
+    );
   });
 });
 

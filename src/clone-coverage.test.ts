@@ -153,3 +153,49 @@ describe("describeCoverage", () => {
     expect(describeCoverage({ present: [], missing: [] })).toBe("0/0 file(s) present");
   });
 });
+
+describe("checkCoverage with notPorted entries", () => {
+  // Reproduces a defect observed for real: Clone Mapping wrote non-path text
+  // ("(none — not ported)", "(none found)") into `target` for source files it
+  // decided not to port, and checkCoverage — having no way to tell those apart
+  // from a genuinely forgotten file — correctly-but-wrongly counted every one
+  // of them as missing. A clone that ported everything it meant to still came
+  // back "incomplete".
+  const notPorted = (source: string, changes = "duplicate variant"): ReturnType<typeof mapping>["entries"][number] => ({
+    source,
+    target: "",
+    group: "excluded",
+    changes,
+    notPorted: true,
+  });
+
+  it("never checks a notPorted entry against the filesystem, and does not count it missing", () => {
+    const result = checkCoverage(
+      { entries: [...mapping("modules/category/Ported.java").entries, notPorted("Sibling.java")], notes: "" },
+      project,
+    );
+
+    expect(result.present).toEqual(["modules/category/Ported.java"]);
+    expect(result.missing).toEqual([]);
+  });
+
+  it("reports it separately, for a person to check — not silently dropped", () => {
+    const entry = notPorted("Sibling.java", "read-only NienGiam variant, superseded by the Cong entry");
+    const result = checkCoverage({ entries: [entry], notes: "" }, project);
+
+    expect(result.excluded).toEqual([entry]);
+  });
+
+  it("keeps notPorted out of the present/missing fraction entirely", () => {
+    const result = checkCoverage(
+      {
+        entries: [...mapping("modules/category/Ported.java", "modules/category/Missing.java").entries, notPorted("A"), notPorted("B")],
+        notes: "",
+      },
+      project,
+    );
+
+    // 1 present, 1 missing, 2 notPorted — the fraction must read 1/2, not 1/4.
+    expect(describeCoverage(result)).toBe("1/2 file(s) present (2 intentionally not ported)");
+  });
+});

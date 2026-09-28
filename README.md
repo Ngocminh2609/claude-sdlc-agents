@@ -15,11 +15,11 @@ Orchestrator (review) <──feedback──> Specs & Arch
                                   Task breakdown
                                           │
                                           ▼
-                         Coding & Unit Test (once per task) ──> E2E/QA (Playwright, real browser)
-                                  │ a task fails                          │ fail        │ pass
-                                  ▼                                       ▼             ▼
-                    stop: which task, why, what finished      stop: what failed    done — files on disk,
-                                                                                   git left to you
+                                 Coding (once per task) ──> E2E/QA (Playwright, real browser)
+                                        │ a task fails                │ fail        │ pass
+                                        ▼                             ▼             ▼
+                  stop: which task, why, what finished                stop: what failed    done — files on disk,
+                                                                                           git left to you
 ```
 
 If the Orchestrator never approves a design, a coding task fails, or E2E/QA fails, the pipeline stops and prints why — it never pretends something is done when it isn't, and it never touches git.
@@ -163,7 +163,7 @@ Every run — success, escalation, or crash — writes a full log to `runs/<time
 For statistical-metadata projects (NSO-SMR / CSDL Đặc tả & Vi mô), a target can opt in to the rules in [`docs/metadata-standards-ai-guidelines.md`](docs/metadata-standards-ai-guidelines.md): DDI-L 3.3, GSIM 2.0, GSBPM, classifications, statistical disclosure control and object-level ACL. To opt in, commit `.metadata-standards.yml` at the target folder root:
 
 ```yaml
-guideline_version: "1.0"
+guideline_version: "1.1"
 mode: strict            # strict | advisory (advisory: apply to new code, only report on existing code)
 modules: [CORE, DDI, GSIM, CLS, GSBPM, SDC, AUTHZ, NSO]
 decisions:
@@ -172,15 +172,33 @@ agency: "vn.gso"
 waivers: []
 ```
 
-The file is read automatically. You do not pass a flag, and the UI needs no change:
+The file is read automatically — no flag needed for the common case:
 - **No file, or `modules: []` / `none`:** nothing is added to any prompt. The run behaves as before.
-- **With the file:** only the guideline sections for the listed modules, plus the shared sections §0/§2/§3/§13, go into the Specs & Arch, Orchestrator review, Coding, Clone Port and Clone Fix prompts, together with the config text.
+- **With the file:** only the guideline sections for the listed modules, plus the shared sections §0/§2/§3, go into the Specs & Arch, Orchestrator review, Coding, Clone Port and Clone Fix prompts, together with the config text.
 - **Clone Port stays faithful to the source in both modes.** It reports standard violations in the ported code instead of restructuring that code.
 - Every run prints one line stating whether the standards applied.
 - Changing the config invalidates a saved feature plan, because the design was reviewed against the old rules.
 - **Split BE/FE targets:** the two folders may each have the file, but the contents must be identical.
 
+**Per-run override:** `--no-metadata-standards` (UI: the *"Áp dụng metadata standards"* selectbox, set to *"Không"*) skips the file entirely for that one run, even when the target commits one — it does not edit or delete the file, and a run without the flag goes back to reading it. Use it to see how a run behaves without the rules without touching the repo's own config. The progress line then says explicitly that it was skipped by request, so the log never reads as "no config found" when one genuinely exists. This also invalidates a saved plan the same way changing the file would, since the design was (or wasn't) reviewed against the rules either way.
+
 The full template and the decisions D1–D9 are in §1.4 and §2.2 of the guideline.
+
+## FIS skill routing (automatic, always on)
+
+Specs & Arch, Orchestrator review, Task breakdown, Coding, E2E/QA, Clone Mapping, Clone Port and Clone Fix are each shown a short list of installed FIS skills — name and one-line description only, never the full skill content — and told to route to a matching one the same way any other session in this environment does: read the description, and if it clearly covers what the stage is about to do, `Read` that skill's `SKILL.md` and follow it for that part of the work. No skill matches → the stage proceeds exactly as it did before this existed.
+
+Two sources, merged (a same-named project skill wins over a same-named global one):
+- **Global:** `~/.claude/skills` on the machine running `aidev` — the full FIS AI Kit.
+- **Project-local:** each target folder's own `.claude/skills` — a repo's own scaffolds or overrides.
+
+There is no config for this — it is not a project decision the way the metadata standards are, so it needs no opt-in. A repo with neither directory gets an empty catalog, which is the same "not found, skip" behaviour as always. The global directory is opened read-only to every wired stage (like a reference repo) so the agent can actually read an entry from it; Coding and Clone Port/Fix refuse to `Write`/`Edit` into it. Changing the catalog, or which skills rank as relevant, invalidates a saved feature or clone plan, the same as a metadata standards change.
+
+**Relevance filtering and the size cap.** Every installed skill is scored against the task text — the whole spec for a feature run, `--what` for a clone run — by plain keyword overlap (a skill's own `keywords` frontmatter counts for more than words picked out of its name or description), diacritic- and case-insensitive so it still works against a Vietnamese spec. Only skills that score above zero are kept, ranked highest first, and capped at `config.maxSkills` (6). A skill with no overlap at all is dropped, not kept as filler — "not relevant" gets the same "skip" treatment as "not installed". Every run prints how many skills were installed versus how many were judged relevant.
+
+**Known limitation:** `clone --what` is usually a short phrase (often Vietnamese) with little token overlap against this kit's English keywords, so clone-mode filtering leans on whatever else is in `--what` more than it can lean on the phrase alone — a run with a generic `--what` can end up with an empty, correctly-behaved-but-unhelpful catalog on Clone Mapping, Clone Port and Clone Fix alike (all three rank against the same `--what` text). Mentioning the technology by name in `--what` helps it match; there is no other clone-mode signal fed into ranking today.
+
+**Cost, measured on a real target.** Unfiltered, CSDL-VIMO's 48-entry combined catalog cost ~14.5K characters per stage call. Filtered against a realistic Spring Boot + React spec, it drops to ~2.2K characters (6 skills) — on top of whatever the metadata standards module adds, e.g. the Coding stage there goes from ~27K (metadata standards alone) to ~30K (both). Raise or lower the cap in `config.maxSkills` if that trade-off needs to move.
 
 ## Web UI
 
@@ -349,6 +367,19 @@ as it is decided, and Stop is there if it looks wrong. Two honest limits:
   holds it, or `not-needed` + why). Coverage then checks the claim on disk: a merge
   counts only if the file it names exists; `not-needed` and anything undeclared
   stay missing.
+- **A source file the mapping decides must not be ported at all is `notPorted`, not
+  a placeholder path.** A duplicate/read-only sibling variant of a feature (a
+  "Kho"/"Niên giám" read-only page next to the "Cổng" full-CRUD one that was
+  chosen, say), or a class superseded by an existing target-side equivalent, gets
+  `notPorted: true` and a reason in `changes` — not text like `"(none — not
+  ported)"` stuffed into `target`. That distinction is load-bearing: it happened
+  for real once, and coverage — reading `target` literally as a path to look
+  for — correctly-but-wrongly counted every one of those placeholder strings as a
+  missing file, reporting a fully-covered port as `incomplete`. `notPorted`
+  entries are excluded from `missing` (and from the group Clone Port is even
+  asked to do — no turn spent reporting there was nothing to do), but still
+  listed in the report for a person to check, the same "verify this claim"
+  spirit as a `not-needed` deviation.
 - **"The generator will make it later" is not accepted.** An API client the target
   normally generates (`max openapi`, `openapi-generator`) is written by hand now,
   in the generator's own shape (file name from the controller's `@Tag`, function
@@ -386,7 +417,7 @@ as it is decided, and Stop is there if it looks wrong. Two honest limits:
 
 ## How the E2E/QA stage works
 
-It does not trust or re-run the Coding stage's own tests. In a fresh session with no memory of the Coding stage, it:
+It does not trust the Coding stage's own account of what it verified — the Coding stage checks the main flow by hand as it goes, but writes no persisted test of its own. In a fresh session with no memory of the Coding stage, E2E/QA independently:
 1. Reads `package.json` to find how to start the project.
 2. Installs Playwright if the target project doesn't already have it, and sets up a `playwright.config` with a `webServer` block so Playwright starts the app itself and waits for it to be ready.
 3. Writes its own Playwright tests under `e2e/`, covering every acceptance criterion in the spec by driving the real user flows through a real (headless) browser.
@@ -408,6 +439,7 @@ Unit tests cover the pure control-flow logic and every stage's tool-permission c
 - Each Coding call is a fresh session, so the only things holding a multi-task feature together are what the pipeline hands it: the spec, the approved design, and one-line summaries of the tasks already finished in this pass (each capped, so a long report can't crowd out the actual task). That plus the shared working tree — a later task can read what an earlier one wrote. It is not a shared context: if the front end and the API must agree on a name, put that name in the spec rather than hoping two sessions converge on it.
 - **A reference tree is read-only against `Write`/`Edit`, not against `Bash`.** The Coding stage has a shell, and no permission callback can honestly claim to parse arbitrary shell for writes. The prompt forbids modifying a reference repo and the direct file-writing path is blocked; commit anything you point `--reference` at before a run.
 - Structured output (`outputFormat: json_schema`) is validated by the SDK, but a `success` result with no `structured_output` is possible in rare cases. Every stage that relies on structured output treats that case as a failure (fail-closed), not a silent success.
+- **`error_max_structured_output_retries` is the SDK's own retry budget for schema-valid JSON running out, not a bug in a stage's prompt or schema.** Observed for real on a Clone Port group (`SQL:...`) with a large generated-schema `changes` description: the SDK flags the whole result as an error with this subtype, and it surfaces as `SDK reported an error mid-run: error_max_structured_output_retries`. **`runStructuredQuery` (`src/sdk-helpers.ts`) now retries this one subtype automatically**, up to `config.maxStructuredOutputRetries` (default 1) extra attempts — covering every structured-output stage (Task breakdown, Orchestrator review, Clone Mapping, Clone Port, Clone Fix, E2E) with one change, since they all call it. No other failure kind is retried this way (`rate_limit`, auth/billing errors, a thrown exception) — those are not transient the same way, and each retry here is a brand-new session that re-spends the whole stage's own turn budget, not a cheap "ask again for JSON", so the cap stays small on purpose. If a group still fails after using up its retries, re-running the same command (no `--fresh`) still works as a manual retry, resuming past every already-completed stage/group via the checkpoint — confirmed: Locate/Conventions/Mapping and every finished Port group were all "reused from the stopped run", and the failed group ported clean afterward. If the *same* group keeps failing this way, its mapping `changes` text (or the size of what it asks the model to produce as one JSON value) is the first thing to look at, not the pipeline.
 - The account hitting its plan usage limit, an auth problem, a billing error, or an outage mid-turn does not make the SDK throw. Per its own types, the affected assistant message carries `error` (e.g. `rate_limit`), and the terminal `result` message can still carry `subtype: "success"` while `is_error` is `true` — a success shape whose text is that notice, not real output. `src/sdk-helpers.ts` checks `is_error` on every result rather than trusting the subtype alone; this was found by hitting it for real, not by reading the docs — a run's own usage limit was hit mid-pipeline, and the Coding stage's "summary" became the literal limit notice, accepted before this check existed.
 - The design-review cap (3 attempts) and per-stage `maxTurns` are starting defaults — tune them once you have real run data. E2E got 60 turns after a Spring Boot + Vite run ran out of the original 40 before reaching a verdict; with a single E2E attempt, running out of turns is a stopped run.
 - **Prompt injection / secret exfiltration risk (residual, not fully closed).** The spec/DB content flows unsanitized into every stage's prompt. The Coding and E2E stages have `Bash`, and the process's environment carries `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` — if the Bash tool's subprocess inherits that environment (unverified from this repo), a sufficiently crafted injected instruction (e.g. pasted from a compromised page into the spec) could try to exfiltrate them. `curl`/`wget` are explicitly blocked in `disallowedTools` as a first layer, but a disallow-list can't rule out every network-capable interpreter, so this isn't a complete fix.

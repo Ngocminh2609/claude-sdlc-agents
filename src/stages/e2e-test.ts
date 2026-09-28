@@ -3,6 +3,7 @@ import { runStructuredQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
 import { projectContextPromptSection } from "./project-context.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
+import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { E2eVerdict, ProjectContext, SpecInput } from "../types.js";
 
@@ -99,7 +100,7 @@ export async function runE2eTest(
   // Separate BE/FE folders: both servers have to be started, so both folders
   // are opened. Writes stay limited to test files by canUseTool either way.
   const roots = rootsOf(spec);
-  const secondary = secondaryRootDirs(roots);
+  const secondary = withSkillDirs(secondaryRootDirs(roots), spec.skillCatalog);
   if (secondary.length) options.additionalDirectories = secondary;
 
   const prompt = [
@@ -113,6 +114,7 @@ export async function runE2eTest(
     // relevant-files list is a coding concern and would blur this stage's
     // independence from what the Coding stage claims to have done.
     ...projectContextPromptSection(projectContext, { includeRelevantFiles: false }),
+    ...skillCatalogPromptSection(spec.skillCatalog),
     ...runtimePortsPromptSection(runtimePorts),
   ].join("\n");
 

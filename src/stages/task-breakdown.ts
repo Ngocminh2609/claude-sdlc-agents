@@ -3,6 +3,7 @@ import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { extraDirectories, referencePromptSection } from "../reference-repos.js";
+import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
 import type { ProjectContext, ReferenceInventory, SpecInput, TaskBreakdown } from "../types.js";
@@ -48,7 +49,7 @@ export async function breakDownTasks(
 
   // Read-only stage: the directory list is enough here, no write guard needed.
   const roots = rootsOf(spec);
-  const extraDirs = extraDirectories(spec.referencePaths, roots);
+  const extraDirs = withSkillDirs(extraDirectories(spec.referencePaths, roots), spec.skillCatalog);
   if (extraDirs.length) options.additionalDirectories = extraDirs;
   withIndexAccess(options, spec.projectIndexes);
 
@@ -62,6 +63,7 @@ export async function breakDownTasks(
     ...referencePromptSection(spec.referencePaths, inventory),
     ...indexPromptSection(spec.projectIndexes),
     ...projectContextPromptSection(projectContext),
+    ...skillCatalogPromptSection(spec.skillCatalog),
   ].join("\n");
 
   const result = await runStructuredQuery<TaskBreakdown>(prompt, options, TASK_SCHEMA);

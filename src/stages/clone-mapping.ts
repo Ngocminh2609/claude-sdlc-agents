@@ -3,6 +3,7 @@ import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { extraDirectories, referenceDirectories } from "../reference-repos.js";
+import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { referenceRootsPromptSection, rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import type {
   CloneInput,
@@ -52,12 +53,27 @@ For every source file produce one entry:
   declaration, import substitutions, base classes or shared utilities that are
   named differently in the target, table or column prefixes, route paths.
   Be specific: give the actual old and new values, not "adjust imports".
-- uncertain: true when you could not find a clear target-side equivalent, or the
-  placement is a judgement call. Set it rather than guessing silently.
+- uncertain: true when you ARE porting the file but could not find a clear
+  target-side equivalent, or the placement is a judgement call. Never combine
+  with notPorted — that is a decision, not a doubt.
+- notPorted: true when a source file must NOT be ported at all — a duplicate or
+  read-only sibling variant of a feature you are porting under a different
+  entry, something already superseded by an existing target-side equivalent, or
+  no target-side equivalent applies. Say why in changes. Leave target as an
+  empty string "" and group as "excluded" — do not invent a placeholder path or
+  write descriptive text into target (e.g. "(none)", "not applicable", a
+  file name that does not exist); the coverage check reads target literally as
+  a path to look for, so it must be either a real path or genuinely empty.
+  Before deciding "already exists, do not duplicate" for a class defined
+  elsewhere in the target, verify the claim: Glob/Grep the WHOLE target project
+  for that class name, not just the module you expect it in — a multi-module
+  project can place a shared class in a different module folder than the code
+  that uses it, and reporting the wrong path is exactly as unverifiable to the
+  user as not looking at all.
 
 Rules:
-- Every source file you were given gets an entry. If one should NOT be ported,
-  still list it, mark uncertain, and say why in changes.
+- Every source file you were given gets an entry, ported or not — see
+  notPorted above for the ones that should not be.
 - Never target a path inside the reference repository.
 - Order the entries so that what other files depend on comes first — database,
   then server, then client.
@@ -99,6 +115,7 @@ const MAPPING_SCHEMA = {
           group: { type: "string" },
           changes: { type: "string" },
           uncertain: { type: "boolean" },
+          notPorted: { type: "boolean" },
         },
         required: ["source", "target", "layer", "group", "changes"],
       },
@@ -117,9 +134,10 @@ export async function mapCloneTargets(
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
-    // The reference repos, and a second target folder when BE and FE are split
-    // — the mapping has to see where each side's files already live.
-    additionalDirectories: extraDirectories(clone.referencePaths, roots),
+    // The reference repos, a second target folder when BE and FE are split —
+    // the mapping has to see where each side's files already live — and the
+    // skills catalog's global directory, so a routed skill is actually readable.
+    additionalDirectories: withSkillDirs(extraDirectories(clone.referencePaths, roots), clone.skillCatalog),
     model: config.model,
     maxTurns: config.maxTurns.cloneMapping,
   };
@@ -142,6 +160,7 @@ export async function mapCloneTargets(
     "--- How the target project is organised ---",
     conventions?.summary ??
       "(Not available — read the target project yourself before deciding any path.)",
+    ...skillCatalogPromptSection(clone.skillCatalog),
   ].join("\n");
 
   const result = await runStructuredQuery<CloneMapping>(prompt, options, MAPPING_SCHEMA);

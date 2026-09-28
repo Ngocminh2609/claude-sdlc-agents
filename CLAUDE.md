@@ -18,6 +18,17 @@
   tasks already done in that pass. Adding a cross-task assumption without
   adding it to that prompt is how two sessions end up naming one endpoint
   two different ways.
+- Feature mode's Coding stage does not write persisted unit test files (user
+  decision, 2026-09-28) — it verifies its own task by exercising the main flow
+  directly (run the app, hit the endpoint, invoke the function) and relies on
+  E2E/QA, right after it, to independently prove the whole feature against the
+  spec's acceptance criteria through a real browser. This is deliberately
+  scoped to feature mode only: clone mode's Clone Tests stage (mocked
+  CRUD unit tests) stays as-is, because clone mode does not run E2E at all
+  (freshly ported code usually cannot start on its own — see clone mode's own
+  "Two honest limits") and would otherwise have no functional check beyond
+  "does it compile". Do not remove Clone Tests on the strength of this
+  decision; that is a separate call the user has not made.
 - Clone mode (`src/clone-pipeline.ts`) is a second pipeline, not a flag on the
   first. Keep it that way: a port has no design to approve and a feature has no
   file mapping to verify, and merging them would give both a set of stages that
@@ -33,6 +44,20 @@
   filesystem backs (a `merged` claim needs its `coveredBy` file on disk). Do not
   reintroduce a "generated later" deviation: it let pages ship importing API
   clients that did not exist.
+- A `CloneMappingEntry.notPorted` entry (a mapping-time "do not port this source
+  file" decision — a duplicate sibling variant, something superseded by an
+  existing equivalent) is excluded from `checkCoverage`'s present/missing
+  bookkeeping entirely, not counted missing — that is the whole point of the
+  field. It happened for real that Clone Mapping, with no clean way to express
+  "no target applies", wrote prose into `target` instead (`"(none — not
+  ported)"`), and `checkCoverage`, reading `target` literally as a path,
+  correctly-but-wrongly counted every one as a missing file. Never let a future
+  "clean up the schema" pass merge `notPorted` back into `uncertain` or drop it
+  in favour of free text in `target` — `uncertain` means "porting this, not sure
+  where"; `notPorted` means "not porting this at all", and coverage needs to
+  tell the two apart mechanically, not by parsing prose. `portGroups` also skips
+  a group that is nothing but `notPorted` entries, so Clone Port is never asked
+  to spend a turn budget reporting there was no work in it.
 - `checkWiring` (`src/clone-wiring.ts`) is the same kind of check for the
   client↔server seam: imports resolve, API paths hit a controller. Keep it
   deterministic and lenient on matching — a false "not wired" on a correct port
@@ -107,9 +132,45 @@
   means updating `MODULE_SECTION`/`ALWAYS_SECTIONS` (the tests fail loudly
   otherwise). Clone Port stays faithful to its source under the standards; it
   reports violations, it does not restructure the port.
+- `--no-metadata-standards` (`metadataStandardsFor` in `metadata-standards.ts`,
+  wired in `index.ts`, exposed as a selectbox in the UI) is a per-run override,
+  not a second way to opt in — it forces the result to `null` for one run
+  without touching the target's `.metadata-standards.yml`. Keep the override at
+  this one call site rather than teaching `loadMetadataStandards` about it, so
+  every other caller still sees the file honestly.
+  `describeMetadataStandardsOverride` exists only so the progress line can
+  distinguish "skipped by request" from "no file to begin with" — do not let
+  those collapse into the same log line again.
+- The FIS skill catalog (`src/skills-catalog.ts`) is NOT opt-in — unlike
+  metadata standards, it needs no per-project decision, so every stage that
+  designs, reviews or writes code is always shown it (name + description
+  only). A repo with no `~/.claude/skills` and no project `.claude/skills`
+  gets an empty catalog, which reads as "not found, skip" — that fallback is
+  the point, not a bug. The global directory has to be added to
+  `additionalDirectories` (and to `guardReferenceRepos`'s read-only list on
+  Coding/Clone Port/Fix) wherever the catalog is used, or the agent can be
+  told about a skill it cannot actually `Read`.
+- `relevantSkillCatalog` (also in `skills-catalog.ts`) is what actually reaches
+  a stage — `loadSkillCatalog`'s full result is an intermediate value, capped
+  and ranked by `config.maxSkills` in `index.ts` before it is ever attached to
+  `spec`/`clone`. A skill with zero keyword/name/description overlap with the
+  task text is dropped, not kept as a low-ranked filler — do not turn that
+  into a "top N regardless of score" fallback; an empty result there is
+  correct, not a bug to paper over. `totalInstalled` on `SkillCatalog` survives
+  filtering on purpose, for the progress line's "X/Y relevant" — keep setting
+  it from the pre-filter count, not `entries.length`, in any new call site.
 - `src/sdk-helpers.ts` checks `is_error` on the terminal result, not just the
   subtype — a `"success"` subtype can still be an error the SDK didn't throw
   for (rate limit, auth, billing, an outage mid-turn), and that check exists
   because it happened for real, not as a defensive guess. Every stage funnels
   through `runTextQuery`/`runStructuredQuery`, so fix this class of failure
   there once, never per stage.
+- `runStructuredQuery` retries exactly one subtype on its own —
+  `error_max_structured_output_retries`, capped at `config.maxStructuredOutputRetries`
+  — and nothing else, on purpose. Do not widen this to a general is_error retry:
+  this repo already removed a blanket retry loop once (the Coding-stage one in
+  the history above) after it silently re-spent a whole usage budget re-doing
+  finished work. A retry here is cheap only in the sense that it is scoped to
+  one subtype known to be transient; it is still a brand-new session that
+  re-spends the stage's whole turn budget, so keep the cap small and keep it
+  off every other failure kind.

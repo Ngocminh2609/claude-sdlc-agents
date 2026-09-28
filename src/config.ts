@@ -44,6 +44,21 @@ export const config = {
   // Rounds of "fix the ported code, then re-run build and tests" before a
   // clone run gives up and reports incomplete with the remaining failures.
   maxCloneFixRounds: 2,
+  // Hard cap on how many installed FIS skills go into a stage's prompt, after
+  // ranking by relevance to the spec (or `clone --what`) — see
+  // `skills-catalog.ts`. A machine with dozens of skills installed would
+  // otherwise pay for all of them on every call regardless of relevance.
+  maxSkills: 6,
+  // Extra attempts after `error_max_structured_output_retries` — the SDK's
+  // own retry budget for schema-valid JSON exhausted, observed for real on a
+  // Clone Port group (see README "Known limitations"). Scoped to only this
+  // one subtype (`src/sdk-helpers.ts`), never to `rate_limit`/auth/billing
+  // errors or a thrown exception: those are not transient the same way, and
+  // this repo deliberately does not retry blind (see the Coding-stage retry
+  // loop that once re-spent a whole usage budget, `CLAUDE.md`). Each attempt
+  // is a brand-new session — a full re-run of the stage's own turn budget,
+  // not a cheap "ask again for JSON" — so this stays small.
+  maxStructuredOutputRetries: 1,
 };
 
 // Defense-in-depth for stages that get Bash: the spec/DB content flowing

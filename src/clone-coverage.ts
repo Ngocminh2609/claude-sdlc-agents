@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { rootPath, type ProjectRoot } from "./target-roots.js";
-import type { CloneCoverage, CloneDeviation, CloneMapping } from "./types.js";
+import type { CloneCoverage, CloneDeviation, CloneMapping, CloneMappingEntry } from "./types.js";
 
 /**
  * Checks the mapping against the filesystem: every file the mapping promised
@@ -31,8 +31,16 @@ export function checkCoverage(
   const present: string[] = [];
   const missing: string[] = [];
   const merged: CloneDeviation[] = [];
+  const excluded: CloneMappingEntry[] = [];
 
   for (const entry of mapping.entries) {
+    // A mapping-time decision, not a forgotten file — never checked against
+    // the filesystem, never counted missing. See CloneMappingEntry.notPorted.
+    if (entry.notPorted) {
+      excluded.push(entry);
+      continue;
+    }
+
     // Each entry is relative to the target folder its `root` names (BE or FE
     // for a split project); with one folder, that folder.
     const folder = rootPath(roots, entry.root);
@@ -54,7 +62,7 @@ export function checkCoverage(
     }
   }
 
-  return { present, missing, merged };
+  return { present, missing, merged, excluded };
 }
 
 function isFile(file: string): boolean {
@@ -64,6 +72,14 @@ function isFile(file: string): boolean {
 /** One line for the progress stream and the final message. */
 export function describeCoverage(coverage: CloneCoverage): string {
   const merged = coverage.merged?.length ?? 0;
+  const excluded = coverage.excluded?.length ?? 0;
   const total = coverage.present.length + coverage.missing.length + merged;
-  return `${coverage.present.length}/${total} file(s) present${merged ? ` (${merged} merged into other files)` : ""}`;
+  const notes = [
+    merged ? `${merged} merged into other files` : null,
+    // Not part of the X/Y fraction — these were never promised, so they never
+    // needed writing, and counting them in `total` would make the fraction
+    // read like fewer files were delivered than actually were.
+    excluded ? `${excluded} intentionally not ported` : null,
+  ].filter(Boolean);
+  return `${coverage.present.length}/${total} file(s) present${notes.length ? ` (${notes.join(", ")})` : ""}`;
 }

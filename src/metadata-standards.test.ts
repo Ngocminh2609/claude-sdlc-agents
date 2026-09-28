@@ -6,7 +6,9 @@ import {
   METADATA_MODULES,
   METADATA_STANDARDS_FILE,
   describeMetadataStandards,
+  describeMetadataStandardsOverride,
   loadMetadataStandards,
+  metadataStandardsFor,
   metadataStandardsPromptSection,
   type MetadataStandards,
 } from "./metadata-standards.js";
@@ -58,7 +60,7 @@ describe("loadMetadataStandards", () => {
 
   it("sends only the enabled modules' sections, plus the shared ones, and never the interactive protocol", () => {
     const rules = loadMetadataStandards([targetWith(CONFIG)])!.rules;
-    for (const shared of ["## §0.", "## §2.", "## §3.", "## §13."]) expect(rules).toContain(shared);
+    for (const shared of ["## §0.", "## §2.", "## §3."]) expect(rules).toContain(shared);
     expect(rules).toContain("## §4. CORE");
     expect(rules).toContain("## §9. SDC");
     expect(rules).not.toContain("## §6. GSIM");
@@ -66,6 +68,8 @@ describe("loadMetadataStandards", () => {
     // §1 tells an interactive agent to ask the user; the config already answered.
     expect(rules).not.toContain("## §1.");
     expect(rules).not.toContain("## §12.");
+    // The PR checklist restates rules already sent; paying for it on every call buys nothing.
+    expect(rules).not.toContain("## §13.");
   });
 
   it("finds a section for every module in the bundled guideline", () => {
@@ -96,6 +100,35 @@ describe("describeMetadataStandards", () => {
   });
 });
 
+describe("metadataStandardsFor (the --no-metadata-standards override)", () => {
+  it("reads the target's config when not disabled — unchanged from loadMetadataStandards", () => {
+    const root = targetWith(CONFIG);
+    expect(metadataStandardsFor([root], false)?.modules).toEqual(["CORE", "SDC"]);
+  });
+
+  it("returns null when disabled, even though the target has a config file", () => {
+    const root = targetWith(CONFIG);
+    expect(loadMetadataStandards([root])).not.toBeNull(); // the file is genuinely there
+    expect(metadataStandardsFor([root], true)).toBeNull(); // the override still wins
+  });
+
+  it("stays null when disabled and the target has no config either — same outcome, not a new one", () => {
+    expect(metadataStandardsFor([targetWith()], true)).toBeNull();
+  });
+});
+
+describe("describeMetadataStandardsOverride", () => {
+  it("is silent when not disabled, so a normal run prints only describeMetadataStandards's own line", () => {
+    expect(describeMetadataStandardsOverride(false)).toEqual([]);
+  });
+
+  it("names the flag when disabled, so the log never looks like the file just wasn't there", () => {
+    const [line] = describeMetadataStandardsOverride(true);
+    expect(line).toContain("--no-metadata-standards");
+    expect(line).toMatch(/skipped/i);
+  });
+});
+
 describe("metadataStandardsPromptSection", () => {
   const strict = () => loadMetadataStandards([targetWith(CONFIG)]) as MetadataStandards;
 
@@ -108,6 +141,17 @@ describe("metadataStandardsPromptSection", () => {
     const text = metadataStandardsPromptSection(strict(), "code").join("\n");
     expect(text).toContain('agency: "vn.gso"');
     expect(text).toContain("## §4. CORE");
+  });
+
+  it("sends code samples to the coding stage only", () => {
+    const standards = strict();
+    expect(standards.rules).toContain("```");
+    expect(metadataStandardsPromptSection(standards, "code").join("\n")).toContain("```");
+    for (const use of ["design", "review", "port", "fix"] as const) {
+      const text = metadataStandardsPromptSection(standards, use).join("\n");
+      expect(text).not.toContain("```");
+      expect(text).toContain("CORE-04 MUST"); // the rules themselves survive
+    }
   });
 
   it("keeps the port faithful to its source in both modes", () => {

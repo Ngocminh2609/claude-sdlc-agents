@@ -13,6 +13,8 @@ import { indexFor, searchIndexes } from "./project-index.js";
 import { cachedStage, repoVersions } from "./stage-cache.js";
 import { findFreePorts } from "./free-ports.js";
 import { keywordVariants } from "./keyword-variants.js";
+import { metadataStandardsFingerprint } from "./metadata-standards.js";
+import { skillCatalogFingerprint } from "./skills-catalog.js";
 import { referenceRootsPromptSection, rootsOf, type ProjectRoot } from "./target-roots.js";
 import { getCachedTargetConventions, storeTargetConventions } from "./target-conventions-cache.js";
 import type { CloneRunLogger } from "./run-log.js";
@@ -106,6 +108,9 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
     [...clone.referencePaths].sort(),
     (clone.referenceRoots ?? []).map((root) => `${root.role}:${root.path}`),
     roots.map((root) => `${root.role}:${root.path}`),
+    // The mapping and port groups were produced under these rules; different rules need a new plan.
+    metadataStandardsFingerprint(clone.metadataStandards),
+    skillCatalogFingerprint(clone.skillCatalog),
   ]);
 
   const plan = await resumeOrPlanClone(opts, checkpointKey);
@@ -510,6 +515,14 @@ function summarise(
   if (coverage.merged?.length) {
     lines.push("", "Not written as separate files, by the target's own conventions (checked on disk):");
     for (const merged of coverage.merged) lines.push(`- ${merged.target} -> in ${merged.coveredBy} (${merged.reason})`);
+  }
+
+  if (coverage.excluded?.length) {
+    lines.push(
+      "",
+      "Source files the mapping decided NOT to port (a duplicate/superseded/read-only sibling variant — not counted as missing, but a person should still check the reasoning):",
+    );
+    for (const skipped of coverage.excluded) lines.push(`- ${skipped.source} — ${skipped.changes}`);
   }
 
   if (uncertain) {

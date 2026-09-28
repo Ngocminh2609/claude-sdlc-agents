@@ -7,8 +7,15 @@ import { assertRootsExist, buildRoots, type ProjectRoot } from "./target-roots.j
 import { missingBuildManifestWarning } from "./clone-build-manifest-check.js";
 import { runClonePipeline } from "./clone-pipeline.js";
 import { encodeEvent, eventStreamEnabled, type PipelineEvent } from "./events.js";
-import { describeMetadataStandards, loadMetadataStandards } from "./metadata-standards.js";
+import { config } from "./config.js";
+import {
+  describeMetadataStandards,
+  describeMetadataStandardsOverride,
+  loadMetadataStandards,
+  metadataStandardsFor,
+} from "./metadata-standards.js";
 import { runPipeline } from "./pipeline.js";
+import { describeSkillCatalog, loadSkillCatalog, relevantSkillCatalog } from "./skills-catalog.js";
 import { CloneRunLogger, RunLogger } from "./run-log.js";
 import type { CloneInput, SpecInput } from "./types.js";
 
@@ -33,7 +40,8 @@ async function loadSpec(args: Args): Promise<SpecInput> {
     targetRoots,
     dbInfo,
     referencePaths,
-    metadataStandards: loadMetadataStandards(targetRoots),
+    metadataStandards: metadataStandardsFor(targetRoots, args.noMetadataStandards),
+    skillCatalog: relevantSkillCatalog(loadSkillCatalog(targetRoots), specMarkdown, config.maxSkills),
   };
 }
 
@@ -75,7 +83,9 @@ async function runFeature(argv: string[]): Promise<void> {
   const args = parseArgs(argv);
   const spec = await loadSpec(args);
   const logger = new RunLogger(spec, args.specPath);
+  for (const line of describeMetadataStandardsOverride(args.noMetadataStandards)) onProgress(line);
   onProgress(describeMetadataStandards(spec.metadataStandards));
+  onProgress(describeSkillCatalog(spec.skillCatalog));
   spec.projectIndexes = await refreshIndexesForRun(
     [...(spec.targetRoots ?? []).map((root) => root.path), ...(spec.referencePaths ?? [])],
     onProgress,
@@ -111,10 +121,13 @@ async function runClone(argv: string[]): Promise<void> {
     targetRoots,
     referencePaths: referenceRoots.map((root) => root.path),
     referenceRoots,
-    metadataStandards: loadMetadataStandards(targetRoots),
+    metadataStandards: metadataStandardsFor(targetRoots, args.noMetadataStandards),
+    skillCatalog: relevantSkillCatalog(loadSkillCatalog(targetRoots), args.what, config.maxSkills),
   };
   const logger = new CloneRunLogger(clone);
+  for (const line of describeMetadataStandardsOverride(args.noMetadataStandards)) onProgress(line);
   onProgress(describeMetadataStandards(clone.metadataStandards));
+  onProgress(describeSkillCatalog(clone.skillCatalog));
 
   // Advisory only — narrowing a target folder to cut exploration is good
   // practice, but narrowed past its own build boundary the Clone Build stage

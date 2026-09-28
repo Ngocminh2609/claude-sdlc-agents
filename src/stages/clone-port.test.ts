@@ -51,6 +51,57 @@ describe("portGroups", () => {
     expect(layerOf(shuffled.entries[0])).toBe("fe");
     expect(layerOf({ ...shuffled.entries[0], layer: "be" })).toBe("be");
   });
+
+  it("skips a group that is nothing but notPorted entries — no turn budget spent reporting there was no work", () => {
+    const withExcluded: CloneMapping = {
+      entries: [
+        ...mapping.entries,
+        { source: "sibling/a.java", target: "", group: "excluded", changes: "duplicate variant", notPorted: true },
+        { source: "sibling/b.java", target: "", group: "excluded", changes: "duplicate variant", notPorted: true },
+      ],
+      notes: "",
+    };
+    expect(portGroups(withExcluded)).toEqual(["SQL", "BE", "FE"]);
+  });
+
+  it("keeps a mixed group that has both real and notPorted entries", () => {
+    const mixed: CloneMapping = {
+      entries: [
+        { source: "be/Ctl.java", target: "BE/Ctl.java", group: "BE", changes: "" },
+        { source: "be/Old.java", target: "", group: "BE", changes: "superseded", notPorted: true },
+      ],
+      notes: "",
+    };
+    expect(portGroups(mixed)).toEqual(["BE"]);
+  });
+});
+
+describe("portCloneGroup with notPorted entries", () => {
+  it("never hands a notPorted entry to the agent as its own group's work", async () => {
+    const mixed: CloneMapping = {
+      entries: [
+        { source: "be/Ctl.java", target: "BE/Ctl.java", group: "BE", changes: "package rename" },
+        { source: "be/Old.java", target: "", group: "BE", changes: "superseded by Ctl.java", notPorted: true },
+      ],
+      notes: "",
+    };
+    await portCloneGroup({ clone, mapping: mixed, conventions: null, group: "BE", completedGroups: [] });
+
+    const prompt = runStructuredQuery.mock.calls[0][0] as string;
+    expect(prompt).toContain("BE/Ctl.java");
+    expect(prompt).not.toContain("be/Old.java\n"); // not listed as this group's own assignment
+  });
+
+  it("describes a notPorted entry by its reason, not a resolved path, in the full-mapping context", async () => {
+    const withExcluded: CloneMapping = {
+      entries: [...mapping.entries, { source: "sibling/a.java", target: "", group: "excluded", changes: "duplicate variant", notPorted: true }],
+      notes: "",
+    };
+    await portCloneGroup({ clone, mapping: withExcluded, conventions: null, group: "SQL", completedGroups: [] });
+
+    const prompt = runStructuredQuery.mock.calls[0][0] as string;
+    expect(prompt).toContain("sibling/a.java -> (not ported: duplicate variant)");
+  });
 });
 
 describe("the client group's server contract", () => {

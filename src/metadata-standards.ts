@@ -40,11 +40,12 @@ const MODULE_SECTION: Record<MetadataModule, number> = {
 
 /**
  * Sent whatever the modules: labels (§0), decisions and their defaults (§2),
- * shared vocabulary (§3), review checklist (§13). §1 is left out on purpose —
- * it tells an interactive agent to ask the user, and the choice was already
- * made in the config file. §12 is the interactive gap-report workflow.
+ * shared vocabulary (§3). Left out on purpose, because every stage call pays
+ * for them: §1 tells an interactive agent to ask the user (the config already
+ * answered), §12 is the interactive gap-report workflow, and §13 is a human PR
+ * checklist that only restates rules already sent.
  */
-const ALWAYS_SECTIONS = [0, 2, 3, 13];
+const ALWAYS_SECTIONS = [0, 2, 3];
 
 export type StandardsMode = "strict" | "advisory";
 
@@ -157,6 +158,29 @@ export function describeMetadataStandards(standards: MetadataStandards | null | 
   return `Metadata standards: ${standards.modules.join(", ")} (${standards.mode}) from ${standards.configPath}`;
 }
 
+/**
+ * `--no-metadata-standards` (UI: the "Áp dụng metadata standards" selectbox
+ * set to "Không") skips `.metadata-standards.yml` entirely for this one run,
+ * even when the target commits one — an explicit, per-run override, not a
+ * second way to opt in. `loadMetadataStandards` itself stays unaware of this;
+ * the override lives here, one call site up, so every other caller of that
+ * function (tests, a future stage) still sees the file honestly.
+ */
+export function metadataStandardsFor(
+  targetRoots: ProjectRoot[],
+  disabled: boolean,
+  guidelinePath: string = GUIDELINE_PATH,
+): MetadataStandards | null {
+  return disabled ? null : loadMetadataStandards(targetRoots, guidelinePath);
+}
+
+/** The progress line `describeMetadataStandards` alone can't tell apart: skipped by request, vs. no file to begin with. */
+export function describeMetadataStandardsOverride(disabled: boolean): string[] {
+  return disabled
+    ? ["Metadata standards: skipped for this run (--no-metadata-standards), ignoring any .metadata-standards.yml"]
+    : [];
+}
+
 /** What the stage does with code — each needs a different reading of the same rules. */
 export type StandardsUse = "design" | "review" | "code" | "port" | "fix";
 
@@ -194,12 +218,19 @@ const INSTRUCTIONS: Record<StandardsUse, Record<StandardsMode, string>> = {
   },
 };
 
-/** Prompt block for one stage. Empty when the target did not opt in. */
+/**
+ * Prompt block for one stage. Empty when the target did not opt in.
+ *
+ * Code samples go only to the Coding stage: designing, reviewing, porting and
+ * fixing need the rules, not an implementation to copy, and the samples are a
+ * fifth of the excerpt that every one of those calls would otherwise pay for.
+ */
 export function metadataStandardsPromptSection(
   standards: MetadataStandards | null | undefined,
   use: StandardsUse,
 ): string[] {
   if (!standards) return [];
+  const rules = use === "code" ? standards.rules : withoutCodeSamples(standards.rules);
   return [
     "",
     `--- Metadata standards for this project (${standards.mode}; modules: ${standards.modules.join(", ")}) ---`,
@@ -211,8 +242,12 @@ export function metadataStandardsPromptSection(
     standards.configText,
     "",
     "Guideline excerpt:",
-    standards.rules,
+    rules,
   ];
+}
+
+function withoutCodeSamples(rules: string): string {
+  return rules.replace(/\n```[\s\S]*?\n```\n?/g, "\n").replace(/\n{3,}/g, "\n\n");
 }
 
 /** What a saved plan depends on: the chosen standards and the rule text itself. */

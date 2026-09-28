@@ -7,6 +7,7 @@ import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { StageError } from "../stage-error.js";
 import { extraDirectories, referenceDirectories } from "../reference-repos.js";
+import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import {
   isSplit,
   referenceRootsPromptSection,
@@ -144,7 +145,11 @@ const MAX_SUMMARY_CHARS = 1200;
 
 export async function portCloneGroup(request: ClonePortRequest): Promise<ClonePortResult> {
   const { clone, mapping, conventions, group, completedGroups, runtimePorts = [], serverApi } = request;
-  const entries = mapping.entries.filter((entry) => entry.group === group);
+  // notPorted entries are a mapping-time "do not port this" decision — nothing
+  // for this agent to do with them, so they never reach its own file list.
+  // `portGroups` already drops a group that is nothing but these; a MIXED
+  // group still gets called, just without them cluttering its assignment.
+  const entries = mapping.entries.filter((entry) => entry.group === group && !entry.notPorted);
   const roots = rootsOf(clone);
 
   const options: Options = {
@@ -157,10 +162,11 @@ export async function portCloneGroup(request: ClonePortRequest): Promise<ClonePo
       "Bash(git checkout*)",
       ...networkExfilBashBlocklist,
     ],
-    canUseTool: guardReferenceRepos(clone.referencePaths),
-    // References are readable only (the guard above); a second target folder
-    // (FE when BE is the working directory) is readable and writable.
-    additionalDirectories: extraDirectories(clone.referencePaths, roots),
+    canUseTool: guardReferenceRepos(clone.referencePaths, clone.skillCatalog?.readOnlyDirs),
+    // References and the skills catalog are readable only (the guard above); a
+    // second target folder (FE when BE is the working directory) is readable
+    // and writable.
+    additionalDirectories: withSkillDirs(extraDirectories(clone.referencePaths, roots), clone.skillCatalog),
     systemPrompt: SYSTEM_PROMPT,
     model: config.model,
     maxTurns: config.maxTurns.clonePort,
@@ -185,10 +191,14 @@ export async function portCloneGroup(request: ClonePortRequest): Promise<ClonePo
     "",
     "--- The full mapping, for context on what other groups are producing ---",
     ...mapping.entries.map(
-      (entry) => `- [${entry.group}] ${entry.source} -> ${destination(entry, roots)}`,
+      (entry) =>
+        `- [${entry.group}] ${entry.source} -> ${
+          entry.notPorted ? `(not ported: ${entry.changes})` : destination(entry, roots)
+        }`,
     ),
     ...(mapping.notes.trim() ? ["", `Mapping notes: ${mapping.notes.trim()}`] : []),
     ...metadataStandardsPromptSection(clone.metadataStandards, "port"),
+    ...skillCatalogPromptSection(clone.skillCatalog),
   ];
 
   if (completedGroups.length) {
@@ -265,7 +275,7 @@ export interface CloneFixRequest {
 export async function fixCloneFailures(request: CloneFixRequest): Promise<string> {
   const { clone, mapping, conventions, failures, serverApi, round } = request;
   const roots = rootsOf(clone);
-  const referenceGuard = guardReferenceRepos(clone.referencePaths);
+  const referenceGuard = guardReferenceRepos(clone.referencePaths, clone.skillCatalog?.readOnlyDirs);
 
   const options: Options = {
     allowedTools: ["Read", "Glob", "Grep", "Bash"],
@@ -286,7 +296,7 @@ export async function fixCloneFailures(request: CloneFixRequest): Promise<string
       }
       return referenceGuard(toolName, input, context);
     },
-    additionalDirectories: extraDirectories(clone.referencePaths, roots),
+    additionalDirectories: withSkillDirs(extraDirectories(clone.referencePaths, roots), clone.skillCatalog),
     systemPrompt: FIX_PROMPT,
     model: config.model,
     maxTurns: config.maxTurns.cloneFix,
@@ -311,6 +321,7 @@ export async function fixCloneFailures(request: CloneFixRequest): Promise<string
     ...(serverApi.length ? serverApi : ["(none could be read)"]),
     "",
     ...metadataStandardsPromptSection(clone.metadataStandards, "fix"),
+    ...skillCatalogPromptSection(clone.skillCatalog),
     "",
     "--- Failures to fix ---",
     ...failures.map((failure) => `- ${failure}`),
@@ -353,11 +364,18 @@ const LAYER_RANK: Record<CloneLayer, number> = { db: 0, be: 1, fe: 2 };
  * every client group — enforced here rather than trusted to the mapping's
  * listing order, because the client is written against the server code that
  * already exists on disk. Within a layer, the mapping's own order stands.
+ *
+ * A group that is nothing but `notPorted` entries (every source file in it
+ * was a mapping-time "do not port this" decision) is left out entirely —
+ * calling Clone Port for a group with no work in it would spend a turn budget
+ * to report back that there was nothing to do, on every such run.
  */
 export function portGroups(mapping: CloneMapping): string[] {
   const rank = new Map<string, number>();
   const order: string[] = [];
+  const hasWork = new Set(mapping.entries.filter((entry) => !entry.notPorted).map((entry) => entry.group));
   for (const entry of mapping.entries) {
+    if (!hasWork.has(entry.group)) continue;
     const layer = LAYER_RANK[layerOf(entry)];
     if (!rank.has(entry.group)) order.push(entry.group);
     rank.set(entry.group, Math.min(rank.get(entry.group) ?? layer, layer));

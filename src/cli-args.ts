@@ -25,13 +25,15 @@ export interface Args {
   referencePaths: string[];
   /** Ignore progress saved by a stopped run and start from the beginning. */
   fresh: boolean;
+  /** Ignore the target's `.metadata-standards.yml` for this run, even if present. */
+  noMetadataStandards: boolean;
 }
 
 export const USAGE =
-  "Usage: aidev --spec <path.md> (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--db-connection <string> | --db-schema <path>] [--reference <dir>]... [--fresh]";
+  "Usage: aidev --spec <path.md> (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--db-connection <string> | --db-schema <path>] [--reference <dir>]... [--fresh] [--no-metadata-standards]";
 
 export const CLONE_USAGE =
-  'Usage: aidev clone --what "<keyword>" (--from <dir>... | --from-be <dir> [--from-fe <dir>] | --from-fe <dir>) (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--no-build] [--no-tests] [--fresh]';
+  'Usage: aidev clone --what "<keyword>" (--from <dir>... | --from-be <dir> [--from-fe <dir>] | --from-fe <dir>) (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--no-build] [--no-tests] [--fresh] [--no-metadata-standards]';
 
 /** Clone mode: port an existing feature from one repo into another. */
 export interface CloneArgs {
@@ -43,6 +45,8 @@ export interface CloneArgs {
   skipBuild: boolean;
   skipTests: boolean;
   fresh: boolean;
+  /** Ignore the target's `.metadata-standards.yml` for this run, even if present. */
+  noMetadataStandards: boolean;
 }
 
 export function parseCloneArgs(argv: string[]): CloneArgs {
@@ -50,6 +54,7 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
   let skipBuild = false;
   let skipTests = false;
   let fresh = false;
+  let noMetadataStandards = false;
   const target: TargetArgs = {};
   const from: CloneArgs["from"] = { paths: [] };
 
@@ -80,6 +85,9 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
       case "--fresh":
         fresh = true;
         break;
+      case "--no-metadata-standards":
+        noMetadataStandards = true;
+        break;
     }
   }
 
@@ -87,13 +95,14 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
   if (!what?.trim() || !hasTarget(target) || !hasSource) throw new Error(CLONE_USAGE);
   assertOneTargetKind(target, CLONE_USAGE);
 
-  return { what: what.trim(), target, from, skipBuild, skipTests, fresh };
+  return { what: what.trim(), target, from, skipBuild, skipTests, fresh, noMetadataStandards };
 }
 
 export function parseArgs(argv: string[]): Args {
   let specPath: string | undefined;
   let dbInfo: DbInfo | undefined;
   let fresh = false;
+  let noMetadataStandards = false;
   const target: TargetArgs = {};
   const referencePaths: string[] = [];
 
@@ -119,13 +128,16 @@ export function parseArgs(argv: string[]): Args {
       case "--fresh":
         fresh = true;
         break;
+      case "--no-metadata-standards":
+        noMetadataStandards = true;
+        break;
     }
   }
 
   if (!specPath || !hasTarget(target)) throw new Error(USAGE);
   assertOneTargetKind(target, USAGE);
 
-  return { specPath, target, dbInfo, referencePaths, fresh };
+  return { specPath, target, dbInfo, referencePaths, fresh, noMetadataStandards };
 }
 
 /** Consumes a target flag and its value at `i`; true when it did. */

@@ -1,5 +1,6 @@
 import type { IndexRef } from "./project-index.js";
 import type { MetadataStandards } from "./metadata-standards.js";
+import type { SkillCatalog } from "./skills-catalog.js";
 import type { ProjectRoot, RootRole } from "./target-roots.js";
 
 export interface DbInfo {
@@ -20,6 +21,8 @@ export interface SpecInput {
   projectIndexes?: IndexRef[];
   /** The target's opt-in metadata standards; null or absent when it has none. */
   metadataStandards?: MetadataStandards | null;
+  /** Installed FIS skills available to this run; null or absent means none were found. */
+  skillCatalog?: SkillCatalog | null;
 }
 
 /** One file in a reference repo that the work should copy from or follow. */
@@ -82,6 +85,8 @@ export interface CloneInput {
   projectIndexes?: IndexRef[];
   /** The target's opt-in metadata standards; null or absent when it has none. */
   metadataStandards?: MetadataStandards | null;
+  /** Installed FIS skills available to this run; null or absent means none were found. */
+  skillCatalog?: SkillCatalog | null;
 }
 
 /** How the target project is organised, as read from the target itself. */
@@ -92,21 +97,39 @@ export interface TargetConventions {
 export interface CloneMappingEntry {
   /** Path in the reference repo, relative to its root. */
   source: string;
-  /** Path in the target project, relative to the target folder named by `root`. */
+  /**
+   * Path in the target project, relative to the target folder named by
+   * `root`. Meaningless (and not checked) when `notPorted` is true — leave it
+   * empty rather than inventing placeholder text; see `notPorted`.
+   */
   target: string;
   /** Which target folder the file goes into when BE and FE are separate; else the project. */
   root?: RootRole;
-  /** Port unit, e.g. "BE:category" — files sharing one are ported together. */
+  /** Port unit, e.g. "BE:category" — files sharing one are ported together. Meaningless when `notPorted` is true. */
   group: string;
-  /** Renames and substitutions this file needs (package, imports, table names). */
+  /** Renames and substitutions this file needs (package, imports, table names) — or, when `notPorted` is true, why. */
   changes: string;
-  /** The mapping stage was not confident about this one. */
+  /** The mapping stage was not confident about this one. Never set together with `notPorted` — that is a decision, not a doubt. */
   uncertain?: boolean;
+  /**
+   * A mapping-time decision that this source file is not being ported at
+   * all — a duplicate/read-only sibling variant, something superseded by an
+   * existing target-side equivalent, or no target-side equivalent applies.
+   * `changes` carries the reason. Distinct from a Clone Port `CloneDeviation`
+   * (a per-group agent's own after-the-fact account of what it didn't write):
+   * this is decided up front, before any group is even sent to Clone Port, so
+   * such entries are skipped by the port loop and never billed a turn budget
+   * for a file nobody intends to write. `checkCoverage` excludes them from
+   * `missing` — an entry marked here is not a forgotten file, so it must not
+   * read as one — but still surfaces them to the user, the same "a person
+   * checks this claim" spirit as a `not-needed` deviation.
+   */
+  notPorted?: boolean;
   /**
    * Which layer the file belongs to. Groups are ported in layer order — database
    * scripts, then server, then client — so the client is written against a
    * server that already exists. Optional for mappings saved before it existed;
-   * `layerOf` infers it then.
+   * `layerOf` infers it then. Meaningless when `notPorted` is true.
    */
   layer?: CloneLayer;
 }
@@ -167,6 +190,8 @@ export interface CloneCoverage {
   missing: string[];
   /** Declared merges whose `coveredBy` file is on disk. */
   merged?: CloneDeviation[];
+  /** Mapping-time `notPorted` entries — excluded from `missing`, but still reported to the user (see `CloneMappingEntry.notPorted`). */
+  excluded?: CloneMappingEntry[];
 }
 
 /** An import in a ported file that resolves to nothing on disk. */

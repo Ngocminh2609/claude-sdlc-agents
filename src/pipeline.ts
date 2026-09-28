@@ -12,6 +12,7 @@ import { runE2eTest } from "./stages/e2e-test.js";
 import { clearCheckpoint, fingerprint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
 import { findFreePorts } from "./free-ports.js";
 import { metadataStandardsFingerprint } from "./metadata-standards.js";
+import { skillCatalogFingerprint } from "./skills-catalog.js";
 import { StageError } from "./stage-error.js";
 import { rootsOf, type ProjectRoot } from "./target-roots.js";
 import type { RunLogger } from "./run-log.js";
@@ -108,7 +109,7 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
       completedTasks: [...completedTasks],
     });
 
-  // --- Coding & Unit Test, once per task, then E2E/QA once ---
+  // --- Coding, once per task, then E2E/QA once ---
   // One pass only, by design. The earlier loop re-coded every task from the
   // first one after an E2E failure — on a real 8-task run that re-spent the
   // whole coding budget, hit the account's usage limit and crashed. A failure
@@ -416,6 +417,8 @@ function featureFingerprint(spec: SpecInput): string {
     rootsOf(spec).map((root) => `${root.role}:${root.path}`),
     // The design was reviewed against these rules; different rules need a new design.
     metadataStandardsFingerprint(spec.metadataStandards),
+    // A design that routed to a skill (or could have) needs redoing if the catalog changed.
+    skillCatalogFingerprint(spec.skillCatalog),
   ]);
 }
 

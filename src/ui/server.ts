@@ -161,6 +161,7 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
       skipBuild: body.skipBuild === true,
       skipTests: body.skipTests === true,
       fresh: body.fresh === true,
+      noMetadataStandards: body.noMetadataStandards === true,
       projectPath: optionalString(body.projectPath),
       projectBePath: optionalString(body.projectBePath),
       projectFePath: optionalString(body.projectFePath),

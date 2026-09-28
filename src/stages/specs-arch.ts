@@ -6,6 +6,7 @@ import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { StageError } from "../stage-error.js";
 import { extraDirectories, referenceDirectories, referencePromptSection } from "../reference-repos.js";
+import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
 import type { ProjectContext, ReferenceInventory, SpecInput } from "../types.js";
@@ -44,7 +45,7 @@ export async function runSpecsArch(
   // Read-only stage: the directory list is enough here, no write guard needed.
   const referenceDirs = referenceDirectories(spec.referencePaths);
   const roots = rootsOf(spec);
-  const extraDirs = extraDirectories(spec.referencePaths, roots);
+  const extraDirs = withSkillDirs(extraDirectories(spec.referencePaths, roots), spec.skillCatalog);
 
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
@@ -68,6 +69,7 @@ export async function runSpecsArch(
     ...indexPromptSection(spec.projectIndexes),
     ...projectContextPromptSection(projectContext),
     ...metadataStandardsPromptSection(spec.metadataStandards, "design"),
+    ...skillCatalogPromptSection(spec.skillCatalog),
   ];
 
   if (priorProposal && reviewerFeedback) {
