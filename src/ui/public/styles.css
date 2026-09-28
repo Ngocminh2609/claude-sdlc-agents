@@ -389,6 +389,16 @@ textarea {
   min-height: 15px;
 }
 
+.stage-tokens {
+  margin-top: 2px;
+  font: 11px var(--mono);
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 15px;
+}
+
 .stage[data-state="active"] {
   border-color: var(--accent-dim);
   background: rgba(110, 168, 254, 0.08);

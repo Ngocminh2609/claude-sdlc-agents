@@ -65,6 +65,7 @@ describe("getCachedTargetConventions", () => {
         [path.resolve("/tmp/project")]: {
           gitHead: "abc123",
           conventions: { summary: "modules/ layout" },
+          version: 2,
         },
       }),
     );
@@ -72,6 +73,54 @@ describe("getCachedTargetConventions", () => {
     const result = await getCachedTargetConventions("/tmp/project");
 
     expect(result?.summary).toBe("modules/ layout");
+  });
+
+  it("misses an entry cached under an older conventions prompt", async () => {
+    mockGitHead("abc123");
+    readFile.mockResolvedValue(
+      JSON.stringify({
+        [path.resolve("/tmp/project")]: {
+          gitHead: "abc123",
+          conventions: { summary: "modules/ layout" },
+        },
+      }),
+    );
+
+    expect(await getCachedTargetConventions("/tmp/project")).toBeNull();
+  });
+});
+
+describe("target conventions cache with separate BE/FE folders", () => {
+  const roots = [
+    { role: "be" as const, path: path.resolve("/tmp/be") },
+    { role: "fe" as const, path: path.resolve("/tmp/fe") },
+  ];
+
+  it("keys the entry by both folders and versions it by both HEADs", async () => {
+    execFile.mockImplementation(
+      (_cmd: string, _args: string[], opts: { cwd: string }, callback: (...a: unknown[]) => void) =>
+        callback(null, { stdout: opts.cwd.endsWith("be") ? "head-be\n" : "head-fe\n", stderr: "" }),
+    );
+    readFile.mockRejectedValue(new Error("ENOENT"));
+
+    await storeTargetConventions(roots, { summary: "split" });
+
+    const written = JSON.parse(writeFile.mock.calls[0][1] as string);
+    const [key] = Object.keys(written);
+    expect(key).toContain("be:");
+    expect(key).toContain("fe:");
+    expect(written[key].gitHead).toBe("head-be|head-fe");
+  });
+
+  it("is uncachable when either folder is not a git repo", async () => {
+    execFile.mockImplementation(
+      (_cmd: string, _args: string[], opts: { cwd: string }, callback: (...a: unknown[]) => void) =>
+        opts.cwd.endsWith("fe") ? callback(new Error("not a repo")) : callback(null, { stdout: "h\n", stderr: "" }),
+    );
+
+    expect(await getCachedTargetConventions(roots)).toBeNull();
+    await storeTargetConventions(roots, { summary: "split" });
+    expect(writeFile).not.toHaveBeenCalled();
   });
 });
 
@@ -94,7 +143,7 @@ describe("storeTargetConventions", () => {
     const [, contents] = writeFile.mock.calls[0];
     const written = JSON.parse(contents as string);
     const key = path.resolve("/tmp/project");
-    expect(written[key]).toEqual({ gitHead: "abc123", conventions: { summary: "modules/ layout" } });
+    expect(written[key]).toEqual({ gitHead: "abc123", conventions: { summary: "modules/ layout" }, version: 2 });
   });
 
   it("preserves other projects' cached entries when adding one", async () => {

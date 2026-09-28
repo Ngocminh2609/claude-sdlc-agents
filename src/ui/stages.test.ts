@@ -27,6 +27,9 @@ describe("stageOfProgress", () => {
     expect(stageOfProgress("Clone port: BE:category (2/3)")).toBe("port");
     expect(stageOfProgress("Clone coverage: 11/12 file(s) present")).toBe("coverage");
     expect(stageOfProgress("Clone build: pass")).toBe("build");
+    expect(stageOfProgress("Clone wiring: all imports resolve")).toBe("wiring");
+    expect(stageOfProgress("Clone tests: pass — 12 passed, 0 failed")).toBe("tests");
+    expect(stageOfProgress("Clone fix: round 1/2 — 3 failure(s) to fix")).toBe("tests");
   });
 
   it("returns null for anything it does not recognise", () => {
@@ -59,6 +62,9 @@ describe("isSetbackProgress", () => {
     expect(isSetbackProgress("Clone build: fail")).toBe(true);
     expect(isSetbackProgress("Clone coverage: 12/12 file(s) present")).toBe(false);
     expect(isSetbackProgress("Clone build: pass")).toBe(false);
+    expect(isSetbackProgress("Clone tests: fail — 10 passed, 2 failed")).toBe(true);
+    expect(isSetbackProgress("Clone tests: pass — 12 passed, 0 failed")).toBe(false);
+    expect(isSetbackProgress("Clone wiring: 2 problem(s)")).toBe(true);
   });
 });
 
@@ -77,7 +83,12 @@ describe("the wording this file depends on", () => {
       "Clone port: ${group}",
       "Clone coverage: ${describeCoverage(coverage)}",
       "file(s) missing",
-      "Clone build: ${build.ok ? \"pass\" : \"fail\"}",
+      "Clone wiring: ${describeWiring(wiring)}",
+      "Clone wiring: ${problems} problem(s)",
+      "Clone build: ${verdict.ok ? \"pass\" : \"fail\"}",
+      "Clone tests: ${describeTests(verdict)}",
+      "Clone fix: round ${round}",
+      'onProgress("Clone mapping: warning',
     ]) {
       expect(source).toContain(literal);
     }

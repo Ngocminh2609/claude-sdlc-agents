@@ -29,6 +29,32 @@
 - `checkCoverage` stays deterministic. It is the one answer in this repo that
   does not come from a model, which is exactly where its value is — if it ever
   needs judgement, that judgement belongs in a separate stage, not in there.
+  Declared deviations from the port agents feed it, but it only trusts what the
+  filesystem backs (a `merged` claim needs its `coveredBy` file on disk). Do not
+  reintroduce a "generated later" deviation: it let pages ship importing API
+  clients that did not exist.
+- `checkWiring` (`src/clone-wiring.ts`) is the same kind of check for the
+  client↔server seam: imports resolve, API paths hit a controller. Keep it
+  deterministic and lenient on matching — a false "not wired" on a correct port
+  is worse than missing an exotic route.
+- Clone port order is enforced by `portGroups` (db → be → fe, via `layerOf`), not
+  trusted to the mapping's listing. Client groups are written against
+  `portedServerApi`, which is read from disk. Keep that input deterministic.
+- The test stage writes only `isTestFile` paths, and the fix stage writes
+  everything except them. Do not widen either guard. That split is what makes a
+  passing test mean something.
+- Bump `CLONE_PLAN_VERSION` in `src/clone-pipeline.ts` when the mapping's contract
+  changes, so a mapping saved under old rules is not resumed.
+- The project index (`src/project-index.ts`) is plain code and refreshed from git
+  every run. Stages get it through `indexPromptSection` + `withIndexAccess`.
+  Cached stage answers (`src/stage-cache.ts`) are keyed on `repoVersions`, which
+  is HEAD plus uncommitted state. Never key a cache on something looser than the
+  content it was read from. The one deliberate exception is target conventions,
+  keyed on `structureHash` because they describe layout. Bump `INDEX_VERSION`
+  when what an entry holds changes.
+- Bump `CONVENTIONS_VERSION` in `src/target-conventions-cache.ts` whenever the
+  Target Conventions prompt asks for something new; otherwise an unchanged git
+  HEAD keeps serving the old, incomplete answer.
 - The Reference Inventory stage exists because read access is not reading: its
   file list is what the later stages work through. If it returns null the run
   continues, but every layer must keep saying so — progress line, stage strip,
@@ -65,10 +91,22 @@
   a fingerprint of the inputs the plan came from. Save progress as each step
   finishes, never only at the end — a killed process never reaches the end.
   A checkpoint must never hold a `--db-connection` value.
+- A target is one "app" folder or separate "be"/"fe" folders
+  (`src/target-roots.ts`). The first root is the working directory; every
+  other root goes into `additionalDirectories` for each stage that reads or
+  writes the target. Anything that assumes `projectPath` is the whole project
+  (coverage, caches, checkpoints, build checks) must go through the roots.
 - Stages that may start the target app (Coding, E2E, Clone Port, Clone
   Build) get free ports from
   `findFreePorts` in the pipeline and the shared `runtimePortsPromptSection`
   rule. Never hardcode or assume a default port in a stage prompt.
+- Metadata standards (`src/metadata-standards.ts`) are opt-in per target via
+  `.metadata-standards.yml`. Without it no prompt changes — never make them a
+  default. Only the enabled modules' guideline sections are sent, located by
+  `## §N.` heading: renumbering `docs/metadata-standards-ai-guidelines.md`
+  means updating `MODULE_SECTION`/`ALWAYS_SECTIONS` (the tests fail loudly
+  otherwise). Clone Port stays faithful to its source under the standards; it
+  reports violations, it does not restructure the port.
 - `src/sdk-helpers.ts` checks `is_error` on the terminal result, not just the
   subtype — a `"success"` subtype can still be an error the SDK didn't throw
   for (rate limit, auth, billing, an outage mid-turn), and that check exists

@@ -17,12 +17,15 @@ const el = {
   quickstart: $("quickstart"),
   modeSwitch: $("mode-switch"),
   stepRunNum: $("step-run-num"),
-  projectPath: $("project-path"),
+  projectBe: $("project-be"),
+  projectFe: $("project-fe"),
   specPath: $("spec-path"),
   referencePath: $("reference-path"),
   cloneWhat: $("clone-what"),
-  cloneFrom: $("clone-from"),
+  cloneFromBe: $("clone-from-be"),
+  cloneFromFe: $("clone-from-fe"),
   cloneSkipBuild: $("clone-skip-build"),
+  cloneSkipTests: $("clone-skip-tests"),
   dbMode: $("db-mode"),
   dbConnection: $("db-connection"),
   dbConnectionRow: $("db-connection-row"),
@@ -86,7 +89,15 @@ const STAGE_TEXT = {
     label: "5. Kiểm phủ",
     tip: "Đối chiếu bằng code: mỗi dòng trong bảng ánh xạ đã có file thật trên đĩa chưa.",
   },
-  build: { label: "6. Kiểm biên dịch", tip: "Build lại dự án đích để xem code vừa port có compile không." },
+  wiring: {
+    label: "6. Kiểm nối FE↔BE",
+    tip: "Đối chiếu bằng code: mọi import trong file FE vừa port có trỏ tới file thật không, và mọi API FE gọi có controller BE nào map không. Chạy cả khi bỏ qua build.",
+  },
+  build: { label: "7. Kiểm biên dịch", tip: "Build lại dự án đích; chỉ lỗi ở file vừa port (hoặc do chúng gây ra) mới tính là lỗi." },
+  tests: {
+    label: "8. Unit test",
+    tip: "Viết và chạy unit test CRUD: BE (controller qua MockMvc, service với Mockito) và FE (mỗi hàm API gọi đúng URL/method của BE). Test fail → agent sửa code (không được sửa test), rồi chạy lại build + test, tối đa 2 vòng.",
+  },
 };
 
 const STATUS_TEXT = {
@@ -235,11 +246,13 @@ function saveForm() {
   localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
-      projectPath: el.projectPath.value,
+      projectBe: el.projectBe.value,
+      projectFe: el.projectFe.value,
       specPath: el.specPath.value,
       referencePath: el.referencePath.value,
       cloneWhat: el.cloneWhat.value,
-      cloneFrom: el.cloneFrom.value,
+      cloneFromBe: el.cloneFromBe.value,
+      cloneFromFe: el.cloneFromFe.value,
       dbMode: el.dbMode.value,
       dbSchemaPath: el.dbSchemaPath.value,
     }),
@@ -249,11 +262,15 @@ function saveForm() {
 function restoreForm() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    el.projectPath.value = saved.projectPath || "";
+    // A form saved before separate BE/FE folders had one project folder: put
+    // it in both boxes, which the server treats as one project — same as before.
+    el.projectBe.value = saved.projectBe ?? saved.projectPath ?? "";
+    el.projectFe.value = saved.projectFe ?? saved.projectPath ?? "";
     el.specPath.value = saved.specPath || "";
     el.referencePath.value = saved.referencePath || "";
     el.cloneWhat.value = saved.cloneWhat || "";
-    el.cloneFrom.value = saved.cloneFrom || "";
+    el.cloneFromBe.value = saved.cloneFromBe ?? saved.cloneFrom ?? "";
+    el.cloneFromFe.value = saved.cloneFromFe ?? saved.cloneFrom ?? "";
     el.dbMode.value = saved.dbMode || "none";
     el.dbSchemaPath.value = saved.dbSchemaPath || "";
   } catch {
@@ -307,9 +324,10 @@ function syncDbMode() {
 function syncRunButton(running = el.runStop.disabled === false) {
   const inputsFilled =
     formMode === "clone"
-      ? el.cloneWhat.value.trim() && el.cloneFrom.value.trim()
+      ? el.cloneWhat.value.trim() && (el.cloneFromBe.value.trim() || el.cloneFromFe.value.trim())
       : el.specPath.value.trim();
-  const ready = el.projectPath.value.trim() && inputsFilled && el.precheck.checked && !running;
+  const hasTarget = el.projectBe.value.trim() || el.projectFe.value.trim();
+  const ready = hasTarget && inputsFilled && el.precheck.checked && !running;
 
   el.runStart.disabled = !ready;
   el.runStart.textContent = formMode === "clone" ? "▶ Chạy clone" : "▶ Chạy pipeline";
@@ -318,8 +336,8 @@ function syncRunButton(running = el.runStop.disabled === false) {
     : running
       ? "Đang có một lần chạy"
       : formMode === "clone"
-        ? "Điền thư mục dự án đích, tên tính năng, repo mẫu và tick ô xác nhận"
-        : "Điền thư mục dự án, file spec và tick ô xác nhận ở trên";
+        ? "Điền thư mục BE/FE đích, từ khoá tính năng, repo mẫu (BE/FE) và tick ô xác nhận"
+        : "Điền thư mục BE/FE, file spec và tick ô xác nhận ở trên";
 }
 
 el.dbMode.addEventListener("change", () => {
@@ -328,11 +346,13 @@ el.dbMode.addEventListener("change", () => {
 });
 
 for (const input of [
-  el.projectPath,
+  el.projectBe,
+  el.projectFe,
   el.specPath,
   el.referencePath,
   el.cloneWhat,
-  el.cloneFrom,
+  el.cloneFromBe,
+  el.cloneFromFe,
   el.dbSchemaPath,
 ]) {
   input.addEventListener("input", () => syncRunButton());
@@ -369,7 +389,9 @@ function renderPresets() {
 el.presetSelect.addEventListener("change", () => {
   const preset = presets.find((p) => p.id === el.presetSelect.value);
   if (!preset) return;
-  el.projectPath.value = preset.projectPath;
+  // Older presets hold one project folder; it goes in both boxes (one project).
+  el.projectBe.value = preset.projectBe || preset.projectPath || "";
+  el.projectFe.value = preset.projectFe || preset.projectPath || "";
   el.specPath.value = preset.specPath;
   el.referencePath.value = preset.referencePath || "";
   el.dbMode.value = preset.dbMode || "none";
@@ -380,7 +402,8 @@ el.presetSelect.addEventListener("change", () => {
 });
 
 $("preset-save").addEventListener("click", async () => {
-  const suggestion = el.projectPath.value.split(/[\\/]/).filter(Boolean).pop() || "thiet-lap";
+  const suggestion =
+    (el.projectBe.value || el.projectFe.value).split(/[\\/]/).filter(Boolean).pop() || "thiet-lap";
   const name = prompt("Đặt tên cho bộ thiết lập này", suggestion);
   if (!name) return;
   presets = (
@@ -388,7 +411,8 @@ $("preset-save").addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify({
         name,
-        projectPath: el.projectPath.value,
+        projectBe: el.projectBe.value,
+        projectFe: el.projectFe.value,
         specPath: el.specPath.value,
         referencePath: el.referencePath.value,
         dbMode: el.dbMode.value,
@@ -474,19 +498,30 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !el.picker.classList.contains("hidden")) closePicker(null);
 });
 
+const FOLDER_FIELDS = {
+  "project-be": { field: "projectBe", sibling: "projectFe", title: "Chọn thư mục BE của dự án đích" },
+  "project-fe": { field: "projectFe", sibling: "projectBe", title: "Chọn thư mục FE của dự án đích" },
+  "clone-from-be": { field: "cloneFromBe", sibling: "cloneFromFe", title: "Chọn thư mục BE của repo mẫu (chỉ đọc)" },
+  "clone-from-fe": { field: "cloneFromFe", sibling: "cloneFromBe", title: "Chọn thư mục FE của repo mẫu (chỉ đọc)" },
+};
+
 for (const button of document.querySelectorAll("[data-browse]")) {
   button.addEventListener("click", async () => {
     const what = button.dataset.browse;
 
-    if (what === "project") {
+    // The four BE/FE folder boxes all pick a directory the same way.
+    const folderField = FOLDER_FIELDS[what];
+    if (folderField) {
+      const field = el[folderField.field];
       const chosen = await openPicker({
         mode: "dir",
         kind: "dir",
-        title: "Chọn thư mục dự án đích",
-        startPath: el.projectPath.value,
+        title: folderField.title,
+        // Start next to whichever folder is already filled in: BE and FE usually sit side by side.
+        startPath: field.value || el[folderField.sibling].value,
       });
       if (chosen) {
-        el.projectPath.value = chosen;
+        field.value = chosen;
         saveForm();
         syncRunButton();
       }
@@ -506,21 +541,6 @@ for (const button of document.querySelectorAll("[data-browse]")) {
         saveForm();
         syncRunButton();
         if (what === "spec-open") loadSpecFile(chosen);
-      }
-      return;
-    }
-
-    if (what === "clone-from") {
-      const chosen = await openPicker({
-        mode: "dir",
-        kind: "dir",
-        title: "Chọn repo mẫu để clone từ đó (chỉ đọc)",
-        startPath: el.cloneFrom.value,
-      });
-      if (chosen) {
-        el.cloneFrom.value = chosen;
-        saveForm();
-        syncRunButton();
       }
       return;
     }
@@ -582,18 +602,20 @@ function runBody() {
   if (formMode === "clone") {
     return {
       mode: "clone",
-      projectPath: el.projectPath.value,
+      projectBePath: el.projectBe.value,
+      projectFePath: el.projectFe.value,
       what: el.cloneWhat.value,
-      // The CLI takes several sources; the form offers one, which covers the
-      // case this exists for — porting one feature out of one project.
-      referencePaths: el.cloneFrom.value.trim() ? [el.cloneFrom.value.trim()] : [],
+      referenceBePath: el.cloneFromBe.value,
+      referenceFePath: el.cloneFromFe.value,
       skipBuild: el.cloneSkipBuild.checked,
+      skipTests: el.cloneSkipTests.checked,
       fresh: $("run-fresh").checked,
     };
   }
   return {
     mode: "feature",
-    projectPath: el.projectPath.value,
+    projectBePath: el.projectBe.value,
+    projectFePath: el.projectFe.value,
     specPath: el.specPath.value,
     referencePaths: el.referencePath.value.trim() ? [el.referencePath.value.trim()] : [],
     dbMode: el.dbMode.value,
@@ -631,7 +653,8 @@ function renderState(state) {
     const took = state.finishedAt
       ? ` · mất ${formatDuration(Date.parse(state.finishedAt) - Date.parse(state.startedAt))}`
       : "";
-    el.runMeta.textContent = `Bắt đầu ${started}${tasks}${took}`;
+    const spent = state.usage && usageTokens(state.usage) ? ` · ${describeUsage(state.usage, true)}` : "";
+    el.runMeta.textContent = `Bắt đầu ${started}${tasks}${took}${spent}`;
   } else {
     el.runMeta.textContent = "";
   }
@@ -658,11 +681,32 @@ function renderStages(state) {
       : state.completedStages.includes(id)
         ? "done"
         : "pending";
+    const spent = state.stageUsage?.[id];
+    if (spent && usageTokens(spent)) item.title = `${text.tip}\n\nĐã tiêu: ${describeUsage(spent, true)}`.trim();
     item.innerHTML = `<div class="stage-label">${escapeHtml(text.label)}</div><div class="stage-detail">${
       isCurrent && state.stageDetail ? escapeHtml(state.stageDetail) : ""
-    }</div>`;
+    }</div><div class="stage-tokens">${spent && usageTokens(spent) ? escapeHtml(describeUsage(spent)) : ""}</div>`;
     el.stages.append(item);
   }
+}
+
+/** Every token moved, cached or not — the figure the run is charged against. */
+function usageTokens(usage) {
+  return usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+}
+
+function compactNumber(n) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+/** "1.2M token · ~$0.42"; detailed adds the input/output/cache split. */
+function describeUsage(usage, detailed = false) {
+  const base = `${compactNumber(usageTokens(usage))} token · ~$${usage.costUsd.toFixed(2)}`;
+  if (!detailed) return base;
+  const cache = usage.cacheReadTokens + usage.cacheCreationTokens;
+  return `${base} (vào ${compactNumber(usage.inputTokens)}, ra ${compactNumber(usage.outputTokens)}, cache ${compactNumber(cache)})`;
 }
 
 function renderResult(state) {
@@ -866,7 +910,9 @@ async function loadRuns() {
       </div>
       <div class="run-item-meta">${escapeHtml(run.projectName ?? "—")} · ${
         run.startedAt ? new Date(run.startedAt).toLocaleString("vi-VN") : "không rõ thời gian"
-      }${run.durationMs !== null ? ` · ${formatDuration(run.durationMs)}` : ""}</div>`;
+      }${run.durationMs !== null ? ` · ${formatDuration(run.durationMs)}` : ""}${
+        run.usage ? ` · ${escapeHtml(describeUsage(run.usage))}` : ""
+      }</div>`;
     el.runList.append(item);
   }
 }

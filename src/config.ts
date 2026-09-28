@@ -35,7 +35,15 @@ export const config = {
     cloneMapping: 40,
     clonePort: 60,
     cloneBuild: 30,
+    // Writing tests for every ported controller, service and API client, then
+    // running and correcting them, is the heaviest clone stage after porting.
+    cloneTests: 90,
+    cloneTestsRerun: 20,
+    cloneFix: 60,
   },
+  // Rounds of "fix the ported code, then re-run build and tests" before a
+  // clone run gives up and reports incomplete with the remaining failures.
+  maxCloneFixRounds: 2,
 };
 
 // Defense-in-depth for stages that get Bash: the spec/DB content flowing
@@ -44,4 +52,14 @@ export const config = {
 // pipeline process's env carries ANTHROPIC_API_KEY. This does not fully
 // close the exfiltration risk (Bash can run other network-capable
 // interpreters), but it blocks the obvious vector.
-export const networkExfilBashBlocklist = ["Bash(curl*)", "Bash(wget*)"];
+export const networkExfilBashBlocklist = [
+  "Bash(curl*)",
+  "Bash(wget*)",
+  // Not exfiltration, but the same list reaches every stage with Bash: a
+  // whole-filesystem search. In Git Bash, `find /` walks every drive, takes
+  // hours, and outlives the agent that started it — observed holding over ten
+  // million handles. Agents search the project index or their own folders.
+  "Bash(find /*)",
+  "Bash(find / *)",
+  "Bash(ls -R /*)",
+];

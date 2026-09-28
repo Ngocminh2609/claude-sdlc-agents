@@ -2,6 +2,7 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
+import { isSplit, rootPath, secondaryRootDirs, type ProjectRoot } from "../target-roots.js";
 import type { CloneMapping } from "../types.js";
 
 /**
@@ -26,9 +27,18 @@ the project still builds, and report honestly.
 1. Work out how this project builds from its own build files (Maven, Gradle,
    npm/pnpm/yarn, dotnet, make). Prefer compiling only the modules or packages
    that were touched; fall back to a full build if scoping is not obvious.
-2. Run it, and read the output.
-3. Report the verdict, and for a failure quote the actual compiler or bundler
-   errors — file and message — rather than summarising them away.
+2. Run it, and read the output. For a TypeScript client, also run the type
+   check (\`tsc --noEmit\` with the project's own config, or its tsc/lint
+   script): a bundler build can pass while imports and types are broken.
+3. Judge only what this port did. The project may already fail to build for
+   reasons unrelated to it. An error counts against the port if it is in one of
+   the ported files listed below, or in another file because of one (a ported
+   symbol it uses, a route file that registers a ported page). Errors only in
+   untouched files are pre-existing: they do not fail the verdict, but say how
+   many there were in summary. If you cannot tell which errors are new, report
+   ok=false and say why rather than guessing.
+4. Report the verdict, and for a failure quote the actual compiler or bundler
+   errors that count — file and message — rather than summarising them away.
 
 You cannot edit any file. Do not attempt to fix what you find; your job is the
 verdict, and someone else acts on it. If you cannot determine a build command
@@ -56,6 +66,7 @@ export interface CloneBuildVerdict {
 export async function verifyCloneBuild(
   mapping: CloneMapping,
   runtimePorts: number[] = [],
+  roots: ProjectRoot[] = [],
 ): Promise<CloneBuildVerdict> {
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
@@ -77,11 +88,16 @@ export async function verifyCloneBuild(
     maxTurns: config.maxTurns.cloneBuild,
   };
 
+  const split = isSplit(roots);
+  const secondary = secondaryRootDirs(roots);
+  if (secondary.length) options.additionalDirectories = secondary;
+
   const prompt = [
-    "--- Files just ported into this project ---",
-    ...mapping.entries.map((entry) => `- ${entry.target}`),
+    ...(split ? filesByFolder(mapping, roots) : ["--- Files just ported into this project ---", ...mapping.entries.map((entry) => `- ${entry.target}`)]),
     "",
-    "Determine how this project builds, build what these files affect, and report.",
+    split
+      ? "BE and FE are separate projects with their own builds. Build every folder above that received files (cd into each), and report one verdict: ok only if every one of them builds, with each folder's errors quoted."
+      : "Determine how this project builds, build what these files affect, and report.",
     // A build normally starts no server, but a check that boots the app (a
     // Spring context test, a dev server) must not assume a default port.
     ...runtimePortsPromptSection(runtimePorts),
@@ -96,4 +112,15 @@ export async function verifyCloneBuild(
     };
   }
   return result.data;
+}
+
+function filesByFolder(mapping: CloneMapping, roots: ProjectRoot[]): string[] {
+  const lines: string[] = [];
+  for (const root of roots) {
+    const files = mapping.entries.filter((entry) => rootPath(roots, entry.root) === root.path);
+    if (!files.length) continue;
+    lines.push(`--- Files just ported into ${root.role.toUpperCase()} (${root.path}) ---`);
+    lines.push(...files.map((entry) => `- ${entry.target}`), "");
+  }
+  return lines;
 }

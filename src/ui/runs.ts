@@ -1,5 +1,6 @@
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { isTokenUsage, type TokenUsage } from "../token-usage.js";
 import { runsDir } from "./paths.js";
 
 /**
@@ -20,6 +21,8 @@ export interface RunSummary {
   specName: string | null;
   taskCount: number;
   durationMs: number | null;
+  /** Total tokens, when the run was started from the UI (it writes usage.json). */
+  usage: TokenUsage | null;
 }
 
 export interface RunDetail extends RunSummary {
@@ -47,7 +50,8 @@ export async function listRuns(limit = 100): Promise<RunSummary[]> {
   let entries: string[];
   try {
     entries = (await readdir(runsDir, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
+      // Dot-folders are caches (.project-index, .stage-cache), not runs.
+      .filter((entry) => entry.isDirectory() && isValidRunId(entry.name))
       .map((entry) => entry.name);
   } catch {
     return []; // No runs/ folder yet — nothing has been run on this machine.
@@ -103,7 +107,18 @@ async function readSummary(id: string): Promise<RunSummary> {
     specName: specNameFromRunId(id, projectPath),
     taskCount: Array.isArray(log?.tasks) ? log.tasks.length : 0,
     durationMs: startedAt && finishedAt ? Date.parse(finishedAt) - Date.parse(startedAt) : null,
+    usage: await readUsage(id),
   };
+}
+
+async function readUsage(id: string): Promise<TokenUsage | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path.join(runsDir, id, "usage.json"), "utf-8"));
+    const total = (parsed as { total?: unknown } | null)?.total;
+    return isTokenUsage(total) ? total : null;
+  } catch {
+    return null;
+  }
 }
 
 async function readLog(id: string): Promise<Record<string, unknown> | null> {

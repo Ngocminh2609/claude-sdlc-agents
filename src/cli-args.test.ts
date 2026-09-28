@@ -62,11 +62,45 @@ describe("parseCloneArgs", () => {
 
     expect(args).toEqual({
       what: "Danh mục nghề nghiệp",
-      fromPaths: ["/tkdt/be", "/tkdt/fe"],
-      projectPath: "/vimo",
+      target: { project: "/vimo" },
+      from: { paths: ["/tkdt/be", "/tkdt/fe"] },
       skipBuild: false,
+      skipTests: false,
       fresh: false,
     });
+  });
+
+  it("reads --no-tests", () => {
+    const args = parseCloneArgs(["--what", "x", "--from", "/a", "--project", "/b", "--no-tests"]);
+    expect(args.skipTests).toBe(true);
+  });
+
+  it("takes separate BE/FE sources and targets", () => {
+    const args = parseCloneArgs([
+      "--what",
+      "nghề nghiệp",
+      "--from-be",
+      "/tkdt/be",
+      "--from-fe",
+      "/tkdt/fe",
+      "--project-be",
+      "/vimo/be",
+      "--project-fe",
+      "/vimo/fe",
+    ]);
+
+    expect(args.from).toEqual({ paths: [], be: "/tkdt/be", fe: "/tkdt/fe" });
+    expect(args.target).toEqual({ be: "/vimo/be", fe: "/vimo/fe" });
+  });
+
+  it("accepts a BE-only or FE-only source and target", () => {
+    expect(parseCloneArgs(["--what", "X", "--from-fe", "/a", "--project-fe", "/p"]).target).toEqual({ fe: "/p" });
+  });
+
+  it("refuses --project together with --project-be/--project-fe", () => {
+    expect(() =>
+      parseCloneArgs(["--what", "X", "--from", "/a", "--project", "/p", "--project-be", "/b"]),
+    ).toThrow(/either --project or --project-be/);
   });
 
   it("takes --no-build as a flag, not a value", () => {
@@ -76,6 +110,25 @@ describe("parseCloneArgs", () => {
 
   it("takes --fresh as a flag", () => {
     expect(parseCloneArgs(["--what", "X", "--from", "/a", "--project", "/p", "--fresh"]).fresh).toBe(true);
+  });
+});
+
+describe("separate BE/FE folders on a feature run", () => {
+  it("takes --project-be and --project-fe instead of --project", () => {
+    expect(parseArgs(["--spec", "a.md", "--project-be", "/be", "--project-fe", "/fe"]).target).toEqual({
+      be: "/be",
+      fe: "/fe",
+    });
+  });
+
+  it("still needs some target folder", () => {
+    expect(() => parseArgs(["--spec", "a.md"])).toThrow(/Usage/);
+  });
+
+  it("refuses to mix --project with --project-be/--project-fe", () => {
+    expect(() => parseArgs(["--spec", "a.md", "--project", "/p", "--project-fe", "/fe"])).toThrow(
+      /either --project or --project-be/,
+    );
   });
 });
 
@@ -113,7 +166,7 @@ describe("resolveReferencePaths", () => {
   });
 
   it("rejects the target project itself, which is already readable", () => {
-    expect(() => resolveReferencePaths([sample], sample)).toThrow(/cannot be the target project/);
+    expect(() => resolveReferencePaths([sample], sample)).toThrow(/cannot be a target project folder/);
   });
 
   it("names the flag the caller actually used in the error", () => {

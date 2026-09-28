@@ -77,6 +77,12 @@ aidev --spec ./specs/my-feature.md --project /path/to/target/project
 
 Both paths may be relative — they resolve against your current directory, not the repo.
 
+**Separate BE and FE folders.** Instead of one `--project`, give `--project-be <dir>` and/or `--project-fe <dir>` — for a server and a client that live in different repos, or to keep a run from scanning a whole monorepo root. The BE folder becomes the working directory and the FE folder is opened to every stage on top of it (readable and writable, unlike reference repos); each stage is told which folder holds what. The same folder given for both is treated as one project. The UI has a BE box and an FE box for this in both modes.
+
+```bash
+aidev --spec ./specs/my-feature.md --project-be D:/app/backend --project-fe D:/app/frontend
+```
+
 Inside this repo you can skip the global command and use the npm script instead;
 it takes the same flags but does **not** load `.env`, so export the key yourself:
 
@@ -152,6 +158,30 @@ When it finishes:
 
 Every run — success, escalation, or crash — writes a full log to `runs/<timestamp>-<project>-<spec>/` in **this** repo (not the target project): `log.json` (structured) and `report.md` (every proposal, review decision, task, coding attempt, and E2E verdict with acceptance-criteria evidence). The path is printed at the end. The raw value of `--db-connection` is never written to it (only whether one was provided) — a run log is not a safe place for a real credential. `runs/` is not gitignored on purpose, since it's the audit trail of what the AI actually did; commit it or not, that's your call.
 
+## Metadata standards (opt-in)
+
+For statistical-metadata projects (NSO-SMR / CSDL Đặc tả & Vi mô), a target can opt in to the rules in [`docs/metadata-standards-ai-guidelines.md`](docs/metadata-standards-ai-guidelines.md): DDI-L 3.3, GSIM 2.0, GSBPM, classifications, statistical disclosure control and object-level ACL. To opt in, commit `.metadata-standards.yml` at the target folder root:
+
+```yaml
+guideline_version: "1.0"
+mode: strict            # strict | advisory (advisory: apply to new code, only report on existing code)
+modules: [CORE, DDI, GSIM, CLS, GSBPM, SDC, AUTHZ, NSO]
+decisions:
+  D5_authz_impl: spring-security-acl
+agency: "vn.gso"
+waivers: []
+```
+
+The file is read automatically. You do not pass a flag, and the UI needs no change:
+- **No file, or `modules: []` / `none`:** nothing is added to any prompt. The run behaves as before.
+- **With the file:** only the guideline sections for the listed modules, plus the shared sections §0/§2/§3/§13, go into the Specs & Arch, Orchestrator review, Coding, Clone Port and Clone Fix prompts, together with the config text.
+- **Clone Port stays faithful to the source in both modes.** It reports standard violations in the ported code instead of restructuring that code.
+- Every run prints one line stating whether the standards applied.
+- Changing the config invalidates a saved feature plan, because the design was reviewed against the old rules.
+- **Split BE/FE targets:** the two folders may each have the file, but the contents must be identical.
+
+The full template and the decisions D1–D9 are in §1.4 and §2.2 of the guideline.
+
 ## Web UI
 
 Same pipeline, driven from a browser instead of a terminal:
@@ -163,6 +193,38 @@ aidev ui --port 5000 --no-open
 
 On Windows, double-clicking `aidev-ui.cmd` in this repo does the same thing. The
 console window it opens *is* the server — close it to stop the UI.
+
+**Project index.** Plain code, no model, builds an index of every git repo in the
+target and reference folders, stored in `runs/.project-index/`. A parent folder
+such as `CSDL-VIMO/` counts as the repos inside it. Each file gets one line: its
+path, a kind (controller, service, entity, dto, page, api-client, locale, sql…) and
+tags (package/class, `@Table`, `@Tag`, mapped routes, API URLs called, route paths,
+exports, `CREATE TABLE` names, Vietnamese UI strings). Every run refreshes it
+first. The refresh diffs the cached git HEAD against the current one, adds the
+uncommitted and untracked files, and re-reads only files whose size or mtime
+moved. That takes a few seconds, not a rescan. Agents are told to Grep the index
+and open only the files they need, instead of walking repos with Glob/Grep. Clone
+locate also gets the index lines matching the keyword directly in its prompt. On
+top of it:
+
+- Target conventions are keyed to the repo's *structure* (directories plus
+  `pom.xml` / `package.json` / `application*.yml` / tsconfig), not its HEAD. An
+  ordinary commit no longer costs a conventions call.
+- Clone locate (same keyword), the feature reference inventory and the project
+  context (same spec) are cached against the exact content version of the repos
+  they read: HEAD plus uncommitted state. Any change in those repos re-runs them.
+  So does *Chạy lại từ đầu* / `--fresh`.
+
+Build or refresh the index ahead of time with `aidev index <folder>...`.
+
+**Token usage.** Every agent call's usage (the SDK's `modelUsage`, subagents
+included) is added to a running total that the CLI streams as a `usage` event.
+The UI assigns each increase to the stage active at the time. It shows the tokens
+and estimated cost under each stage box, with the full split on hover, and the
+run total next to the start time. When a run ends, the UI writes
+`runs/<run>/usage.json` and appends a *Token usage* section to that run's
+`report.md`, so the history list shows the total too. A plain CLI run prints only
+the total at the end. The figures are the SDK's estimate, not a bill.
 
 The interface is in **Vietnamese** — the people running it are. The rest of the
 repo stays English, and the boundary is enforced rather than assumed: the server
@@ -227,6 +289,23 @@ No spec document. `--from` is repeatable, and pointing it at the module that hol
 the feature rather than the repo root is faster and more accurate. `--no-build`
 skips the final compile check.
 
+Separate folders on both sides, and a loose keyword instead of the feature's exact name:
+
+```bash
+aidev clone --what "nghề nghiệp" \
+            --from-be "D:/Source_Code/FIS/TKDT/BE" --from-fe "D:/Source_Code/FIS/TKDT/FE" \
+            --project-be "D:/Source_Code/FIS/CSDL-VIMO/BE" --project-fe "D:/Source_Code/FIS/CSDL-VIMO/FE"
+```
+
+`--what` is a keyword, Vietnamese or English, not an identifier. The spellings code
+actually uses are generated up front (`nghe_nghiep`, `ngheNghiep`, `NgheNghiep`,
+`NGHE_NGHIEP`, ...; `src/keyword-variants.ts`), and the locate stage is told to
+translate the keyword and search file, class, table and route names plus i18n files.
+When it matches several features the best match is ported and the others are listed
+in the report — it does not stop to ask. Each mapping row names the target folder
+(`be`/`fe`) its file goes into; coverage checks each file in that folder, and the
+build check builds every folder that received files.
+
 Why a separate pipeline. Feature work asks *what should we build* and answers it
 with a design somebody has to approve. A port already has the answer — the source
 code is the specification. What it has to decide instead is **placement**, and what
@@ -239,9 +318,18 @@ things take its place:
    1. Locate      — everything in the reference that implements it: SQL, server, client
    2. Conventions — read the TARGET: module layout, package root, FE and SQL conventions
    3. Mapping     — each source file -> target path + the package/import renames it needs
-   4. Port        — group by group, sequentially, every group following one mapping
+   4. Port        — group by group, in layer order enforced by code: database scripts,
+                    then server, then client. Each client group gets the server routes
+                    read from the ported controllers on disk, and is written against them
    5. Coverage    — plain code, no model: does every mapped file exist on disk?
-   6. Build       — compile what was touched, and quote the real errors if not
+   6. Wiring      — plain code, no model: does every import in a ported client file
+                    resolve, and does every API path it calls hit a server controller?
+   7. Build       — compile what was touched, and quote the real errors if not
+   8. Unit tests  — write and run CRUD unit tests: server controllers (MockMvc /
+                    framework test client) and services with mocked repositories,
+                    client API functions against a mocked request helper. If the build
+                    or tests fail, a fix agent edits the ported code (never the tests)
+                    and both re-run, up to `maxCloneFixRounds` (2) rounds
 ```
 
 The mapping is the artifact worth reading. It is a table where a wrong row is
@@ -255,6 +343,42 @@ as it is decided, and Stop is there if it looks wrong. Two honest limits:
 - **Coverage catches a missing file, not a wrongly-placed one.** A controller put in
   a plausible-but-wrong module still compiles and still counts as covered. That is
   why the mapping is shown rather than buried in the log.
+- **A deliberate deviation must be declared to count.** When the target's own
+  conventions mean a mapped file is not written — a `ServiceImpl` folded into the
+  one `@Service` class — the port agent declares it (`merged` + the file that
+  holds it, or `not-needed` + why). Coverage then checks the claim on disk: a merge
+  counts only if the file it names exists; `not-needed` and anything undeclared
+  stay missing.
+- **"The generator will make it later" is not accepted.** An API client the target
+  normally generates (`max openapi`, `openapi-generator`) is written by hand now,
+  in the generator's own shape (file name from the controller's `@Tag`, function
+  names from its methods, the same request helper and typings). A run once left
+  it for `pnpm openapi`, which needs the backend running behind the gateway, and
+  the ported pages imported files that did not exist. Regenerating later only
+  rewrites the file.
+- **Wiring is checked by code, even with the build skipped.** Every relative or
+  `@/` import in a ported client file must resolve to a file on disk. Every
+  `request(...)`/`fetch`/`axios` path in those files, and in the local modules
+  they import, must match a controller in the server folder: Spring
+  `@*Mapping`, NestJS decorators, or Express routers. Path params match any
+  segment, and a client prefix such as a gateway path is allowed. Either failure
+  makes the run `incomplete`. This proves the pieces are connected. It does not
+  prove request bodies or behaviour are right.
+- **Tests judge the fix, not the other way round.** The test agent can write only
+  test files (`src/test/`, `__tests__/`, `*.test.*`, `*.spec.*`). The fix agent can
+  write anything except those. So neither can make a run green by editing what the
+  other one is judged on. A pass with no test files or commands does not count.
+  Pass `--no-tests` (UI: *Bỏ qua bước unit test*) to skip this stage. These are
+  unit tests with mocks. They show the CRUD path goes through the ported code.
+  They do not run it against a real database.
+- **The build verdict ignores pre-existing breakage.** Only errors in ported files,
+  or errors those files cause, fail it. A TypeScript client is type-checked
+  (`tsc --noEmit`), not just bundled.
+- **Hand-written schemas get a script entry.** When the target creates its tables
+  only by scripts (`ddl-auto: none`/`validate`, or a migration tool), the mapping
+  adds a `(new)` entry for the schema script of every ported entity the reference
+  has no script for, so the port writes it instead of leaving code that compiles
+  but fails on missing tables.
 - **E2E is not run.** Freshly ported code usually cannot run yet — no rows, no
   config, no wiring — so a browser test would fail runs whose port was correct and
   complete. The build check is the strongest honest signal at that point, and a run

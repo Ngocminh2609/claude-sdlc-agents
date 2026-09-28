@@ -1,14 +1,13 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
+import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
+import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { StageError } from "../stage-error.js";
-import {
-  isInsideReference,
-  referenceDirectories,
-  referencePromptSection,
-} from "../reference-repos.js";
+import { extraDirectories, isInsideReference, referencePromptSection } from "../reference-repos.js";
+import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
 import type { CompletedTask, ProjectContext, ReferenceInventory, SpecInput, TaskItem } from "../types.js";
 
@@ -107,17 +106,24 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     maxTurns: config.maxTurns.coding,
   };
 
-  const referenceDirs = referenceDirectories(spec.referencePaths);
-  if (referenceDirs.length) options.additionalDirectories = referenceDirs;
+  // Reference repos are readable only (canUseTool above); a second target
+  // folder (FE when BE is the working directory) is readable and writable.
+  const roots = rootsOf(spec);
+  const extraDirs = extraDirectories(spec.referencePaths, roots);
+  if (extraDirs.length) options.additionalDirectories = extraDirs;
+  withIndexAccess(options, spec.projectIndexes);
 
   const parts = [
     "--- Spec ---",
     spec.specMarkdown,
+    ...targetRootsPromptSection(roots),
     "",
     "--- Approved design (implement your task within it; do not redesign) ---",
     approvedProposal,
     ...referencePromptSection(spec.referencePaths, inventory),
+    ...indexPromptSection(spec.projectIndexes),
     ...projectContextPromptSection(projectContext),
+    ...metadataStandardsPromptSection(spec.metadataStandards, "code"),
     "",
     `--- Your assigned task (${task.id}) ---`,
     task.description,

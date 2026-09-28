@@ -14,7 +14,11 @@ import { uiStateFile } from "./paths.js";
 export interface Preset {
   id: string;
   name: string;
+  /** One project folder. Presets saved before BE/FE folders only have this. */
   projectPath: string;
+  /** Separate target folders; the same folder in both means one project. */
+  projectBe: string;
+  projectFe: string;
   specPath: string;
   dbMode: "none" | "connection" | "schema-file";
   dbSchemaPath: string;
@@ -73,7 +77,9 @@ async function writeState(state: UiState): Promise<void> {
 function sanitize(input: PresetInput): PresetInput {
   return {
     name: input.name.trim().slice(0, 80),
-    projectPath: input.projectPath.trim(),
+    projectPath: input.projectPath?.trim() ?? "",
+    projectBe: input.projectBe?.trim() ?? "",
+    projectFe: input.projectFe?.trim() ?? "",
     specPath: input.specPath.trim(),
     dbMode: input.dbMode,
     dbSchemaPath: input.dbSchemaPath?.trim() ?? "",
@@ -86,7 +92,7 @@ function isPreset(value: unknown): value is Preset {
   return (
     typeof candidate?.id === "string" &&
     typeof candidate.name === "string" &&
-    typeof candidate.projectPath === "string" &&
+    (typeof candidate.projectPath === "string" || typeof candidate.projectBe === "string") &&
     typeof candidate.specPath === "string"
   );
 }

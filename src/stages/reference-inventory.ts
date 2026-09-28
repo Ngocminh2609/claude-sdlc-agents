@@ -1,6 +1,7 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
+import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { referenceDirectories } from "../reference-repos.js";
 import type { ReferenceInventory, SpecInput } from "../types.js";
 
@@ -56,6 +57,9 @@ const INVENTORY_SCHEMA = {
       },
     },
     notes: { type: "string" },
+    // Only filled when the request is a keyword to resolve (clone mode).
+    resolvedFeature: { type: "string" },
+    alternatives: { type: "array", items: { type: "string" } },
   },
   required: ["files", "notes"],
 };
@@ -70,13 +74,16 @@ export async function inventoryReferences(spec: SpecInput): Promise<ReferenceInv
   const directories = referenceDirectories(spec.referencePaths);
   if (!directories.length) return null;
 
-  const options: Options = {
-    systemPrompt: SYSTEM_PROMPT,
-    allowedTools: ["Read", "Glob", "Grep"],
-    additionalDirectories: directories,
-    model: config.model,
-    maxTurns: config.maxTurns.referenceInventory,
-  };
+  const options: Options = withIndexAccess(
+    {
+      systemPrompt: SYSTEM_PROMPT,
+      allowedTools: ["Read", "Glob", "Grep"],
+      additionalDirectories: directories,
+      model: config.model,
+      maxTurns: config.maxTurns.referenceInventory,
+    },
+    spec.projectIndexes,
+  );
 
   const prompt = [
     "--- Spec (what the work has to produce) ---",
@@ -84,6 +91,7 @@ export async function inventoryReferences(spec: SpecInput): Promise<ReferenceInv
     "",
     "--- Reference repositories to inventory ---",
     ...directories,
+    ...indexPromptSection(spec.projectIndexes),
   ].join("\n");
 
   const result = await runStructuredQuery<ReferenceInventory>(prompt, options, INVENTORY_SCHEMA);

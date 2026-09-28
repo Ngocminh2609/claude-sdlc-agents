@@ -1,7 +1,9 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
-import { referenceDirectories, referencePromptSection } from "../reference-repos.js";
+import { indexPromptSection, withIndexAccess } from "../project-index.js";
+import { extraDirectories, referencePromptSection } from "../reference-repos.js";
+import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
 import type { ProjectContext, ReferenceInventory, SpecInput, TaskBreakdown } from "../types.js";
 
@@ -45,16 +47,20 @@ export async function breakDownTasks(
   };
 
   // Read-only stage: the directory list is enough here, no write guard needed.
-  const referenceDirs = referenceDirectories(spec.referencePaths);
-  if (referenceDirs.length) options.additionalDirectories = referenceDirs;
+  const roots = rootsOf(spec);
+  const extraDirs = extraDirectories(spec.referencePaths, roots);
+  if (extraDirs.length) options.additionalDirectories = extraDirs;
+  withIndexAccess(options, spec.projectIndexes);
 
   const prompt = [
     "--- Spec ---",
     spec.specMarkdown,
+    ...targetRootsPromptSection(roots),
     "",
     "--- Approved design ---",
     approvedProposal,
     ...referencePromptSection(spec.referencePaths, inventory),
+    ...indexPromptSection(spec.projectIndexes),
     ...projectContextPromptSection(projectContext),
   ].join("\n");
 

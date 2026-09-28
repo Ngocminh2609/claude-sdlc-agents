@@ -1,9 +1,12 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
+import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
+import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { StageError } from "../stage-error.js";
-import { referenceDirectories, referencePromptSection } from "../reference-repos.js";
+import { extraDirectories, referenceDirectories, referencePromptSection } from "../reference-repos.js";
+import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
 import type { ProjectContext, ReferenceInventory, SpecInput } from "../types.js";
 
@@ -40,6 +43,8 @@ export async function runSpecsArch(
 ): Promise<string> {
   // Read-only stage: the directory list is enough here, no write guard needed.
   const referenceDirs = referenceDirectories(spec.referencePaths);
+  const roots = rootsOf(spec);
+  const extraDirs = extraDirectories(spec.referencePaths, roots);
 
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
@@ -51,14 +56,18 @@ export async function runSpecsArch(
       : config.maxTurns.specsArch,
   };
 
-  if (referenceDirs.length) options.additionalDirectories = referenceDirs;
+  if (extraDirs.length) options.additionalDirectories = extraDirs;
+  withIndexAccess(options, spec.projectIndexes);
 
   const parts = [
     "--- Spec ---",
     spec.specMarkdown,
+    ...targetRootsPromptSection(roots),
     ...dbContext(spec),
     ...referencePromptSection(spec.referencePaths, inventory),
+    ...indexPromptSection(spec.projectIndexes),
     ...projectContextPromptSection(projectContext),
+    ...metadataStandardsPromptSection(spec.metadataStandards, "design"),
   ];
 
   if (priorProposal && reviewerFeedback) {

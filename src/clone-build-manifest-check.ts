@@ -42,9 +42,9 @@ export function missingBuildManifestWarning(projectPath: string): string | null 
   if (hasOwnBuildManifest(projectPath)) return null;
 
   return (
-    `--project (${projectPath}) has no build manifest of its own ` +
+    `Target folder ${projectPath} has no build manifest of its own ` +
     "(no package.json, pom.xml, build.gradle[.kts], Makefile, or *.csproj/*.sln found there). " +
-    "The Clone Build stage builds from this exact directory at the end of the run — if the " +
-    "real build root is a parent folder, either point --project there or pass --no-build."
+    "The Clone Build stage builds from this exact folder at the end of the run — if the real " +
+    "build root is a parent folder, point the target folder there or pass --no-build."
   );
 }

@@ -93,6 +93,31 @@ describe("runCoding", () => {
     await expect(runCoding(request())).rejects.toThrow(/coding stage failed on task task-1/);
   });
 
+  it("opens the FE folder too, and names both, when BE and FE are separate", async () => {
+    const be = path.resolve("/tmp/app-be");
+    const fe = path.resolve("/tmp/app-fe");
+    await runCoding(
+      request({
+        spec: {
+          ...spec,
+          projectPath: be,
+          targetRoots: [
+            { role: "be", path: be },
+            { role: "fe", path: fe },
+          ],
+        },
+      }),
+    );
+
+    const [prompt, options] = runTextQuery.mock.calls[0];
+    expect(options.additionalDirectories).toEqual([fe]);
+    expect(prompt).toContain(be);
+    expect(prompt).toContain(fe);
+    // FE is a target, so writing there is allowed — only reference repos are guarded.
+    const write = await options.canUseTool("Write", { file_path: path.join(fe, "src/page.tsx") }, {});
+    expect(write.behavior).toBe("allow");
+  });
+
   it("includes the free ports for any server the task starts", async () => {
     await runCoding(request({ runtimePorts: [50001, 50002] }));
 

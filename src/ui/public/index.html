@@ -57,17 +57,30 @@
             <div>
               <h2>Chọn thư mục dự án đích</h2>
               <p class="step-desc">
-                Nơi AI sẽ viết code. Chọn đúng thư mục gốc của dự án — chỗ có
-                <code>package.json</code>, <code>pom.xml</code>, <code>.git</code>…
+                Nơi AI sẽ viết code. Chọn riêng thư mục <strong>BE</strong> (server, script DB) và
+                <strong>FE</strong> (giao diện) — mỗi ô là thư mục có file build riêng
+                (<code>pom.xml</code>, <code>package.json</code>…).
               </p>
             </div>
           </div>
-          <div class="row">
-            <input id="project-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO" />
-            <button class="btn btn-ghost" data-browse="project">Chọn thư mục…</button>
+          <div class="field">
+            <label for="project-be">Thư mục BE</label>
+            <div class="row">
+              <input id="project-be" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\BE-CSDL" />
+              <button class="btn btn-ghost" data-browse="project-be">Chọn thư mục…</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="project-fe">Thư mục FE</label>
+            <div class="row">
+              <input id="project-fe" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\FE-CSDL" />
+              <button class="btn btn-ghost" data-browse="project-fe">Chọn thư mục…</button>
+            </div>
           </div>
           <p class="hint">
-            ⚠️ AI sửa trực tiếp vào thư mục này, không tạo nhánh riêng và không sao lưu.
+            Chỉ có BE hoặc chỉ có FE thì để trống ô còn lại. Nếu BE và FE nằm chung một thư mục
+            gốc, chọn cùng thư mục đó cho cả hai ô. ⚠️ AI sửa trực tiếp vào các thư mục này, không tạo
+            nhánh riêng và không sao lưu.
           </p>
         </div>
 
@@ -85,20 +98,32 @@
           </div>
 
           <div class="field">
-            <label for="clone-what">Tên tính năng cần clone</label>
-            <input id="clone-what" type="text" placeholder="Ví dụ: Danh mục nghề nghiệp" />
-            <p class="hint">Gọi đúng tên như trong repo mẫu để hệ thống tìm ra.</p>
+            <label for="clone-what">Từ khoá tính năng cần clone</label>
+            <input id="clone-what" type="text" placeholder="Ví dụ: nghề nghiệp, đơn vị tính, occupation…" />
+            <p class="hint">
+              Tiếng Việt hoặc tiếng Anh, chỉ cần từ khoá — không cần đúng tên chức năng. Hệ thống tự
+              dịch, tìm cả dạng không dấu (<code>nghe_nghiep</code>, <code>NgheNghiep</code>…) trong tên
+              file, class, bảng, route, file dịch; nếu khớp nhiều tính năng thì chọn cái khớp nhất và
+              liệt kê các ứng viên khác trong báo cáo.
+            </p>
           </div>
 
           <div class="field">
-            <label for="clone-from">Repo mẫu (nguồn)</label>
+            <label for="clone-from-be">Repo mẫu — thư mục BE</label>
             <div class="row">
-              <input id="clone-from" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\TKDT" />
-              <button class="btn btn-ghost" data-browse="clone-from">Chọn thư mục…</button>
+              <input id="clone-from-be" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\TKDT\BE" />
+              <button class="btn btn-ghost" data-browse="clone-from-be">Chọn thư mục…</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="clone-from-fe">Repo mẫu — thư mục FE</label>
+            <div class="row">
+              <input id="clone-from-fe" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\TKDT\FE" />
+              <button class="btn btn-ghost" data-browse="clone-from-fe">Chọn thư mục…</button>
             </div>
             <p class="hint">
-              Trỏ vào thư mục con chứa tính năng thì nhanh và chính xác hơn trỏ vào gốc repo. Repo này
-              chỉ được đọc — mọi lệnh ghi vào đó đều bị chặn.
+              Điền ít nhất một ô. Trỏ vào thư mục con chứa tính năng thì nhanh và chính xác hơn trỏ vào
+              gốc repo. Repo mẫu chỉ được đọc — mọi lệnh ghi vào đó đều bị chặn.
             </p>
           </div>
 
@@ -107,6 +132,14 @@
             <span>
               Bỏ qua bước kiểm biên dịch
               <span class="hint-inline">Tick khi máy này không build được dự án đích.</span>
+            </span>
+          </label>
+
+          <label class="precheck">
+            <input type="checkbox" id="clone-skip-tests" />
+            <span>
+              Bỏ qua bước unit test
+              <span class="hint-inline">Mặc định hệ thống viết và chạy unit test CRUD cho BE (controller, service) và FE (API client), rồi tự sửa code nếu test fail.</span>
             </span>
           </label>
         </div>

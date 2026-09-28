@@ -1,8 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
+import { appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseEventLine, EVENT_STREAM_ENV } from "../events.js";
+import { buildRoots } from "../target-roots.js";
+import { addUsage, describeUsage, emptyUsage, subtractUsage, totalTokens, type TokenUsage } from "../token-usage.js";
 import { repoRoot } from "./paths.js";
 import {
   isSetbackProgress,
@@ -48,7 +51,14 @@ export type DbMode = "none" | "connection" | "schema-file";
 export interface RunRequest {
   /** "feature" builds from a spec; "clone" ports an existing feature. */
   mode: RunMode;
-  projectPath: string;
+  /** One project folder holding everything — or leave it out and give BE/FE below. */
+  projectPath?: string;
+  /** Separate target folders. The same folder in both is treated as one project. */
+  projectBePath?: string;
+  projectFePath?: string;
+  /** Clone mode: separate BE/FE source folders in the reference project. */
+  referenceBePath?: string;
+  referenceFePath?: string;
   /** Feature mode only. */
   specPath?: string;
   /** Clone mode only: what to port, in the user's words. */
@@ -62,6 +72,8 @@ export interface RunRequest {
   referencePaths?: string[];
   /** Clone mode only: skip the build check. */
   skipBuild?: boolean;
+  /** Clone mode only: skip writing and running unit tests. */
+  skipTests?: boolean;
   /** Discard progress saved by a stopped run instead of resuming from it. */
   fresh?: boolean;
 }
@@ -88,6 +100,9 @@ export interface RunState {
   stage: StageId | null;
   stageDetail: string | null;
   completedStages: StageId[];
+  /** Tokens spent so far, and how much of it each stage spent. */
+  usage: TokenUsage;
+  stageUsage: Partial<Record<StageId, TokenUsage>>;
   setback: boolean;
   taskCount: number | null;
   finalMessage: string | null;
@@ -152,7 +167,11 @@ export class PipelineRunner {
   }
 
   getState(): RunState {
-    return { ...this.state, completedStages: [...this.state.completedStages] };
+    return {
+      ...this.state,
+      completedStages: [...this.state.completedStages],
+      stageUsage: { ...this.state.stageUsage },
+    };
   }
 
   getLines(): RunLine[] {
@@ -167,8 +186,18 @@ export class PipelineRunner {
     if (this.child) throw new RunnerBusyError();
 
     const clone = request.mode === "clone";
-    const projectPath = path.resolve(request.projectPath);
-    assertDirectory(projectPath, "Project folder", "project-not-found");
+    const roots = buildRoots({
+      project: request.projectPath,
+      be: request.projectBePath,
+      fe: request.projectFePath,
+    });
+    if (!roots.length) throw new RunRequestError("Choose the target project folder(s).", "project-not-found");
+    for (const root of roots) assertDirectory(root.path, "Project folder", "project-not-found");
+    const projectPath = roots[0].path;
+    const targetArgs =
+      roots.length === 1 && roots[0].role === "app"
+        ? ["--project", projectPath]
+        : roots.flatMap((root) => [root.role === "fe" ? "--project-fe" : "--project-be", root.path]);
 
     const specPath = clone ? null : path.resolve(request.specPath ?? "");
     const what = clone ? (request.what ?? "").trim() : null;
@@ -186,21 +215,32 @@ export class PipelineRunner {
     for (const reference of referencePaths) {
       assertDirectory(reference, "Reference repository", "reference-not-found");
     }
-    if (clone && !referencePaths.length) {
+    // Clone mode's separate BE/FE source folders. Same folder in both = one.
+    const referenceRoots = clone
+      ? buildRoots({ be: request.referenceBePath, fe: request.referenceFePath })
+      : [];
+    for (const root of referenceRoots) {
+      assertDirectory(root.path, "Reference repository", "reference-not-found");
+    }
+    if (clone && !referencePaths.length && !referenceRoots.length) {
       throw new RunRequestError("Clone mode needs a reference repository.", "reference-required");
     }
 
     // The two pipelines are separate commands, so the argument lists diverge
     // here rather than one growing flags the other ignores.
     const args = clone
-      ? ["clone", "--what", what as string, "--project", projectPath]
-      : ["--spec", specPath as string, "--project", projectPath];
+      ? ["clone", "--what", what as string, ...targetArgs]
+      : ["--spec", specPath as string, ...targetArgs];
 
     for (const reference of referencePaths) args.push(clone ? "--from" : "--reference", reference);
+    for (const root of referenceRoots) {
+      args.push(root.role === "be" ? "--from-be" : root.role === "fe" ? "--from-fe" : "--from", root.path);
+    }
     if (request.fresh) args.push("--fresh");
 
     if (clone) {
       if (request.skipBuild) args.push("--no-build");
+      if (request.skipTests) args.push("--no-tests");
       this.secret = null;
     } else if (request.dbMode === "connection") {
       const value = request.dbConnection?.trim();
@@ -234,6 +274,8 @@ export class PipelineRunner {
       stage: null,
       stageDetail: null,
       completedStages: [],
+      usage: emptyUsage(),
+      stageUsage: {},
       setback: false,
       taskCount: null,
       finalMessage: null,
@@ -318,7 +360,12 @@ export class PipelineRunner {
         this.state.logPath = event.logPath ?? null;
         this.state.logRunId = event.logPath ? path.basename(event.logPath) : null;
         this.state.status = asRunStatus(event.status);
+        if (event.logPath) void this.saveUsage(event.logPath);
         this.emitState();
+        break;
+      }
+      case "usage": {
+        this.applyUsage(event.total);
         break;
       }
       case "crashed": {
@@ -327,6 +374,43 @@ export class PipelineRunner {
         this.emitState();
         break;
       }
+    }
+  }
+
+  /**
+   * The CLI sends its running total; the increase since the last one belongs
+   * to the stage active now — a stage's progress line precedes its agent
+   * calls, so they finish while it is current.
+   */
+  private applyUsage(total: TokenUsage): void {
+    const delta = subtractUsage(total, this.state.usage);
+    this.state.usage = total;
+    const stage = this.state.stage;
+    if (stage) this.state.stageUsage[stage] = addUsage(this.state.stageUsage[stage] ?? emptyUsage(), delta);
+    this.emitState();
+  }
+
+  /**
+   * Writes the per-stage figures next to the run's log and appends them to its
+   * report, so the history view shows them too. Best-effort: a failed write
+   * must not turn a finished run into an errored one.
+   */
+  private async saveUsage(runDir: string): Promise<void> {
+    const { usage, stageUsage } = this.state;
+    if (!totalTokens(usage)) return;
+    try {
+      await writeFile(
+        path.join(runDir, "usage.json"),
+        JSON.stringify({ total: usage, stages: stageUsage }, null, 2),
+        "utf-8",
+      );
+      const lines = ["", "## Token usage", "", `- **Total:** ${describeUsage(usage)}`];
+      for (const [stage, spent] of Object.entries(stageUsage)) {
+        if (spent) lines.push(`- ${stage}: ${describeUsage(spent)}`);
+      }
+      await appendFile(path.join(runDir, "report.md"), `${lines.join("\n")}\n`, "utf-8");
+    } catch {
+      // See doc comment.
     }
   }
 
@@ -415,6 +499,8 @@ function idleState(): RunState {
     stage: null,
     stageDetail: null,
     completedStages: [],
+    usage: emptyUsage(),
+    stageUsage: {},
     setback: false,
     taskCount: null,
     finalMessage: null,

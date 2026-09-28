@@ -18,6 +18,8 @@
  * reader keeps both without needing a second pipe.
  */
 
+import { isTokenUsage, type TokenUsage } from "./token-usage.js";
+
 export const EVENT_STREAM_ENV = "AIDEV_EVENT_STREAM";
 
 /** A stage boundary or per-attempt heartbeat from `runPipeline`'s onProgress. */
@@ -40,7 +42,17 @@ export interface PipelineCrashedEvent {
   message: string;
 }
 
-export type PipelineEvent = PipelineProgressEvent | PipelineFinishedEvent | PipelineCrashedEvent;
+/** The run's cumulative token usage, sent after every agent call finishes. */
+export interface PipelineUsageEvent {
+  type: "usage";
+  total: TokenUsage;
+}
+
+export type PipelineEvent =
+  | PipelineProgressEvent
+  | PipelineFinishedEvent
+  | PipelineCrashedEvent
+  | PipelineUsageEvent;
 
 export function eventStreamEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[EVENT_STREAM_ENV] === "1";
@@ -83,6 +95,8 @@ export function parseEventLine(line: string): PipelineEvent | null {
         message: candidate.message,
         ...(typeof candidate.logPath === "string" ? { logPath: candidate.logPath } : {}),
       };
+    case "usage":
+      return isTokenUsage(candidate.total) ? { type: "usage", total: candidate.total } : null;
     case "crashed":
       return typeof candidate.message === "string"
         ? { type: "crashed", message: candidate.message }

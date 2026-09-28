@@ -1,3 +1,7 @@
+import type { IndexRef } from "./project-index.js";
+import type { MetadataStandards } from "./metadata-standards.js";
+import type { ProjectRoot, RootRole } from "./target-roots.js";
+
 export interface DbInfo {
   kind: "connection" | "schema-file";
   value: string;
@@ -5,10 +9,17 @@ export interface DbInfo {
 
 export interface SpecInput {
   specMarkdown: string;
+  /** The working directory: the first of `targetRoots`. */
   projectPath: string;
+  /** Separate BE/FE folders, or one "app" folder. Absent means just `projectPath`. */
+  targetRoots?: ProjectRoot[];
   dbInfo?: DbInfo;
   /** Absolute paths to read-only source trees agents may copy patterns from. */
   referencePaths?: string[];
+  /** Refreshed indexes of the target and reference repos — see `project-index.ts`. */
+  projectIndexes?: IndexRef[];
+  /** The target's opt-in metadata standards; null or absent when it has none. */
+  metadataStandards?: MetadataStandards | null;
 }
 
 /** One file in a reference repo that the work should copy from or follow. */
@@ -26,6 +37,10 @@ export interface ReferenceInventory {
   files: ReferenceFile[];
   /** What was deliberately excluded, and anything the scan was unsure about. */
   notes: string;
+  /** Clone mode: the feature a loose keyword was resolved to. */
+  resolvedFeature?: string;
+  /** Clone mode: other features the keyword also matched, not ported. */
+  alternatives?: string[];
 }
 
 /**
@@ -53,11 +68,20 @@ export interface ProjectContext {
  * and it is checkable afterwards in a way a design proposal never is.
  */
 export interface CloneInput {
-  /** What to clone, in the user's words: "Danh mục nghề nghiệp". */
+  /** What to clone: a keyword, Vietnamese or English — "nghề nghiệp", "occupation". */
   what: string;
-  /** Absolute paths to the read-only reference repositories. */
+  /** Absolute paths to the read-only reference repositories (all of them). */
   referencePaths: string[];
+  /** The same references with their role, when BE and FE sources were given separately. */
+  referenceRoots?: ProjectRoot[];
+  /** The working directory: the first of `targetRoots`. */
   projectPath: string;
+  /** Separate BE/FE target folders, or one "app" folder. Absent means just `projectPath`. */
+  targetRoots?: ProjectRoot[];
+  /** Refreshed indexes of the target and reference repos — see `project-index.ts`. */
+  projectIndexes?: IndexRef[];
+  /** The target's opt-in metadata standards; null or absent when it has none. */
+  metadataStandards?: MetadataStandards | null;
 }
 
 /** How the target project is organised, as read from the target itself. */
@@ -68,25 +92,107 @@ export interface TargetConventions {
 export interface CloneMappingEntry {
   /** Path in the reference repo, relative to its root. */
   source: string;
-  /** Path in the target project, relative to its root. */
+  /** Path in the target project, relative to the target folder named by `root`. */
   target: string;
+  /** Which target folder the file goes into when BE and FE are separate; else the project. */
+  root?: RootRole;
   /** Port unit, e.g. "BE:category" — files sharing one are ported together. */
   group: string;
   /** Renames and substitutions this file needs (package, imports, table names). */
   changes: string;
   /** The mapping stage was not confident about this one. */
   uncertain?: boolean;
+  /**
+   * Which layer the file belongs to. Groups are ported in layer order — database
+   * scripts, then server, then client — so the client is written against a
+   * server that already exists. Optional for mappings saved before it existed;
+   * `layerOf` infers it then.
+   */
+  layer?: CloneLayer;
 }
+
+export type CloneLayer = "db" | "be" | "fe";
 
 export interface CloneMapping {
   entries: CloneMappingEntry[];
   notes: string;
 }
 
+/**
+ * A mapping entry the port agent deliberately did not write as listed, and
+ * said so. Declared rather than silent, so coverage can tell a considered
+ * choice from a forgotten file:
+ * - merged: its code lives in another file the agent wrote (`coveredBy`, in
+ *   the same target folder) — counted as covered only if that file exists.
+ * - not-needed: the agent judged it unnecessary — still counted missing, with
+ *   the reason shown, because "not needed" is the claim a person should check.
+ *
+ * There is deliberately no "generated" kind. A client file the target normally
+ * generates (an OpenAPI client) was once accepted as "to be generated later";
+ * the ported pages then imported files that did not exist and the feature could
+ * not run. Such files are written by hand in the generator's shape instead.
+ */
+export interface CloneDeviation {
+  target: string;
+  kind: "merged" | "not-needed";
+  coveredBy?: string;
+  reason: string;
+}
+
+/** What one port group reported back. */
+export interface ClonePortResult {
+  summary: string;
+  deviations: CloneDeviation[];
+}
+
+/**
+ * The unit-test stage's verdict: tests it wrote for the ported feature's basic
+ * CRUD flow, the commands that run them, and what happened.
+ */
+export interface CloneTestVerdict {
+  ok: boolean;
+  summary: string;
+  /** Commands that run exactly the new tests, one per folder, re-runnable as-is. */
+  commands: string[];
+  testFiles: string[];
+  passed?: number;
+  failed?: number;
+  /** Each failing test with its assertion or error message, verbatim. */
+  failures: string[];
+}
+
 /** Result of checking the mapping against what is actually on disk. */
 export interface CloneCoverage {
   present: string[];
   missing: string[];
+  /** Declared merges whose `coveredBy` file is on disk. */
+  merged?: CloneDeviation[];
+}
+
+/** An import in a ported file that resolves to nothing on disk. */
+export interface UnresolvedImport {
+  file: string;
+  specifier: string;
+}
+
+/** A client-side API call no server-side controller maps. */
+export interface UnmatchedApiCall {
+  file: string;
+  method: string | null;
+  url: string;
+}
+
+/**
+ * Whether the ported client and server are actually connected: every local
+ * import resolves, and every API path the client calls is mapped by some
+ * controller in the server folder. Deterministic — see `clone-wiring.ts`.
+ */
+export interface CloneWiring {
+  unresolvedImports: UnresolvedImport[];
+  unmatchedCalls: UnmatchedApiCall[];
+  /** How many client calls were checked, and how many server endpoints were known. */
+  callsChecked: number;
+  endpointsKnown: number;
 }
 
 export interface ReviewVerdict {

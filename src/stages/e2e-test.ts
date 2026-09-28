@@ -3,6 +3,7 @@ import { runStructuredQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
 import { projectContextPromptSection } from "./project-context.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
+import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { E2eVerdict, ProjectContext, SpecInput } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the E2E/QA agent in an automated SDLC pipeline.
@@ -95,9 +96,16 @@ export async function runE2eTest(
     maxTurns: config.maxTurns.e2e,
   };
 
+  // Separate BE/FE folders: both servers have to be started, so both folders
+  // are opened. Writes stay limited to test files by canUseTool either way.
+  const roots = rootsOf(spec);
+  const secondary = secondaryRootDirs(roots);
+  if (secondary.length) options.additionalDirectories = secondary;
+
   const prompt = [
     "--- Spec ---",
     spec.specMarkdown,
+    ...targetRootsPromptSection(roots),
     "",
     "--- Approved design (what the implementation should satisfy) ---",
     approvedProposal,

@@ -30,7 +30,9 @@ export const CLONE_STAGE_IDS = [
   "mapping",
   "port",
   "coverage",
+  "wiring",
   "build",
+  "tests",
 ] as const;
 
 export type RunMode = "feature" | "clone";
@@ -49,7 +51,10 @@ export function stageOfProgress(message: string): StageId | null {
   if (message.startsWith("Clone mapping:")) return "mapping";
   if (message.startsWith("Clone port:")) return "port";
   if (message.startsWith("Clone coverage:")) return "coverage";
+  if (message.startsWith("Clone wiring:")) return "wiring";
   if (message.startsWith("Clone build:")) return "build";
+  // A fix round belongs to the test stage: it exists to make build and tests pass.
+  if (message.startsWith("Clone tests:") || message.startsWith("Clone fix:")) return "tests";
 
   // Feature pipeline
   if (message.startsWith("Reference inventory:")) return "inventory";
@@ -81,9 +86,13 @@ export function isSetbackProgress(message: string): boolean {
     message === "Orchestrator review: reject" ||
     message === "E2E/QA verdict: fail" ||
     message === "Clone build: fail" ||
+    message.startsWith("Clone tests: fail") ||
+    message.startsWith("Clone fix: round") ||
+    message.startsWith("Clone mapping: warning") ||
     // Not fatal — the run continues — but it means the later stages lost the
     // file checklist, which is exactly the thing worth noticing on screen.
     message.startsWith("Reference inventory: unavailable") ||
-    /^Clone coverage: \d+ file\(s\) missing$/.test(message)
+    /^Clone coverage: \d+ file\(s\) missing$/.test(message) ||
+    /^Clone wiring: \d+ problem\(s\)$/.test(message)
   );
 }

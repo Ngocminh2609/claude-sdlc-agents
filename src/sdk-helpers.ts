@@ -1,4 +1,5 @@
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { recordUsage, usageOfResult } from "./token-usage.js";
 
 export interface TextRunResult {
   ok: boolean;
@@ -53,6 +54,14 @@ async function runQueryLoop<T>(
 ): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
   let lastAssistantError: string | undefined;
 
+  // A unit test that forgets to mock a stage must fail, not start a real agent.
+  // It happened: unmocked clone stages ran real sessions from vitest, which
+  // left Git Bash `find /` scans running for hours after the tests ended and
+  // filled the kernel's paged pool with millions of handles.
+  if (process.env.VITEST && !("mock" in (query as object))) {
+    throw new Error("A real Agent SDK call was attempted inside a unit test — mock the stage that made it.");
+  }
+
   try {
     for await (const message of query({ prompt, options })) {
       if (message.type === "assistant" && message.error) {
@@ -60,6 +69,9 @@ async function runQueryLoop<T>(
       }
 
       if (message.type !== "result") continue;
+
+      // Counted before the error check: a failed call still spent its tokens.
+      recordUsage(usageOfResult(message));
 
       if (isFlaggedError(message)) {
         // Detail for the console only — see the existing rule below about

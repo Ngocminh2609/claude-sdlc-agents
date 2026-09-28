@@ -159,8 +159,13 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
       specPath: String(body.specPath ?? ""),
       what: String(body.what ?? ""),
       skipBuild: body.skipBuild === true,
+      skipTests: body.skipTests === true,
       fresh: body.fresh === true,
-      projectPath: String(body.projectPath ?? ""),
+      projectPath: optionalString(body.projectPath),
+      projectBePath: optionalString(body.projectBePath),
+      projectFePath: optionalString(body.projectFePath),
+      referenceBePath: optionalString(body.referenceBePath),
+      referenceFePath: optionalString(body.referenceFePath),
       dbMode,
       dbConnection: typeof body.dbConnection === "string" ? body.dbConnection : undefined,
       dbSchemaPath: typeof body.dbSchemaPath === "string" ? body.dbSchemaPath : undefined,
@@ -279,6 +284,8 @@ async function upsertPreset(req: IncomingMessage, res: ServerResponse): Promise<
   const presets = await savePreset({
     name,
     projectPath: String(body.projectPath ?? ""),
+    projectBe: String(body.projectBe ?? ""),
+    projectFe: String(body.projectFe ?? ""),
     specPath: String(body.specPath ?? ""),
     dbMode: (body.dbMode as DbMode) ?? "none",
     dbSchemaPath: String(body.dbSchemaPath ?? ""),
@@ -332,6 +339,10 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   if (!chunks.length) return {};
   const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
   return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function describe(error: unknown): string {

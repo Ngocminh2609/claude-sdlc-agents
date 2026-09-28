@@ -1,6 +1,8 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
+import { indexPromptSection, withIndexAccess } from "../project-index.js";
+import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { ProjectContext, SpecInput } from "../types.js";
 
 /**
@@ -71,12 +73,23 @@ export async function inventoryProjectContext(spec: SpecInput): Promise<ProjectC
     maxTurns: config.maxTurns.projectContext,
   };
 
+  // Separate BE/FE folders: both are the project, so both are scanned. The
+  // conventions then say which side holds what — later stages rely on that.
+  const roots = rootsOf(spec);
+  const secondary = secondaryRootDirs(roots);
+  if (secondary.length) options.additionalDirectories = secondary;
+  withIndexAccess(options, spec.projectIndexes);
+
   const prompt = [
     "--- Spec (what the work has to produce) ---",
     spec.specMarkdown,
+    ...targetRootsPromptSection(roots),
+    ...indexPromptSection(spec.projectIndexes),
     "",
-    "Read the target project (the current working directory) and produce the",
-    "conventions summary and the relevant-files list described in your system prompt.",
+    "Read the target project (the current working directory, plus any other target folder listed",
+    "above) and produce the conventions summary and the relevant-files list described in your",
+    "system prompt. With separate folders, describe each one's conventions and say which folder",
+    "each relevant file is in.",
   ].join("\n");
 
   const result = await runStructuredQuery<ProjectContext>(prompt, options, PROJECT_CONTEXT_SCHEMA);

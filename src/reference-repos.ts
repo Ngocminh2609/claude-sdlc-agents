@@ -1,4 +1,5 @@
 import path from "node:path";
+import { secondaryRootDirs, type ProjectRoot } from "./target-roots.js";
 import type { ReferenceInventory } from "./types.js";
 
 /**
@@ -21,6 +22,15 @@ import type { ReferenceInventory } from "./types.js";
 /** Absolute reference directories, or an empty list when none were given. */
 export function referenceDirectories(referencePaths: string[] | undefined): string[] {
   return (referencePaths ?? []).map((candidate) => path.resolve(candidate));
+}
+
+/**
+ * Every directory a stage needs opened on top of its working directory: the
+ * reference repos (read-only — writes into them are guarded separately) and
+ * any target folder beyond the first, e.g. FE when BE is the working directory.
+ */
+export function extraDirectories(referencePaths: string[] | undefined, roots: ProjectRoot[]): string[] {
+  return [...referenceDirectories(referencePaths), ...secondaryRootDirs(roots)];
 }
 
 /**

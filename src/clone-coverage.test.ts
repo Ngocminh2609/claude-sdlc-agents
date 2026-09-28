@@ -62,6 +62,91 @@ describe("checkCoverage", () => {
   });
 });
 
+describe("checkCoverage with separate BE/FE folders", () => {
+  let be: string;
+  let fe: string;
+
+  beforeAll(async () => {
+    be = path.join(project, "be-root");
+    fe = path.join(project, "fe-root");
+    await mkdir(path.join(be, "src"), { recursive: true });
+    await mkdir(path.join(fe, "src"), { recursive: true });
+    await writeFile(path.join(be, "src", "Ctl.java"), "x", "utf-8");
+    await writeFile(path.join(fe, "src", "page.tsx"), "x", "utf-8");
+  });
+
+  it("checks each file in the folder its root names", () => {
+    const roots = [
+      { role: "be" as const, path: be },
+      { role: "fe" as const, path: fe },
+    ];
+    const result = checkCoverage(
+      {
+        entries: [
+          { source: "a", target: "src/Ctl.java", root: "be", group: "BE", changes: "" },
+          { source: "b", target: "src/page.tsx", root: "fe", group: "FE", changes: "" },
+          // Right file name, wrong folder: FE has no Ctl.java, so it is missing.
+          { source: "c", target: "src/Ctl.java", root: "fe", group: "FE", changes: "" },
+        ],
+        notes: "",
+      },
+      roots,
+    );
+
+    expect(result.present).toEqual(["src/Ctl.java", "src/page.tsx"]);
+    expect(result.missing).toEqual(["src/Ctl.java"]);
+  });
+});
+
+describe("checkCoverage with declared deviations", () => {
+  const promised = () => mapping("modules/category/Merged.java", "modules/category/Api.ts", "modules/category/Gone.java");
+
+  it("counts a merge as covered only when the file it was merged into exists", () => {
+    const result = checkCoverage(promised(), project, [
+      { target: "modules/category/Merged.java", kind: "merged", coveredBy: "modules/category/Ported.java", reason: "one class" },
+      { target: "modules/category/Gone.java", kind: "merged", coveredBy: "modules/category/Nowhere.java", reason: "claimed" },
+    ]);
+
+    expect(result.merged?.map((d) => d.target)).toEqual(["modules/category/Merged.java"]);
+    expect(result.missing).toEqual(["modules/category/Api.ts", "modules/category/Gone.java"]);
+  });
+
+  it("still reports a not-needed file as missing — that claim is for a person to check", () => {
+    const result = checkCoverage(promised(), project, [
+      { target: "modules/category/Gone.java", kind: "not-needed", reason: "unused" },
+    ]);
+
+    expect(result.missing).toEqual([
+      "modules/category/Merged.java",
+      "modules/category/Api.ts",
+      "modules/category/Gone.java",
+    ]);
+  });
+
+  it("matches a deviation named by its absolute path", () => {
+    const result = checkCoverage(promised(), project, [
+      {
+        target: path.join(project, "modules", "category", "Merged.java"),
+        kind: "merged",
+        coveredBy: path.join(project, "modules", "category", "Ported.java"),
+        reason: "one class",
+      },
+    ]);
+
+    expect(result.merged).toHaveLength(1);
+  });
+
+  it("says how many were merged into other files", () => {
+    expect(
+      describeCoverage({
+        present: ["a"],
+        missing: ["c"],
+        merged: [{ target: "b", kind: "merged", coveredBy: "a", reason: "" }],
+      }),
+    ).toBe("1/3 file(s) present (1 merged into other files)");
+  });
+});
+
 describe("describeCoverage", () => {
   it("reads as a fraction of what was promised", () => {
     expect(describeCoverage({ present: ["a", "b"], missing: ["c"] })).toBe("2/3 file(s) present");

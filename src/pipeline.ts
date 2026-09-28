@@ -4,13 +4,16 @@ import { config } from "./config.js";
 import { runSpecsArch } from "./stages/specs-arch.js";
 import { reviewSpecs } from "./stages/orchestrator-review.js";
 import { inventoryReferences } from "./stages/reference-inventory.js";
+import { cachedStage, repoVersions } from "./stage-cache.js";
 import { inventoryProjectContext } from "./stages/project-context.js";
 import { breakDownTasks } from "./stages/task-breakdown.js";
 import { runCoding } from "./stages/coding.js";
 import { runE2eTest } from "./stages/e2e-test.js";
 import { clearCheckpoint, fingerprint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
 import { findFreePorts } from "./free-ports.js";
+import { metadataStandardsFingerprint } from "./metadata-standards.js";
 import { StageError } from "./stage-error.js";
+import { rootsOf, type ProjectRoot } from "./target-roots.js";
 import type { RunLogger } from "./run-log.js";
 import type {
   CompletedTask,
@@ -178,7 +181,7 @@ async function resumeOrPlan(opts: PipelineOptions, checkpointKey: string): Promi
   if (saved.status !== "found") return planFromScratch(opts, checkpointKey, null);
 
   if (isBuildCheckpoint(saved.data)) {
-    if (finishedCodeIsGone(saved.data, spec.projectPath)) {
+    if (finishedCodeIsGone(saved.data, rootsOf(spec))) {
       onProgress("Resume: none of the files the finished tasks wrote are on disk any more — starting fresh");
       return planFromScratch(opts, checkpointKey, null);
     }
@@ -329,13 +332,26 @@ async function planFromScratch(
 async function scanInputs(
   opts: PipelineOptions,
 ): Promise<{ inventory: ReferenceInventory | null; projectContext: ProjectContext | null }> {
-  const { spec, onProgress = () => {} } = opts;
+  const { spec, onProgress = () => {}, fresh = false } = opts;
+  const targetFolders = (spec.targetRoots ?? [{ path: spec.projectPath }]).map((root) => root.path);
+  // An answer is reused only for the same spec against byte-identical repos
+  // (git HEAD + uncommitted state, from the project index). Either changing
+  // re-runs the stage.
+  const reuseNote = (stage: string) => (savedAt: string) =>
+    onProgress(`${stage}: reused from ${savedAt} — same spec, repositories unchanged since`);
 
   // --- Reference inventory (only when a sample project was given) ---
   let inventory: ReferenceInventory | null = null;
   if (spec.referencePaths?.length) {
     onProgress("Reference inventory: scanning the reference repositories");
-    inventory = await inventoryReferences(spec);
+    const versions = repoVersions(spec.projectIndexes, spec.referencePaths);
+    inventory = await cachedStage({
+      kind: "reference-inventory",
+      key: versions && [spec.specMarkdown, versions],
+      fresh,
+      run: () => inventoryReferences(spec),
+      onHit: reuseNote("Reference inventory"),
+    });
     // A failed scan is a degraded run, not a failed one: the later stages
     // still have read access. Say so out loud rather than letting the run
     // look like it had a file list when it did not.
@@ -351,7 +367,14 @@ async function scanInputs(
   // --- Project context: one scan of the target project itself, shared by
   // every stage below instead of each one rediscovering it independently ---
   onProgress("Project context: scanning the target project");
-  const projectContext: ProjectContext | null = await inventoryProjectContext(spec);
+  const targetVersions = repoVersions(spec.projectIndexes, targetFolders);
+  const projectContext: ProjectContext | null = await cachedStage({
+    kind: "project-context",
+    key: targetVersions && [spec.specMarkdown, targetVersions],
+    fresh,
+    run: () => inventoryProjectContext(spec),
+    onHit: reuseNote("Project context"),
+  });
   onProgress(
     projectContext
       ? "Project context: conventions and relevant files gathered"
@@ -388,6 +411,11 @@ function featureFingerprint(spec: SpecInput): string {
     spec.dbInfo?.kind ?? null,
     spec.dbInfo?.kind === "schema-file" ? spec.dbInfo.value : null,
     [...(spec.referencePaths ?? [])].sort(),
+    // Moving from one folder to separate BE/FE folders changes where every
+    // planned file lives, so a plan saved for one layout does not carry over.
+    rootsOf(spec).map((root) => `${root.role}:${root.path}`),
+    // The design was reviewed against these rules; different rules need a new design.
+    metadataStandardsFingerprint(spec.metadataStandards),
   ]);
 }
 
@@ -419,13 +447,14 @@ function isDesignCheckpoint(data: unknown): data is DesignCheckpoint {
  * rename, all of them is a wiped project. A false positive costs a fresh run,
  * never a wrong result.
  */
-function finishedCodeIsGone(data: BuildCheckpoint, projectPath: string): boolean {
+function finishedCodeIsGone(data: BuildCheckpoint, roots: ProjectRoot[]): boolean {
   const doneIds = new Set(data.completedTasks.map((task) => task.id));
   const files = data.tasks
     .filter((task) => doneIds.has(task.id))
     .flatMap((task) => task.targetFiles ?? []);
   if (!files.length) return false;
-  return files.every((file) => !existsSync(path.resolve(projectPath, file)));
+  // A task's file may live in either folder of a split project.
+  return files.every((file) => roots.every((root) => !existsSync(path.resolve(root.path, file))));
 }
 
 function codingStoppedMessage(

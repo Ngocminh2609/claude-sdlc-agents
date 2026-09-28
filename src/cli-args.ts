@@ -8,9 +8,19 @@ import type { DbInfo } from "./types.js";
  * as a side effect of being imported.
  */
 
+/**
+ * Where the code goes: one project folder (`--project`), or separate server
+ * and client folders (`--project-be`, `--project-fe`) — not both kinds.
+ */
+export interface TargetArgs {
+  project?: string;
+  be?: string;
+  fe?: string;
+}
+
 export interface Args {
   specPath: string;
-  projectPath: string;
+  target: TargetArgs;
   dbInfo?: DbInfo;
   referencePaths: string[];
   /** Ignore progress saved by a stopped run and start from the beginning. */
@@ -18,40 +28,54 @@ export interface Args {
 }
 
 export const USAGE =
-  "Usage: aidev --spec <path.md> --project <path> [--db-connection <string> | --db-schema <path>] [--reference <dir>]... [--fresh]";
+  "Usage: aidev --spec <path.md> (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--db-connection <string> | --db-schema <path>] [--reference <dir>]... [--fresh]";
 
 export const CLONE_USAGE =
-  'Usage: aidev clone --what "<feature>" --from <dir> [--from <dir>]... --project <dir> [--no-build] [--fresh]';
+  'Usage: aidev clone --what "<keyword>" (--from <dir>... | --from-be <dir> [--from-fe <dir>] | --from-fe <dir>) (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--no-build] [--no-tests] [--fresh]';
 
 /** Clone mode: port an existing feature from one repo into another. */
 export interface CloneArgs {
+  /** A keyword, Vietnamese or English — not necessarily the feature's exact name. */
   what: string;
-  fromPaths: string[];
-  projectPath: string;
+  target: TargetArgs;
+  /** Unlabelled sources (`--from`, repeatable) plus labelled BE/FE sources. */
+  from: { paths: string[]; be?: string; fe?: string };
   skipBuild: boolean;
+  skipTests: boolean;
   fresh: boolean;
 }
 
 export function parseCloneArgs(argv: string[]): CloneArgs {
   let what: string | undefined;
-  let projectPath: string | undefined;
   let skipBuild = false;
+  let skipTests = false;
   let fresh = false;
-  const fromPaths: string[] = [];
+  const target: TargetArgs = {};
+  const from: CloneArgs["from"] = { paths: [] };
 
   for (let i = 0; i < argv.length; i++) {
+    if (takeTarget(argv, i, target)) {
+      i++;
+      continue;
+    }
     switch (argv[i]) {
       case "--what":
         what = argv[++i];
         break;
       case "--from":
-        fromPaths.push(argv[++i]);
+        from.paths.push(argv[++i]);
         break;
-      case "--project":
-        projectPath = argv[++i];
+      case "--from-be":
+        from.be = argv[++i];
+        break;
+      case "--from-fe":
+        from.fe = argv[++i];
         break;
       case "--no-build":
         skipBuild = true;
+        break;
+      case "--no-tests":
+        skipTests = true;
         break;
       case "--fresh":
         fresh = true;
@@ -59,25 +83,28 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
     }
   }
 
-  if (!what?.trim() || !projectPath || !fromPaths.length) throw new Error(CLONE_USAGE);
+  const hasSource = from.paths.length > 0 || Boolean(from.be) || Boolean(from.fe);
+  if (!what?.trim() || !hasTarget(target) || !hasSource) throw new Error(CLONE_USAGE);
+  assertOneTargetKind(target, CLONE_USAGE);
 
-  return { what: what.trim(), fromPaths, projectPath, skipBuild, fresh };
+  return { what: what.trim(), target, from, skipBuild, skipTests, fresh };
 }
 
 export function parseArgs(argv: string[]): Args {
   let specPath: string | undefined;
-  let projectPath: string | undefined;
   let dbInfo: DbInfo | undefined;
   let fresh = false;
+  const target: TargetArgs = {};
   const referencePaths: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
+    if (takeTarget(argv, i, target)) {
+      i++;
+      continue;
+    }
     switch (argv[i]) {
       case "--spec":
         specPath = argv[++i];
-        break;
-      case "--project":
-        projectPath = argv[++i];
         break;
       case "--db-connection":
         dbInfo = { kind: "connection", value: argv[++i] };
@@ -95,28 +122,57 @@ export function parseArgs(argv: string[]): Args {
     }
   }
 
-  if (!specPath || !projectPath) throw new Error(USAGE);
+  if (!specPath || !hasTarget(target)) throw new Error(USAGE);
+  assertOneTargetKind(target, USAGE);
 
-  return { specPath, projectPath, dbInfo, referencePaths, fresh };
+  return { specPath, target, dbInfo, referencePaths, fresh };
+}
+
+/** Consumes a target flag and its value at `i`; true when it did. */
+function takeTarget(argv: string[], i: number, target: TargetArgs): boolean {
+  switch (argv[i]) {
+    case "--project":
+      target.project = argv[i + 1];
+      return true;
+    case "--project-be":
+      target.be = argv[i + 1];
+      return true;
+    case "--project-fe":
+      target.fe = argv[i + 1];
+      return true;
+    default:
+      return false;
+  }
+}
+
+function hasTarget(target: TargetArgs): boolean {
+  return Boolean(target.project || target.be || target.fe);
+}
+
+function assertOneTargetKind(target: TargetArgs, usage: string): void {
+  if (target.project && (target.be || target.fe)) {
+    throw new Error(`Give either --project or --project-be/--project-fe, not both.\n${usage}`);
+  }
 }
 
 /**
- * Validates `--reference` up front. A typo would otherwise surface much later
- * as an agent quietly finding nothing in a directory that does not exist, by
- * which point the design stage has already run and been paid for.
+ * Validates reference folders up front. A typo would otherwise surface much
+ * later as an agent quietly finding nothing in a directory that does not
+ * exist, by which point the design stage has already run and been paid for.
  */
 export function resolveReferencePaths(
   referencePaths: string[],
-  projectPath: string,
+  targetPaths: string | string[],
   flag = "--reference",
 ): string[] {
+  const targets = (Array.isArray(targetPaths) ? targetPaths : [targetPaths]).map((target) => path.resolve(target));
   return referencePaths.map((candidate) => {
     const resolved = path.resolve(candidate);
     if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
       throw new Error(`${flag} is not a directory: ${resolved}`);
     }
-    if (resolved === path.resolve(projectPath)) {
-      throw new Error(`${flag} cannot be the target project — that is already readable.`);
+    if (targets.includes(resolved)) {
+      throw new Error(`${flag} cannot be a target project folder — that is already readable.`);
     }
     return resolved;
   });

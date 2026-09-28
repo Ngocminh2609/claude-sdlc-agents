@@ -1,9 +1,12 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
+import { describeWiring } from "./clone-wiring.js";
 import type { CloneBuildVerdict } from "./stages/clone-build.js";
 import type {
   CloneCoverage,
+  CloneTestVerdict,
+  CloneWiring,
   CloneInput,
   CloneMapping,
   E2eVerdict,
@@ -140,6 +143,7 @@ export class RunLogger {
       finishedAt: this.finishedAt ?? new Date().toISOString(),
       spec: {
         projectPath: this.spec.projectPath,
+        targetRoots: this.spec.targetRoots ?? [],
         specMarkdown: this.spec.specMarkdown,
         dbInfoKind: this.spec.dbInfo?.kind ?? null,
         referencePaths: this.spec.referencePaths ?? [],
@@ -315,7 +319,10 @@ export class CloneRunLogger {
   private conventions: TargetConventions | null = null;
   private mapping: CloneMapping | null = null;
   private coverage: CloneCoverage | null = null;
+  private wiring: CloneWiring | null = null;
   private build: CloneBuildVerdict | null = null;
+  private readonly testRuns: CloneTestVerdict[] = [];
+  private readonly fixes: { round: number; summary: string }[] = [];
   private readonly ports: { group: string; summary: string }[] = [];
   private finalStatus = "in-progress";
   private finalMessage = "";
@@ -347,8 +354,21 @@ export class CloneRunLogger {
     this.coverage = coverage;
   }
 
+  recordCloneWiring(wiring: CloneWiring): void {
+    this.wiring = wiring;
+  }
+
   recordCloneBuild(build: CloneBuildVerdict): void {
     this.build = build;
+  }
+
+  /** The latest test verdict wins; earlier ones stay in the history for the report. */
+  recordCloneTests(tests: CloneTestVerdict): void {
+    this.testRuns.push(tests);
+  }
+
+  recordCloneFix(round: number, summary: string): void {
+    this.fixes.push({ round, summary });
   }
 
   finish(status: string, message: string): void {
@@ -367,6 +387,7 @@ export class CloneRunLogger {
         // Same shape as a feature run's log so the history listing can read
         // both without knowing which pipeline wrote the file.
         projectPath: this.clone.projectPath,
+        targetRoots: this.clone.targetRoots ?? [],
         specMarkdown: this.clone.what,
         dbInfoKind: null,
         referencePaths: this.clone.referencePaths,
@@ -377,7 +398,10 @@ export class CloneRunLogger {
       mapping: this.mapping,
       ports: this.ports,
       coverage: this.coverage,
+      wiring: this.wiring,
       build: this.build,
+      tests: this.testRuns,
+      fixes: this.fixes,
       finalStatus: this.finalStatus,
       finalMessage: this.finalMessage,
     };
@@ -390,7 +414,9 @@ export class CloneRunLogger {
       `# Clone report — ${this.runId}`,
       "",
       `- Cloning: **${this.clone.what}**`,
-      `- Target project: ${this.clone.projectPath}`,
+      ...(this.clone.targetRoots && this.clone.targetRoots.length > 1
+        ? this.clone.targetRoots.map((root) => `- Target ${root.role.toUpperCase()}: ${root.path}`)
+        : [`- Target project: ${this.clone.projectPath}`]),
       ...this.clone.referencePaths.map((reference) => `- Reference: ${reference}`),
       `- Started: ${this.startedAt}`,
       `- Finished: ${this.finishedAt ?? "(unfinished)"}`,
@@ -399,7 +425,8 @@ export class CloneRunLogger {
     ];
 
     if (this.coverage) {
-      const total = this.coverage.present.length + this.coverage.missing.length;
+      const merged = this.coverage.merged ?? [];
+      const total = this.coverage.present.length + this.coverage.missing.length + merged.length;
       lines.push(
         "## Coverage",
         "",
@@ -409,6 +436,26 @@ export class CloneRunLogger {
       if (this.coverage.missing.length) {
         lines.push("**Missing:**", "");
         for (const missing of this.coverage.missing) lines.push(`- \`${missing}\``);
+        lines.push("");
+      }
+      if (merged.length) {
+        lines.push("**Merged into another file (the file it went into was checked on disk):**", "");
+        for (const entry of merged) lines.push(`- \`${entry.target}\` → \`${entry.coveredBy}\` — ${entry.reason}`);
+        lines.push("");
+      }
+    }
+
+    if (this.wiring) {
+      const wiring = this.wiring;
+      lines.push("## Wiring (client ↔ server)", "", `${describeWiring(wiring)}.`, "");
+      if (wiring.unresolvedImports.length) {
+        lines.push("**Imports that resolve to nothing:**", "");
+        for (const miss of wiring.unresolvedImports) lines.push(`- ${miss.file}: \`${miss.specifier}\``);
+        lines.push("");
+      }
+      if (wiring.unmatchedCalls.length) {
+        lines.push("**API calls no server controller maps:**", "");
+        for (const call of wiring.unmatchedCalls) lines.push(`- ${call.file}: \`${call.method ?? "?"} ${call.url}\``);
         lines.push("");
       }
     }
@@ -425,18 +472,60 @@ export class CloneRunLogger {
       if (this.build.errors?.length) lines.push("");
     }
 
+    const tests = this.testRuns.at(-1);
+    if (tests) {
+      lines.push(
+        "## Unit tests",
+        "",
+        `**Verdict:** ${tests.ok ? "pass" : "fail"}${
+          tests.passed !== undefined ? ` — ${tests.passed} passed, ${tests.failed ?? 0} failed` : ""
+        } — ${tests.summary}`,
+        "",
+      );
+      if (this.testRuns.length > 1) lines.push(`Run ${this.testRuns.length} time(s) (after fix rounds).`, "");
+      for (const command of tests.commands) lines.push(`- Command: \`${command}\``);
+      for (const file of tests.testFiles) lines.push(`- Test file: \`${file}\``);
+      if (tests.failures.length) {
+        lines.push("", "**Failing tests:**", "");
+        for (const failure of tests.failures) lines.push(`- ${failure}`);
+      }
+      lines.push("");
+    }
+
+    if (this.fixes.length) {
+      lines.push("## Fix rounds", "");
+      for (const fix of this.fixes) lines.push(`### Round ${fix.round}`, "", fix.summary.trim(), "");
+    }
+
     if (this.mapping) {
       lines.push("## File mapping", "");
       for (const entry of this.mapping.entries) {
         const present = this.coverage?.present.includes(entry.target);
-        const mark = this.coverage ? (present ? "x" : " ") : " ";
+        const mergedInto = this.coverage?.merged?.find((merged) => merged.target === entry.target)?.coveredBy;
+        const mark = present || mergedInto ? "x" : " ";
+        const note = mergedInto ? ` _(merged into \`${mergedInto}\`)_` : "";
+        const where = entry.root && entry.root !== "app" ? `${entry.root.toUpperCase()}: ` : "";
         lines.push(
-          `- [${mark}] **${entry.group}** \`${entry.source}\` → \`${entry.target}\`${entry.uncertain ? " _(uncertain)_" : ""}`,
+          `- [${mark}] **${entry.group}** \`${entry.source}\` → ${where}\`${entry.target}\`${note}${entry.uncertain ? " _(uncertain)_" : ""}`,
           `  - changes: ${entry.changes}`,
         );
       }
       if (this.mapping.notes.trim()) lines.push("", `**Mapping notes:** ${this.mapping.notes.trim()}`);
       lines.push("");
+    }
+
+    if (this.referenceInventory?.resolvedFeature?.trim()) {
+      lines.push(
+        "## Keyword match",
+        "",
+        `The keyword **${this.clone.what}** was matched to **${this.referenceInventory.resolvedFeature.trim()}**.`,
+        "",
+      );
+      if (this.referenceInventory.alternatives?.length) {
+        lines.push("Other features it also matched (not ported):", "");
+        for (const alternative of this.referenceInventory.alternatives) lines.push(`- ${alternative}`);
+        lines.push("");
+      }
     }
 
     if (this.referenceInventory) {

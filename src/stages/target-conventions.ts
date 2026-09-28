@@ -1,6 +1,8 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config } from "../config.js";
+import { indexFor, indexPromptSection, withIndexAccess } from "../project-index.js";
+import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { CloneInput, TargetConventions } from "../types.js";
 
 /**
@@ -31,7 +33,10 @@ Cover, for each layer the project actually has:
 - Client: the feature/page folder convention, routing registration, state and
   API-client conventions, where shared components live.
 - Database: script folder, file naming and ordering convention, migration tool
-  if any.
+  if any — and whether tables are created by the ORM at startup (e.g. Hibernate
+  ddl-auto create/update) or only by those scripts (ddl-auto none/validate, or a
+  migration tool). Quote the setting and an existing script path; a port that
+  adds entities depends on this answer.
 - Naming: the casing and suffix conventions actually used for files, classes and
   columns — quote real examples from the code rather than generalising.
 
@@ -55,12 +60,24 @@ export async function readTargetConventions(clone: CloneInput): Promise<TargetCo
     maxTurns: config.maxTurns.targetConventions,
   };
 
+  const roots = rootsOf(clone);
+  const secondary = secondaryRootDirs(roots);
+  if (secondary.length) options.additionalDirectories = secondary;
+  // Only the target's own indexes: this stage is about the target alone.
+  const targetIndexes = (clone.projectIndexes ?? []).filter((index) => roots.some((root) => indexFor([index], root.path)));
+  withIndexAccess(options, targetIndexes);
+
   const prompt = [
     "--- What will be ported into this project ---",
     clone.what,
+    ...targetRootsPromptSection(roots),
+    ...indexPromptSection(targetIndexes),
     "",
     "Describe how this project is organised, with enough precision that another",
     "agent can place new server, client and database files without guessing.",
+    ...(secondary.length
+      ? ["Cover every target folder listed above, and say which conventions belong to which folder."]
+      : []),
   ].join("\n");
 
   const result = await runStructuredQuery<TargetConventions>(prompt, options, CONVENTIONS_SCHEMA);
