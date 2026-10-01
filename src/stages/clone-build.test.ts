@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CloneMapping } from "../types.js";
+import type { CloneMapping, TargetConventions } from "../types.js";
 
 const runStructuredQuery = vi.fn();
 vi.mock("../sdk-helpers.js", () => ({ runStructuredQuery }));
@@ -55,10 +55,29 @@ describe("verifyCloneBuild", () => {
   it("gives the agent free ports in case the build check boots the app", async () => {
     runStructuredQuery.mockResolvedValue({ ok: true, data: { ok: true, summary: "compiled" } });
 
-    await verifyCloneBuild(mapping, [50001, 50002]);
+    await verifyCloneBuild(mapping, null, [50001, 50002]);
 
     const [prompt] = runStructuredQuery.mock.calls[0];
     expect(prompt).toContain("50001, 50002");
+  });
+
+  it("passes the target conventions through, so it can reuse a CI/CD build command Target Conventions already found", async () => {
+    runStructuredQuery.mockResolvedValue({ ok: true, data: { ok: true, summary: "compiled" } });
+    const conventions: TargetConventions = { summary: "CI runs: mvn -pl modules/category -am package -DskipTests" };
+
+    await verifyCloneBuild(mapping, conventions);
+
+    const [prompt] = runStructuredQuery.mock.calls[0];
+    expect(prompt).toContain("mvn -pl modules/category -am package -DskipTests");
+  });
+
+  it("falls back to its own discovery when no conventions were given", async () => {
+    runStructuredQuery.mockResolvedValue({ ok: true, data: { ok: true, summary: "compiled" } });
+
+    await verifyCloneBuild(mapping);
+
+    const [prompt] = runStructuredQuery.mock.calls[0];
+    expect(prompt).toContain("Not available — work out the build from the project's own build files.");
   });
 
   it("fails closed: no verdict is not a pass", async () => {

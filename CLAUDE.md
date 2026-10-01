@@ -93,6 +93,13 @@
   to run the pipeline. It must keep spawning that launcher rather than
   importing `runPipeline` in-process: `src/index.ts` calls `process.chdir`, and
   the launcher is what loads `.env`. Importing it would fork both behaviours.
+- The UI mirrors the two-pipeline split: feature and clone are separate tabs
+  with separate forms (`feature-*` / `clone-*` ids, built into `forms` in
+  `app.js`), separate presets (`Preset.mode`) and per-flow next-step text
+  (`NEXT_STEPS[mode]`). Only the progress/log block is shared, because there
+  is one run at a time — it is labelled with the running flow. Don't fold the
+  forms back behind one switch with shared fields: that is how a clone preset
+  lost its keyword and a clone run was told to "re-run with the same spec".
 - The UI server binds to `127.0.0.1` and has no auth, because every endpoint
   can read any path and start an agent that edits any project. Anything that
   widens the bind address, adds a proxy hop, or accepts a remote origin is a

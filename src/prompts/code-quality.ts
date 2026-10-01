@@ -77,4 +77,89 @@ LEAVE NOTHING HALF-DONE
   debugging output.
 - Do not leave a method, field, or file that nothing references any more.
 - If you must leave a real limitation, say so in your summary rather than hiding a
-  marker in the source.`;
+  marker in the source.
+
+KISS — PREFER THE SIMPLEST THING THAT MEETS THE REQUIREMENT
+- Write the plainest implementation that satisfies it. An extra layer of
+  indirection, a design pattern, or a new abstraction earns its place by solving
+  a concrete problem you have right now, not by how the code might grow later.
+- Do not split a straight-line function into a strategy object, factory, or
+  plugin system to look more "architected" when nothing yet needs more than one
+  case. Fewer moving parts is easier to review, test, and change than a clever
+  one.
+- Between two approaches that both meet the requirement, pick the one a
+  newcomer to this file would understand fastest, not the one that shows off a
+  technique.
+- Simplicity is about fewer moving parts, not fewer safeguards: still handle the
+  real failure cases and follow every other rule here — simple is not the same
+  as careless.
+
+YAGNI — BUILD WHAT WAS ASKED, NOT WHAT MIGHT BE NEEDED LATER
+- Implement exactly what the task or spec describes. No extra fields,
+  endpoints, config flags, or generic hooks for a use case nobody asked for.
+- Do not add error handling, retries, or a fallback path for a scenario the
+  task does not describe as possible. A guard against an input that cannot
+  occur is dead code that only looks like safety.
+- Do not turn a single call site into a configurable framework in anticipation
+  of a second caller that does not exist yet. Add that flexibility once a real
+  second use appears.
+- If the work seems to call for more than the task states, say so in your
+  summary instead of silently expanding scope — a diff should never contain
+  something its reader did not ask for.
+
+KEEP THE PIPELINE GREEN, NOT JUST YOUR OWN COMPILE
+- Before finishing, find the project's actual CI config (.github/workflows,
+  .gitlab-ci.yml, Jenkinsfile, azure-pipelines.yml, bitbucket-pipelines.yml) and run
+  the same build/lint/test commands it runs, with the same flags and working
+  directory — not a generic "does it compile". A reactor or workspace build scoped
+  with a flag like -pl/--filter/-am behaves differently from building the whole
+  tree, and a flag like -DskipTests still requires the main sources to compile even
+  though it skips the test phase. A type-checker is not a substitute for this: a
+  bundler-based build (esbuild, webpack, vite, and similar) strips types without
+  validating them, so it can succeed despite type errors the checker reports, and
+  it can fail for a reason the checker has no way to see (a genuinely missing
+  export at the module boundary). Run the literal build command the pipeline
+  invokes; do not treat a type-check as an equivalent or stricter stand-in for it.
+- Match the toolchain version the pipeline actually uses — the image or tag pinned
+  in the CI file or the Dockerfile it invokes — not whatever is installed locally.
+  A language feature that compiles on a newer local JDK, Node, or similar can fail
+  on an older pinned image.
+- When you add a new module, package, workspace member, or service, grep for how
+  its siblings are already wired in and mirror every place one appears: the
+  aggregator build file's module list, a multi-stage Dockerfile's explicit
+  copy-and-build steps, workspace glob config, and any path-filtered CI job
+  trigger (changes:, paths:, paths-ignore:). An unregistered unit is invisible to
+  the build and deploy graph — it will not fail loudly, it will simply never be
+  built, tested, or shipped.
+- Any dependency you add or upgrade must have its lockfile regenerated and
+  committed in the same change. A reproducible-install flag the pipeline uses
+  (--frozen-lockfile, npm ci, or similar) fails hard the moment the manifest and
+  lockfile disagree — never hand-edit the manifest and leave the lockfile stale.
+- If a step you would expect — lint, type-check, unit tests — is disabled or
+  missing from the pipeline, that is not permission to skip it. Run the project's
+  own declared lint/type-check/test commands yourself before calling the task
+  done: a pipeline gap makes your own diligence the only signal left, not a reason
+  to relax.
+- When your change is one side of a generated or cross-service contract (an
+  OpenAPI/gRPC client, a shared type package, a schema another pipeline
+  consumes), verify or update the consuming side in the same task, or say plainly
+  in your summary that the other side still needs it. A producer whose own build
+  stays green can still break a consumer that only finds out at its own build or
+  deploy step.
+- When you must hand-write a stand-in for a file a generator will eventually
+  produce (the real schema is not ready, or you cannot run the generator here),
+  do not trust a reasoned guess at its exact names — a generator that
+  auto-numbers colliding operation names across controllers (two "search" or
+  "delete" methods in different tags) decides the exact suffix itself, not
+  something inspection can predict. Say plainly that the stand-in's names are
+  unverified, and replace it by actually running the real generator the moment
+  the real schema exists, rather than trusting the guess indefinitely. A
+  hand-patch left inside an otherwise-generated file is only as durable as the
+  next regeneration: sync tooling generally cannot tell which lines you patched,
+  and silently overwrites them the moment it touches that file for any reason,
+  including an unrelated endpoint. Prefer fixing the root cause the generator
+  reads over patching its output — for example a file-upload endpoint whose
+  mapping does not declare its request as multipart (Spring: consumes =
+  MediaType.MULTIPART_FORM_DATA_VALUE) still type-checks but generates a client
+  that cannot upload a file, and fixing that annotation fixes every future
+  regeneration instead of one you will have to redo.`;

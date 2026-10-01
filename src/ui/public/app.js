@@ -14,11 +14,6 @@ const $ = (id) => document.getElementById(id);
 const el = {
   topbarMeta: $("topbar-meta"),
   tabs: $("tabs"),
-  quickstart: $("quickstart"),
-  modeSwitch: $("mode-switch"),
-  stepRunNum: $("step-run-num"),
-  projectBe: $("project-be"),
-  projectFe: $("project-fe"),
   specPath: $("spec-path"),
   referencePath: $("reference-path"),
   cloneWhat: $("clone-what"),
@@ -33,13 +28,12 @@ const el = {
   dbReveal: $("db-reveal"),
   dbSchemaRow: $("db-schema-row"),
   dbSchemaPath: $("db-schema-path"),
-  precheck: $("precheck"),
-  metadataStandardsMode: $("metadata-standards-mode"),
-  presetSelect: $("preset-select"),
-  runStart: $("run-start"),
+  monitor: $("run-monitor"),
+  runFlow: $("run-flow"),
+  runSubject: $("run-subject"),
+  runElsewhere: $("run-elsewhere"),
   runStop: $("run-stop"),
   runMeta: $("run-meta"),
-  runError: $("run-error"),
   statusPill: $("status-pill"),
   stages: $("stages"),
   result: $("result"),
@@ -50,6 +44,7 @@ const el = {
   specFilePath: $("spec-file-path"),
   specStatus: $("spec-status"),
   runList: $("run-list"),
+  runsFilter: $("runs-filter"),
   report: $("report"),
   reportTitle: $("report-title"),
   picker: $("picker"),
@@ -59,6 +54,38 @@ const el = {
   pickerError: $("picker-error"),
   pickerChoose: $("picker-choose"),
 };
+
+/**
+ * The two flows each have their own tab and their own copy of the controls
+ * both need (target folders, the commit/stash tick, Run, presets…). The copies
+ * share an id suffix and differ only by the flow prefix, so one lookup builds
+ * both forms and nothing typed into one tab can leak into the other's run.
+ */
+const FLOWS = ["feature", "clone"];
+
+const forms = Object.fromEntries(
+  FLOWS.map((flow) => {
+    const part = (name) => $(`${flow}-${name}`);
+    return [
+      flow,
+      {
+        section: $(`tab-${flow}`),
+        projectBe: part("project-be"),
+        projectFe: part("project-fe"),
+        precheck: part("precheck"),
+        fresh: part("fresh"),
+        metadataStandards: part("metadata-standards"),
+        runStart: part("run-start"),
+        runError: part("run-error"),
+        presetSelect: part("preset-select"),
+        presetSave: part("preset-save"),
+        presetDelete: part("preset-delete"),
+      },
+    ];
+  }),
+);
+
+const isFlow = (name) => FLOWS.includes(name);
 
 // --- Wording ---------------------------------------------------------------
 
@@ -124,18 +151,35 @@ const STATUS_BADGE = {
   unknown: "Không rõ",
 };
 
+/** What the user sees on screen as the name of each flow. */
+const FLOW_TEXT = { feature: "Task mới", clone: "Clone" };
+
+/**
+ * What to do next, per flow: the two pipelines stop for different reasons and
+ * resume from different checkpoints, so one shared sentence would be wrong for
+ * one of them (a clone run has no spec, no design and no E2E).
+ */
 const NEXT_STEPS = {
-  done: "E2E đã đạt. Bước tiếp theo: mở thư mục dự án, chạy <code>git diff</code> để xem AI đã sửa gì, tự review rồi commit.",
-  "escalated-specs":
-    "Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Code <strong>chưa bị đụng tới</strong>. Tiến độ thiết kế đã lưu: bấm Chạy lại với cùng spec sẽ <strong>sửa tiếp từ bản thiết kế cuối</strong> theo phản hồi (thêm 3 lượt), không làm lại từ đầu. Nếu phản hồi cho thấy spec còn mơ hồ, sửa spec rồi chạy — khi đó thiết kế làm lại từ đầu.",
-  "escalated-e2e":
-    "E2E chưa đạt — hệ thống <strong>dừng ngay, không tự code lại từ task đầu</strong>. Code đã viết <strong>vẫn nằm trên đĩa, không bị hoàn tác</strong>. Bước tiếp theo: xem kết quả bên dưới để biết kịch bản/tiêu chí nào trượt, sửa (hoặc làm rõ spec) rồi chạy lại — tiến độ đã lưu, chạy lại sẽ vào thẳng bước E2E.",
-  incomplete:
-    "Còn thiếu: hoặc có file trong bảng ánh xạ chưa được ghi ra, hoặc dự án đích build không qua. Code đã port <strong>vẫn nằm trên đĩa</strong>. Mở báo cáo xem danh sách thiếu và lỗi biên dịch, rồi hoàn thiện nốt.",
-  errored:
-    "Pipeline dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở giai đoạn/task nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Tiến độ đã lưu: bấm Chạy lại với cùng spec sẽ <strong>tiếp tục từ chỗ dừng</strong>, bỏ qua thiết kế và các task đã xong.",
-  stopped:
-    "Anh đã bấm Dừng. Các file AI đã ghi vào dự án <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án. Bấm Chạy lại với cùng spec sẽ tiếp tục từ task đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
+  feature: {
+    done: "E2E đã đạt. Bước tiếp theo: mở thư mục dự án, chạy <code>git diff</code> để xem AI đã sửa gì, tự review rồi commit.",
+    "escalated-specs":
+      "Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Code <strong>chưa bị đụng tới</strong>. Tiến độ thiết kế đã lưu: bấm Chạy lại với cùng spec sẽ <strong>sửa tiếp từ bản thiết kế cuối</strong> theo phản hồi (thêm 3 lượt), không làm lại từ đầu. Nếu phản hồi cho thấy spec còn mơ hồ, sửa spec rồi chạy — khi đó thiết kế làm lại từ đầu.",
+    "escalated-e2e":
+      "E2E chưa đạt — hệ thống <strong>dừng ngay, không tự code lại từ task đầu</strong>. Code đã viết <strong>vẫn nằm trên đĩa, không bị hoàn tác</strong>. Bước tiếp theo: xem kết quả bên dưới để biết kịch bản/tiêu chí nào trượt, sửa (hoặc làm rõ spec) rồi chạy lại — tiến độ đã lưu, chạy lại sẽ vào thẳng bước E2E.",
+    errored:
+      "Pipeline dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở giai đoạn/task nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Tiến độ đã lưu: bấm Chạy lại với cùng spec sẽ <strong>tiếp tục từ chỗ dừng</strong>, bỏ qua thiết kế và các task đã xong.",
+    stopped:
+      "Anh đã bấm Dừng. Các file AI đã ghi vào dự án <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án. Bấm Chạy lại với cùng spec sẽ tiếp tục từ task đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
+  },
+  clone: {
+    done: "Đã port đủ file, nối FE↔BE ổn, build và unit test qua (trừ bước anh chọn bỏ qua). Bước tiếp theo: mở thư mục dự án đích, chạy <code>git diff</code>, liếc lại bảng ánh xạ trong báo cáo (nhất là các dòng đánh dấu không chắc chắn) rồi commit.",
+    incomplete:
+      "Còn thiếu: có file trong bảng ánh xạ chưa được ghi ra, nối FE↔BE hỏng, hoặc build/unit test không qua. Code đã port <strong>vẫn nằm trên đĩa</strong>. Mở báo cáo xem đúng chỗ thiếu, hoàn thiện nốt, rồi bấm Chạy clone lại với cùng thiết lập — bảng ánh xạ và các nhóm đã port được dùng lại, chỉ chạy lại phần kiểm tra.",
+    errored:
+      "Clone dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở nhóm file nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Các nhóm đã port vẫn nằm trên đĩa và tiến độ đã lưu: bấm Chạy clone lại với cùng thiết lập sẽ <strong>tiếp tục từ nhóm đang dở</strong>, dùng lại bảng ánh xạ.",
+    stopped:
+      "Anh đã bấm Dừng. Các file đã port <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án đích. Bấm Chạy clone lại với cùng thiết lập sẽ tiếp tục từ nhóm đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
+  },
 };
 
 const RUN_ERROR_TEXT = {
@@ -168,8 +212,8 @@ Màn hình / API nào, thuộc module nào, hiện đã có sẵn cái gì liên
 
 let appConfig = null;
 let stagesByMode = { feature: [], clone: [] };
-/** Which form the user is filling in — not necessarily what is running. */
-let formMode = "feature";
+/** The flow tab the user last had open — not necessarily what is running. */
+let activeFlow = "feature";
 let lines = [];
 let currentRunId = null;
 let lastSeq = 0;
@@ -207,13 +251,17 @@ el.tabs.addEventListener("click", (event) => {
   if (button) showTab(button.dataset.tab);
 });
 
-// Any "xem hướng dẫn" link anywhere on the page.
+// Any "xem hướng dẫn" / "dùng tab Clone" link anywhere on the page.
 document.addEventListener("click", (event) => {
   const link = event.target.closest("[data-goto]");
   if (!link) return;
   event.preventDefault();
   showTab(link.dataset.goto);
 });
+
+const TAB_KEY = "aidev-ui-tab";
+/** Where the last-used flow was kept before the flows got their own tabs. */
+const LEGACY_MODE_KEY = "aidev-ui-mode";
 
 function showTab(name) {
   for (const tab of el.tabs.querySelectorAll(".tab")) {
@@ -223,19 +271,22 @@ function showTab(name) {
     panel.classList.toggle("is-active", panel.id === `tab-${name}`);
   }
   document.querySelector("main").scrollTop = 0;
+
+  if (isFlow(name)) {
+    activeFlow = name;
+    localStorage.setItem(TAB_KEY, name);
+    // One progress/log block serves both flows: it follows the flow tab that
+    // is open, so each form keeps its own run view directly beneath it.
+    forms[name].section.append(el.monitor);
+    if (runState) renderState(runState);
+  }
   if (name === "history") loadRuns();
 }
 
-// --- Quick start callout ---------------------------------------------------
-
-const QUICKSTART_KEY = "aidev-ui-quickstart-hidden";
-
-if (localStorage.getItem(QUICKSTART_KEY) === "1") el.quickstart.classList.add("hidden");
-
-$("quickstart-hide").addEventListener("click", () => {
-  el.quickstart.classList.add("hidden");
-  localStorage.setItem(QUICKSTART_KEY, "1");
-});
+function restoreTab() {
+  const saved = localStorage.getItem(TAB_KEY) ?? localStorage.getItem(LEGACY_MODE_KEY);
+  showTab(isFlow(saved) ? saved : "feature");
+}
 
 // --- Form state ------------------------------------------------------------
 
@@ -247,8 +298,10 @@ function saveForm() {
   localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
-      projectBe: el.projectBe.value,
-      projectFe: el.projectFe.value,
+      featureProjectBe: forms.feature.projectBe.value,
+      featureProjectFe: forms.feature.projectFe.value,
+      cloneProjectBe: forms.clone.projectBe.value,
+      cloneProjectFe: forms.clone.projectFe.value,
       specPath: el.specPath.value,
       referencePath: el.referencePath.value,
       cloneWhat: el.cloneWhat.value,
@@ -263,10 +316,14 @@ function saveForm() {
 function restoreForm() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    // A form saved before separate BE/FE folders had one project folder: put
-    // it in both boxes, which the server treats as one project — same as before.
-    el.projectBe.value = saved.projectBe ?? saved.projectPath ?? "";
-    el.projectFe.value = saved.projectFe ?? saved.projectPath ?? "";
+    // Older forms had one pair of target boxes shared by both flows (and before
+    // that, one project folder): seed each flow's own boxes from them.
+    const legacyBe = saved.projectBe ?? saved.projectPath ?? "";
+    const legacyFe = saved.projectFe ?? saved.projectPath ?? "";
+    forms.feature.projectBe.value = saved.featureProjectBe ?? legacyBe;
+    forms.feature.projectFe.value = saved.featureProjectFe ?? legacyFe;
+    forms.clone.projectBe.value = saved.cloneProjectBe ?? legacyBe;
+    forms.clone.projectFe.value = saved.cloneProjectFe ?? legacyFe;
     el.specPath.value = saved.specPath || "";
     el.referencePath.value = saved.referencePath || "";
     el.cloneWhat.value = saved.cloneWhat || "";
@@ -278,35 +335,7 @@ function restoreForm() {
     // Unreadable storage is not worth failing the page over.
   }
   syncDbMode();
-  setMode(localStorage.getItem(MODE_KEY) || "feature");
-}
-
-const MODE_KEY = "aidev-ui-mode";
-
-el.modeSwitch.addEventListener("click", (event) => {
-  const button = event.target.closest(".mode-btn");
-  if (button) setMode(button.dataset.mode);
-});
-
-function setMode(mode) {
-  formMode = mode === "clone" ? "clone" : "feature";
-  localStorage.setItem(MODE_KEY, formMode);
-
-  for (const button of el.modeSwitch.querySelectorAll(".mode-btn")) {
-    button.classList.toggle("is-active", button.dataset.mode === formMode);
-  }
-  for (const card of document.querySelectorAll(".mode-only-feature")) {
-    card.classList.toggle("hidden", formMode !== "feature");
-  }
-  for (const card of document.querySelectorAll(".mode-only-clone")) {
-    card.classList.toggle("hidden", formMode !== "clone");
-  }
-  // Clone mode has no database step, so the run card is step 3 there.
-  el.stepRunNum.textContent = formMode === "clone" ? "3" : "4";
-
-  // Show the strip for the mode being filled in while nothing is running.
-  renderStages(runState ?? { stage: null, completedStages: [], setback: false, mode: formMode });
-  syncRunButton();
+  syncRunButtons();
 }
 
 function syncDbMode() {
@@ -316,29 +345,39 @@ function syncDbMode() {
   el.dbSchemaRow.classList.toggle("hidden", mode !== "schema-file");
 }
 
-/**
- * The Run button stays disabled until the inputs are filled and the
- * commit/stash box is ticked. The tick is asked for every run on purpose:
- * the pipeline overwrites a working tree with no backup, so this is the one
- * piece of friction worth keeping.
- */
-function syncRunButton(running = el.runStop.disabled === false) {
-  const inputsFilled =
-    formMode === "clone"
-      ? el.cloneWhat.value.trim() && (el.cloneFromBe.value.trim() || el.cloneFromFe.value.trim())
-      : el.specPath.value.trim();
-  const hasTarget = el.projectBe.value.trim() || el.projectFe.value.trim();
-  const ready = hasTarget && inputsFilled && el.precheck.checked && !running;
+const isRunning = () => runState?.status === "running";
 
-  el.runStart.disabled = !ready;
-  el.runStart.textContent = formMode === "clone" ? "▶ Chạy clone" : "▶ Chạy pipeline";
-  el.runStart.title = ready
-    ? "Bắt đầu chạy"
-    : running
-      ? "Đang có một lần chạy"
-      : formMode === "clone"
-        ? "Điền thư mục BE/FE đích, từ khoá tính năng, repo mẫu (BE/FE) và tick ô xác nhận"
-        : "Điền thư mục BE/FE, file spec và tick ô xác nhận ở trên";
+/** Whether a flow's own inputs (besides the target folders) are filled in. */
+const FLOW_INPUTS_FILLED = {
+  feature: () => el.specPath.value.trim(),
+  clone: () => el.cloneWhat.value.trim() && (el.cloneFromBe.value.trim() || el.cloneFromFe.value.trim()),
+};
+
+const FLOW_MISSING_HINT = {
+  feature: "Điền thư mục BE/FE, file spec và tick ô xác nhận ở trên",
+  clone: "Điền thư mục BE/FE đích, từ khoá tính năng, repo mẫu (BE/FE) và tick ô xác nhận",
+};
+
+/**
+ * Each Run button stays disabled until its own tab's inputs are filled and
+ * its commit/stash box is ticked, and both stay disabled while any run is
+ * going — there is one pipeline at a time, whichever flow started it. The
+ * tick is asked for every run on purpose: the pipeline overwrites a working
+ * tree with no backup, so this is the one piece of friction worth keeping.
+ */
+function syncRunButtons() {
+  const running = isRunning();
+  for (const flow of FLOWS) {
+    const form = forms[flow];
+    const hasTarget = form.projectBe.value.trim() || form.projectFe.value.trim();
+    const ready = hasTarget && FLOW_INPUTS_FILLED[flow]() && form.precheck.checked && !running;
+    form.runStart.disabled = !ready;
+    form.runStart.title = ready
+      ? "Bắt đầu chạy"
+      : running
+        ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
+        : FLOW_MISSING_HINT[flow];
+  }
 }
 
 el.dbMode.addEventListener("change", () => {
@@ -347,8 +386,7 @@ el.dbMode.addEventListener("change", () => {
 });
 
 for (const input of [
-  el.projectBe,
-  el.projectFe,
+  ...FLOWS.flatMap((flow) => [forms[flow].projectBe, forms[flow].projectFe]),
   el.specPath,
   el.referencePath,
   el.cloneWhat,
@@ -356,11 +394,11 @@ for (const input of [
   el.cloneFromFe,
   el.dbSchemaPath,
 ]) {
-  input.addEventListener("input", () => syncRunButton());
+  input.addEventListener("input", syncRunButtons);
   input.addEventListener("change", saveForm);
 }
 
-el.precheck.addEventListener("change", () => syncRunButton());
+for (const flow of FLOWS) forms[flow].precheck.addEventListener("change", syncRunButtons);
 
 el.dbReveal.addEventListener("click", () => {
   const hidden = el.dbConnection.type === "password";
@@ -370,7 +408,41 @@ el.dbReveal.addEventListener("click", () => {
 
 // --- Presets ---------------------------------------------------------------
 
+/**
+ * A preset belongs to one flow (the server fills in "feature" for presets
+ * saved before the split), and each tab lists only its own. The two tables
+ * below are the only place that knows which fields a flow's preset carries.
+ */
 let presets = [];
+
+const PRESET_FIELDS = {
+  feature: () => ({
+    specPath: el.specPath.value,
+    referencePath: el.referencePath.value,
+    dbMode: el.dbMode.value,
+    dbSchemaPath: el.dbSchemaPath.value,
+  }),
+  clone: () => ({
+    what: el.cloneWhat.value,
+    cloneFromBe: el.cloneFromBe.value,
+    cloneFromFe: el.cloneFromFe.value,
+  }),
+};
+
+const APPLY_PRESET = {
+  feature: (preset) => {
+    el.specPath.value = preset.specPath || "";
+    el.referencePath.value = preset.referencePath || "";
+    el.dbMode.value = preset.dbMode || "none";
+    el.dbSchemaPath.value = preset.dbSchemaPath || "";
+    syncDbMode();
+  },
+  clone: (preset) => {
+    el.cloneWhat.value = preset.what || "";
+    el.cloneFromBe.value = preset.cloneFromBe || "";
+    el.cloneFromFe.value = preset.cloneFromFe || "";
+  },
+};
 
 async function loadPresets() {
   presets = (await api("/api/presets")).presets;
@@ -378,59 +450,63 @@ async function loadPresets() {
 }
 
 function renderPresets() {
-  el.presetSelect.innerHTML = '<option value="">— Chọn —</option>';
-  for (const preset of presets) {
-    const option = document.createElement("option");
-    option.value = preset.id;
-    option.textContent = preset.name;
-    el.presetSelect.append(option);
+  for (const flow of FLOWS) {
+    const select = forms[flow].presetSelect;
+    const selected = select.value;
+    select.innerHTML = '<option value="">— Chọn —</option>';
+    for (const preset of presets.filter((p) => (p.mode ?? "feature") === flow)) {
+      const option = document.createElement("option");
+      option.value = preset.id;
+      option.textContent = preset.name;
+      select.append(option);
+    }
+    select.value = presets.some((p) => p.id === selected) ? selected : "";
   }
 }
 
-el.presetSelect.addEventListener("change", () => {
-  const preset = presets.find((p) => p.id === el.presetSelect.value);
-  if (!preset) return;
-  // Older presets hold one project folder; it goes in both boxes (one project).
-  el.projectBe.value = preset.projectBe || preset.projectPath || "";
-  el.projectFe.value = preset.projectFe || preset.projectPath || "";
-  el.specPath.value = preset.specPath;
-  el.referencePath.value = preset.referencePath || "";
-  el.dbMode.value = preset.dbMode || "none";
-  el.dbSchemaPath.value = preset.dbSchemaPath || "";
-  syncDbMode();
-  syncRunButton();
-  saveForm();
-});
+for (const flow of FLOWS) {
+  const form = forms[flow];
 
-$("preset-save").addEventListener("click", async () => {
-  const suggestion =
-    (el.projectBe.value || el.projectFe.value).split(/[\\/]/).filter(Boolean).pop() || "thiet-lap";
-  const name = prompt("Đặt tên cho bộ thiết lập này", suggestion);
-  if (!name) return;
-  presets = (
-    await api("/api/presets", {
-      method: "POST",
-      body: JSON.stringify({
-        name,
-        projectBe: el.projectBe.value,
-        projectFe: el.projectFe.value,
-        specPath: el.specPath.value,
-        referencePath: el.referencePath.value,
-        dbMode: el.dbMode.value,
-        dbSchemaPath: el.dbSchemaPath.value,
-      }),
-    })
-  ).presets;
-  renderPresets();
-  el.presetSelect.value = presets.find((p) => p.name === name)?.id ?? "";
-});
+  form.presetSelect.addEventListener("change", () => {
+    const preset = presets.find((p) => p.id === form.presetSelect.value);
+    if (!preset) return;
+    // Older presets hold one project folder; it goes in both boxes (one project).
+    form.projectBe.value = preset.projectBe || preset.projectPath || "";
+    form.projectFe.value = preset.projectFe || preset.projectPath || "";
+    APPLY_PRESET[flow](preset);
+    syncRunButtons();
+    saveForm();
+  });
 
-$("preset-delete").addEventListener("click", async () => {
-  const id = el.presetSelect.value;
-  if (!id) return;
-  presets = (await api("/api/presets/delete", { method: "POST", body: JSON.stringify({ id }) })).presets;
-  renderPresets();
-});
+  form.presetSave.addEventListener("click", async () => {
+    const folder = (form.projectBe.value || form.projectFe.value).split(/[\\/]/).filter(Boolean).pop();
+    const suggestion = (flow === "clone" ? el.cloneWhat.value.trim() : "") || folder || "thiet-lap";
+    const name = prompt(`Đặt tên cho bộ thiết lập ${FLOW_TEXT[flow].toLowerCase()} này`, suggestion);
+    if (!name) return;
+    presets = (
+      await api("/api/presets", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          mode: flow,
+          projectBe: form.projectBe.value,
+          projectFe: form.projectFe.value,
+          ...PRESET_FIELDS[flow](),
+        }),
+      })
+    ).presets;
+    renderPresets();
+    form.presetSelect.value =
+      presets.find((p) => p.mode === flow && p.name.toLowerCase() === name.trim().toLowerCase())?.id ?? "";
+  });
+
+  form.presetDelete.addEventListener("click", async () => {
+    const id = form.presetSelect.value;
+    if (!id) return;
+    presets = (await api("/api/presets/delete", { method: "POST", body: JSON.stringify({ id }) })).presets;
+    renderPresets();
+  });
+}
 
 // --- Picker ----------------------------------------------------------------
 
@@ -499,32 +575,51 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !el.picker.classList.contains("hidden")) closePicker(null);
 });
 
+/** Every BE/FE folder box on both flow tabs, keyed by its browse button. */
 const FOLDER_FIELDS = {
-  "project-be": { field: "projectBe", sibling: "projectFe", title: "Chọn thư mục BE của dự án đích" },
-  "project-fe": { field: "projectFe", sibling: "projectBe", title: "Chọn thư mục FE của dự án đích" },
-  "clone-from-be": { field: "cloneFromBe", sibling: "cloneFromFe", title: "Chọn thư mục BE của repo mẫu (chỉ đọc)" },
-  "clone-from-fe": { field: "cloneFromFe", sibling: "cloneFromBe", title: "Chọn thư mục FE của repo mẫu (chỉ đọc)" },
+  "feature-project-be": {
+    field: forms.feature.projectBe,
+    sibling: forms.feature.projectFe,
+    title: "Chọn thư mục BE của dự án đích",
+  },
+  "feature-project-fe": {
+    field: forms.feature.projectFe,
+    sibling: forms.feature.projectBe,
+    title: "Chọn thư mục FE của dự án đích",
+  },
+  "clone-project-be": {
+    field: forms.clone.projectBe,
+    sibling: forms.clone.projectFe,
+    title: "Chọn thư mục BE của dự án đích (nơi port sang)",
+  },
+  "clone-project-fe": {
+    field: forms.clone.projectFe,
+    sibling: forms.clone.projectBe,
+    title: "Chọn thư mục FE của dự án đích (nơi port sang)",
+  },
+  "clone-from-be": { field: el.cloneFromBe, sibling: el.cloneFromFe, title: "Chọn thư mục BE của repo mẫu (chỉ đọc)" },
+  "clone-from-fe": { field: el.cloneFromFe, sibling: el.cloneFromBe, title: "Chọn thư mục FE của repo mẫu (chỉ đọc)" },
 };
 
 for (const button of document.querySelectorAll("[data-browse]")) {
   button.addEventListener("click", async () => {
     const what = button.dataset.browse;
 
-    // The four BE/FE folder boxes all pick a directory the same way.
+    // The BE/FE folder boxes all pick a directory the same way.
     const folderField = FOLDER_FIELDS[what];
     if (folderField) {
-      const field = el[folderField.field];
+      const { field, sibling } = folderField;
       const chosen = await openPicker({
         mode: "dir",
         kind: "dir",
         title: folderField.title,
         // Start next to whichever folder is already filled in: BE and FE usually sit side by side.
-        startPath: field.value || el[folderField.sibling].value,
+        startPath: field.value || sibling.value,
       });
       if (chosen) {
         field.value = chosen;
         saveForm();
-        syncRunButton();
+        syncRunButtons();
       }
       return;
     }
@@ -540,7 +635,7 @@ for (const button of document.querySelectorAll("[data-browse]")) {
       if (chosen) {
         field.value = chosen;
         saveForm();
-        syncRunButton();
+        syncRunButtons();
         if (what === "spec-open") loadSpecFile(chosen);
       }
       return;
@@ -550,7 +645,7 @@ for (const button of document.querySelectorAll("[data-browse]")) {
       const chosen = await openPicker({
         mode: "dir",
         kind: "dir",
-        title: "Chọn repo mẫu để tham chiếu (chỉ đọc)",
+        title: "Chọn dự án tham khảo pattern (chỉ đọc)",
         startPath: el.referencePath.value,
       });
       if (chosen) {
@@ -581,58 +676,64 @@ function parentOf(filePath) {
   return at === -1 ? "" : filePath.slice(0, at);
 }
 
+function baseName(filePath) {
+  return String(filePath ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
+}
+
 // --- Run control -----------------------------------------------------------
 
-el.runStart.addEventListener("click", async () => {
-  el.runError.classList.add("hidden");
-  try {
-    await api("/api/run", { method: "POST", body: JSON.stringify(runBody()) });
-    saveForm();
-    // A one-off choice: the next Run should resume again unless asked otherwise.
-    $("run-fresh").checked = false;
-  } catch (error) {
-    showRunError(error);
-  }
-});
+for (const flow of FLOWS) {
+  const form = forms[flow];
+  form.runStart.addEventListener("click", async () => {
+    form.runError.classList.add("hidden");
+    try {
+      await api("/api/run", { method: "POST", body: JSON.stringify(runBody(flow)) });
+      saveForm();
+      // A one-off choice: the next Run should resume again unless asked otherwise.
+      form.fresh.checked = false;
+    } catch (error) {
+      showRunError(form, error);
+    }
+  });
+}
 
 /**
- * The two modes send different fields. Built here rather than at the click so
+ * The two flows send different fields. Built here rather than at the click so
  * the shape of each request is readable in one place.
  */
-function runBody() {
-  const noMetadataStandards = el.metadataStandardsMode.value === "skip";
-  if (formMode === "clone") {
+function runBody(flow) {
+  const form = forms[flow];
+  const common = {
+    mode: flow,
+    projectBePath: form.projectBe.value,
+    projectFePath: form.projectFe.value,
+    fresh: form.fresh.checked,
+    noMetadataStandards: form.metadataStandards.value === "skip",
+  };
+  if (flow === "clone") {
     return {
-      mode: "clone",
-      projectBePath: el.projectBe.value,
-      projectFePath: el.projectFe.value,
+      ...common,
       what: el.cloneWhat.value,
       referenceBePath: el.cloneFromBe.value,
       referenceFePath: el.cloneFromFe.value,
       skipBuild: el.cloneSkipBuild.checked,
       skipTests: el.cloneSkipTests.checked,
-      fresh: $("run-fresh").checked,
-      noMetadataStandards,
     };
   }
   return {
-    mode: "feature",
-    projectBePath: el.projectBe.value,
-    projectFePath: el.projectFe.value,
+    ...common,
     specPath: el.specPath.value,
     referencePaths: el.referencePath.value.trim() ? [el.referencePath.value.trim()] : [],
     dbMode: el.dbMode.value,
     dbConnection: el.dbConnection.value,
     dbSchemaPath: el.dbSchemaPath.value,
-    fresh: $("run-fresh").checked,
-    noMetadataStandards,
   };
 }
 
-function showRunError(error) {
+function showRunError(form, error) {
   const translate = RUN_ERROR_TEXT[error.code];
-  el.runError.textContent = translate ? translate(error.detail ?? "") : error.message;
-  el.runError.classList.remove("hidden");
+  form.runError.textContent = translate ? translate(error.detail ?? "") : error.message;
+  form.runError.classList.remove("hidden");
 }
 
 el.runStop.addEventListener("click", async () => {
@@ -648,8 +749,8 @@ function renderState(state) {
   el.statusPill.textContent = STATUS_TEXT[state.status] ?? state.status;
   el.statusPill.dataset.status = state.status;
   el.runStop.disabled = !running;
-  syncRunButton(running);
-  if (running) el.runError.classList.add("hidden");
+  syncRunButtons();
+  if (running) for (const flow of FLOWS) forms[flow].runError.classList.add("hidden");
 
   if (state.startedAt) {
     const started = new Date(state.startedAt).toLocaleTimeString("vi-VN");
@@ -663,15 +764,42 @@ function renderState(state) {
     el.runMeta.textContent = "";
   }
 
+  renderRunSubject(state);
   renderStages(state);
   renderResult(state);
 }
 
+/** Whether the block is showing a real run rather than the idle placeholder. */
+const hasRun = (state) => Boolean(state.id || state.startedAt);
+
+/**
+ * Names the run the monitor is showing — which flow and what it works on —
+ * because the same block sits under both tabs and a clone running under the
+ * "task mới" form must not read as that form's run.
+ */
+function renderRunSubject(state) {
+  const shown = hasRun(state);
+  el.runFlow.classList.toggle("hidden", !shown);
+  el.runFlow.textContent = shown ? FLOW_TEXT[state.mode] ?? state.mode : "";
+  el.runFlow.dataset.flow = state.mode;
+  el.runSubject.textContent = shown ? (state.mode === "clone" ? state.what : baseName(state.specPath)) ?? "" : "";
+
+  const elsewhere = shown && state.mode !== activeFlow;
+  el.runElsewhere.classList.toggle("hidden", !elsewhere);
+  if (elsewhere) {
+    const other = FLOW_TEXT[state.mode] ?? state.mode;
+    el.runElsewhere.innerHTML =
+      state.status === "running"
+        ? `Đang chạy luồng <strong>${escapeHtml(other)}</strong> (mở ở tab bên kia). Nút chạy của tab này bị khoá cho tới khi lần đó xong hoặc bị dừng.`
+        : `Đây là lần chạy gần nhất, thuộc luồng <strong>${escapeHtml(other)}</strong> — không phải của form bên trên.`;
+  }
+}
+
 function renderStages(state) {
   el.stages.innerHTML = "";
-  // While idle, show the strip for the mode being filled in; once a run
-  // starts, show the strip for the pipeline that is actually running.
-  const mode = state.status === "running" || state.stage ? (state.mode ?? formMode) : formMode;
+  // Before any run, show the strip for the flow tab that is open; once there
+  // is a run, show the strip of the pipeline that actually ran.
+  const mode = hasRun(state) ? state.mode ?? activeFlow : activeFlow;
   for (const id of stagesByMode[mode] ?? []) {
     const text = STAGE_TEXT[id] ?? { label: id, tip: "" };
     const isCurrent = state.stage === id;
@@ -720,7 +848,7 @@ function renderResult(state) {
     return;
   }
 
-  const guidance = NEXT_STEPS[state.status] ?? "";
+  const guidance = NEXT_STEPS[state.mode]?.[state.status] ?? "";
   const report = state.logRunId
     ? `<p class="result-report">Báo cáo đầy đủ: <a href="#" data-run="${escapeHtml(state.logRunId)}">${escapeHtml(state.logRunId)}</a></p>`
     : "";
@@ -865,8 +993,8 @@ $("spec-use").addEventListener("click", async () => {
     if (!saved) return;
     el.specPath.value = saved;
     saveForm();
-    syncRunButton();
-    showTab("run");
+    syncRunButtons();
+    showTab("feature");
   } catch (error) {
     el.specStatus.textContent = error.message;
   }
@@ -892,20 +1020,34 @@ function defaultSpecPath() {
 
 // --- History ---------------------------------------------------------------
 
+const RUNS_FILTER_KEY = "aidev-ui-runs-filter";
+let allRuns = [];
+let selectedRunId = null;
+
 async function loadRuns() {
-  const runs = (await api("/api/runs")).runs;
+  allRuns = (await api("/api/runs")).runs;
+  renderRuns();
+}
+
+/** Lists the loaded runs, narrowed to one flow when the filter says so. */
+function renderRuns() {
+  const filter = el.runsFilter.value;
+  const runs = filter === "all" ? allRuns : allRuns.filter((run) => run.mode === filter);
   el.runList.innerHTML = "";
   if (!runs.length) {
-    el.runList.innerHTML =
-      '<li class="hint">Chưa có lần chạy nào được ghi lại trong thư mục <code>runs/</code>.</li>';
+    el.runList.innerHTML = allRuns.length
+      ? `<li class="hint">Chưa có lần chạy nào thuộc luồng ${escapeHtml(FLOW_TEXT[filter] ?? filter)}.</li>`
+      : '<li class="hint">Chưa có lần chạy nào được ghi lại trong thư mục <code>runs/</code>.</li>';
     return;
   }
   for (const run of runs) {
     const item = document.createElement("li");
     item.className = "run-item";
+    item.classList.toggle("is-active", run.id === selectedRunId);
     item.dataset.id = run.id;
     item.innerHTML = `
       <div class="run-item-top">
+        <span class="flow-tag" data-flow="${escapeHtml(run.mode)}">${escapeHtml(FLOW_TEXT[run.mode] ?? run.mode)}</span>
         <span class="run-item-name">${escapeHtml(run.specName ?? run.id)}</span>
         <span class="badge" data-status="${escapeHtml(run.status)}">${escapeHtml(
           STATUS_BADGE[run.status] ?? run.status,
@@ -939,6 +1081,22 @@ el.runList.addEventListener("click", async (event) => {
 
 $("runs-refresh").addEventListener("click", loadRuns);
 
+try {
+  const savedFilter = localStorage.getItem(RUNS_FILTER_KEY);
+  if (["all", ...FLOWS].includes(savedFilter)) el.runsFilter.value = savedFilter;
+} catch {
+  // A remembered filter is a convenience; the default "all" is fine without it.
+}
+
+el.runsFilter.addEventListener("change", () => {
+  try {
+    localStorage.setItem(RUNS_FILTER_KEY, el.runsFilter.value);
+  } catch {
+    // Same as above: nothing to lose but the preference.
+  }
+  renderRuns();
+});
+
 $("runs-clear").addEventListener("click", async () => {
   if (!confirm("Xóa TOÀN BỘ lịch sử chạy? Không thể hoàn tác.")) return;
   await api("/api/runs/clear", { method: "POST" });
@@ -948,6 +1106,7 @@ $("runs-clear").addEventListener("click", async () => {
 });
 
 async function selectRun(id) {
+  selectedRunId = id;
   for (const item of el.runList.querySelectorAll(".run-item")) {
     item.classList.toggle("is-active", item.dataset.id === id);
   }
@@ -1063,6 +1222,7 @@ async function init() {
     <span title="Thư mục cài đặt aidev">${escapeHtml(appConfig.repoRoot)}</span>`;
 
   restoreForm();
+  restoreTab();
   el.specFilePath.value = defaultSpecPath();
 
   const initial = await api("/api/state");

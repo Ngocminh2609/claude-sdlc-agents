@@ -198,6 +198,7 @@ describe("runClonePipeline", () => {
       expect.anything(),
       { summary: "cached: modules/ layout" },
     );
+    expect(verifyCloneBuild.mock.calls[0][1]).toEqual({ summary: "cached: modules/ layout" });
     expect(progress).toContain("Clone conventions: reused from a previous run (target project structure unchanged)");
   });
 
@@ -225,7 +226,7 @@ describe("runClonePipeline", () => {
     await runClonePipeline({ clone: split });
 
     expect(checkCoverage.mock.calls.at(-1)?.[1]).toEqual(split.targetRoots);
-    expect(verifyCloneBuild.mock.calls[0][2]).toEqual(split.targetRoots);
+    expect(verifyCloneBuild.mock.calls[0][3]).toEqual(split.targetRoots);
   });
 
   it("passes the port agents' declared deviations to coverage and reports them apart from missing files", async () => {
@@ -414,7 +415,7 @@ describe("runClonePipeline", () => {
     for (const [request] of portCloneGroup.mock.calls) {
       expect(request.runtimePorts).toEqual([50001, 50002, 50003]);
     }
-    expect(verifyCloneBuild.mock.calls[0][1]).toEqual([50001, 50002, 50003]);
+    expect(verifyCloneBuild.mock.calls[0][2]).toEqual([50001, 50002, 50003]);
     expect(runCloneTests.mock.calls[0][0].runtimePorts).toEqual([50001, 50002, 50003]);
     expect(findFreePorts).toHaveBeenCalledTimes(4); // two groups + the build + the tests
   });

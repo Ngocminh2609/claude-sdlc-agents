@@ -38,7 +38,7 @@ This repo calls the Agent SDK's `query()` directly (see `src/stages/`) rather th
 
 There is **no GitHub integration** in this version: no issue trigger, no GitHub Actions workflow, no automated commit or push. You invoke it as a local CLI command against any project directory, and you commit the result yourself after reviewing it.
 
-Prompt text shared by more than one stage lives in `src/prompts/`. `code-quality.ts` holds the clean-code, DRY and formatting rules, and both the Specs & Arch and Coding stages append it to their system prompt — so the design plans for reuse and the implementation writes clean code the first time, instead of leaving a cleanup pass for afterwards. Project-specific conventions (naming, layering, framework idioms) belong in your spec document, not in that file: it ships with the pipeline and runs against every target repo.
+Prompt text shared by more than one stage lives in `src/prompts/`. `code-quality.ts` holds the clean-code, DRY/KISS/YAGNI, formatting, and CI/CD-hygiene rules — reuse before writing, extract on the second real occurrence, prefer the plainest implementation, build only what was asked, mirror the pipeline's actual build/lint/test commands, wire a new module into every place its siblings are registered, keep lockfiles and generated contracts in sync — and both the Specs & Arch and Coding stages append it to their system prompt, so the design plans for reuse and the implementation writes clean, pipeline-safe code the first time instead of leaving a cleanup pass for afterwards. Project-specific conventions (naming, layering, framework idioms) belong in your spec document, not in that file: it ships with the pipeline and runs against every target repo.
 
 Formatting follows the same logic and is handled the same way: rather than naming an indent width the rules cannot know, they tell the agent to find the target repo's own setup (`.editorconfig`, Prettier/Biome/Spotless/Checkstyle/gofmt/black/ktlint config, a lint script), obey it, and run it over the files it changed. They also forbid reformatting code the task did not otherwise touch, and forbid running a formatter across the whole repo — a diff that mixes real changes with whitespace churn is one nobody can review.
 
@@ -251,23 +251,31 @@ every user-facing string lives in `src/ui/public/app.js` and `index.html`.
 
 What it gives you over the command line:
 
-- **Run form** — pick the target project, the spec and an optional reference repo
-  with a file browser instead of retyping absolute paths, choose a DB option, and
-  start the run.
+- **One tab per flow** — "Làm task mới" (spec → design → code → E2E) and "Clone từ
+  dự án khác" (reference repo → mapping → port → coverage/wiring/build/tests) are
+  separate tabs, each with its own form, its own Run button, its own saved presets
+  and its own next-step guidance — nothing typed on one tab reaches the other's run.
+  Pick folders with a file browser instead of retyping absolute paths. The feature
+  tab's optional reference repo ("Dự án tham khảo pattern") only lets the agents
+  read a sample project for patterns; porting a whole feature is the Clone tab.
 - **Live stage view** — which stage is running, the current attempt,
-  and every line the pipeline prints, streamed as it happens.
+  and every line the pipeline prints, streamed as it happens. One progress/log block
+  serves both tabs (there is one pipeline at a time) and is labelled with the flow
+  of the run it shows; while any run is going, both Run buttons stay disabled.
 - **Stop** — kills the pipeline *and* everything it started (tsx, a dev server the
   E2E stage launched, Playwright browsers), so nothing is left holding a port.
   Files already written to the target project are not reverted, same as a Ctrl-C.
 - **Spec editor** — write or edit the spec `.md` in the browser and run it without
   leaving the page.
 - **History** — every folder under `runs/` with its `report.md` rendered, including
-  runs started from the command line.
-- **Presets** — save a project + spec combination you run often.
+  runs started from the command line, tagged and filterable by flow.
+- **Presets** — save a setup you run often, per flow: a feature preset holds the
+  target + spec + reference + DB option, a clone preset holds the target + keyword +
+  source folders. Presets saved before the split load as feature presets.
 - **Built-in guide** — a "Hướng dẫn" tab covering what each stage does, how to write
   a spec the E2E stage can actually verify, what each stop reason means and what to
-  do next, plus the safety boundaries. The run form is a numbered four-step flow,
-  and Run stays disabled until you confirm the target project is committed or
+  do next, plus the safety boundaries. Each run form is a numbered flow (four
+  steps for a feature, three for a clone), and Run stays disabled until you confirm the target project is committed or
   stashed — the pipeline overwrites a working tree with no backup, so that one
   piece of friction is deliberate.
 

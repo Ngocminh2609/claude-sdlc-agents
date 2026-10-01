@@ -52,7 +52,14 @@ const SKIP_EXTENSIONS = new Set([
   ".ppt", ".pptx", ".mp4", ".mp3", ".exe", ".dll", ".so", ".dylib", ".lock", ".map",
 ]);
 const WALK_SKIP = new Set(["node_modules", ".git", "target", "build", "dist", "out", ".idea", ".umi", ".umi-production", "coverage", "log_app", "log_app_debug"]);
-const MANIFEST_NAMES = /(^|\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|package\.json|pnpm-workspace\.yaml|tsconfig[^/]*\.json|\.umirc\.ts|application[^/]*\.ya?ml|application[^/]*\.properties)$/;
+// CI/CD config (.gitlab-ci.yml, GitHub Actions workflows, Jenkinsfile, azure/bitbucket
+// pipelines) and Dockerfile count as manifests too: they define what the pipeline
+// actually builds/lints/tests, and a project's structure hash must change when they do
+// (see target-conventions-cache.ts's reliance on this hash to know the target changed).
+// Case-insensitive because Dockerfile/Jenkinsfile are tested against both the original
+// filename (computeStructureHash) and the lowercased one (kindOf).
+const MANIFEST_NAMES =
+  /(^|\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|package\.json|pnpm-workspace\.yaml|tsconfig[^/]*\.json|\.umirc\.ts|application[^/]*\.ya?ml|application[^/]*\.properties|\.gitlab-ci\.ya?ml|jenkinsfile|azure-pipelines\.ya?ml|bitbucket-pipelines\.ya?ml|dockerfile|\.github\/workflows\/[^/]+\.ya?ml)$/i;
 
 export interface IndexEntry {
   size: number;

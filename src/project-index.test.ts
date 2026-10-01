@@ -91,6 +91,21 @@ describe("refreshProjectIndexes", () => {
     await put("pom.xml", "<project><artifactId>be</artifactId><modules><module>x</module></modules></project>");
     expect((await refreshProjectIndexes([repo]))[0].structureHash).not.toBe(before.structureHash);
   });
+
+  it("counts CI/CD config and a Dockerfile as manifests too, so editing the pipeline busts the cached conventions", async () => {
+    await put(".gitlab-ci.yml", "stages: [docker]\n");
+    await put("Dockerfile", "FROM eclipse-temurin:25-jre-alpine\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "add pipeline config");
+    const before = (await refreshProjectIndexes([repo]))[0];
+
+    await put(".gitlab-ci.yml", "stages: [test, docker]\n");
+    expect((await refreshProjectIndexes([repo]))[0].structureHash).not.toBe(before.structureHash);
+
+    await put(".gitlab-ci.yml", "stages: [docker]\n"); // back to the original CI content
+    await put("Dockerfile", "FROM eclipse-temurin:25-jre-alpine\nCOPY modules/adapter modules/adapter\n");
+    expect((await refreshProjectIndexes([repo]))[0].structureHash).not.toBe(before.structureHash);
+  });
 });
 
 describe("searchIndexes", () => {

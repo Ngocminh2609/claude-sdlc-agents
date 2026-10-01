@@ -12,7 +12,9 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
   rm,
 }));
 
-const { clearRuns, deleteRun, isValidRunId, RunNotFoundError, specNameFromRunId } = await import("./runs.js");
+const { clearRuns, deleteRun, isValidRunId, RunNotFoundError, runModeOfLog, specNameFromRunId } = await import(
+  "./runs.js"
+);
 
 beforeEach(() => {
   readdir.mockReset();
@@ -103,5 +105,23 @@ describe("clearRuns", () => {
     rm.mockRejectedValueOnce(new Error("EBUSY")).mockResolvedValueOnce(undefined);
 
     expect(await clearRuns()).toBe(1);
+  });
+});
+
+describe("runModeOfLog", () => {
+  const cloneId = "2026-09-28T03-16-35-786Z-BE-CSDL-clone-Danh-muc-chi-tieu";
+
+  it("reads the mode the clone RunLogger writes", () => {
+    expect(runModeOfLog({ mode: "clone" }, cloneId)).toBe("clone");
+  });
+
+  it("treats a log without a mode as a feature run, whatever the id says", () => {
+    expect(runModeOfLog({ finalStatus: "done" }, "2026-01-01T00-00-00-000Z-app-feature")).toBe("feature");
+    expect(runModeOfLog({ finalStatus: "done" }, cloneId)).toBe("feature");
+  });
+
+  it("falls back to the folder name when a killed run never wrote its log", () => {
+    expect(runModeOfLog(null, cloneId)).toBe("clone");
+    expect(runModeOfLog(null, "2026-01-01T00-00-00-000Z-app-my-feature")).toBe("feature");
   });
 });

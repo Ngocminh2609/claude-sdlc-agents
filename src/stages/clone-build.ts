@@ -3,7 +3,7 @@ import { runStructuredQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { isSplit, rootPath, secondaryRootDirs, type ProjectRoot } from "../target-roots.js";
-import type { CloneMapping } from "../types.js";
+import type { CloneMapping, TargetConventions } from "../types.js";
 
 /**
  * Compiles what was just ported, and reports whether it builds.
@@ -24,9 +24,13 @@ const SYSTEM_PROMPT = `You are the Clone Build agent in an automated port pipeli
 Ported files have just been written into the target project. Find out whether
 the project still builds, and report honestly.
 
-1. Work out how this project builds from its own build files (Maven, Gradle,
-   npm/pnpm/yarn, dotnet, make). Prefer compiling only the modules or packages
-   that were touched; fall back to a full build if scoping is not obvious.
+1. Work out how this project builds. If the target conventions below already
+   found the project's actual CI/CD build command (from its pipeline config —
+   the scoped module flags, the pinned toolchain version), run that command as
+   written rather than re-deriving one. Otherwise work it out from the
+   project's own build files (Maven, Gradle, npm/pnpm/yarn, dotnet, make).
+   Prefer compiling only the modules or packages that were touched; fall back
+   to a full build if scoping is not obvious.
 2. Run it, and read the output. For a TypeScript client, also run the type
    check (\`tsc --noEmit\` with the project's own config, or its tsc/lint
    script): a bundler build can pass while imports and types are broken.
@@ -65,6 +69,7 @@ export interface CloneBuildVerdict {
 
 export async function verifyCloneBuild(
   mapping: CloneMapping,
+  conventions: TargetConventions | null = null,
   runtimePorts: number[] = [],
   roots: ProjectRoot[] = [],
 ): Promise<CloneBuildVerdict> {
@@ -94,6 +99,9 @@ export async function verifyCloneBuild(
 
   const prompt = [
     ...(split ? filesByFolder(mapping, roots) : ["--- Files just ported into this project ---", ...mapping.entries.map((entry) => `- ${entry.target}`)]),
+    "",
+    "--- How the target project is organised ---",
+    conventions?.summary ?? "(Not available — work out the build from the project's own build files.)",
     "",
     split
       ? "BE and FE are separate projects with their own builds. Build every folder above that received files (cd into each), and report one verdict: ok only if every one of them builds, with each folder's errors quoted."

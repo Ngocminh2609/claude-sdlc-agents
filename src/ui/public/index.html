@@ -20,34 +20,29 @@
     </header>
 
     <nav class="tabs" id="tabs">
-      <button class="tab is-active" data-tab="run">Chạy pipeline</button>
+      <button class="tab tab-flow is-active" data-tab="feature">
+        Làm task mới <span class="tab-sub">spec → code → E2E</span>
+      </button>
+      <button class="tab tab-flow" data-tab="clone">
+        Clone từ dự án khác <span class="tab-sub">repo mẫu → port → build</span>
+      </button>
+      <span class="tab-sep" aria-hidden="true"></span>
       <button class="tab" data-tab="spec">Soạn spec</button>
       <button class="tab" data-tab="history">Lịch sử chạy</button>
       <button class="tab" data-tab="guide">Hướng dẫn</button>
     </nav>
 
     <main>
-      <!-- ================= CHẠY PIPELINE ================= -->
-      <section class="panel-group is-active" id="tab-run">
-        <div class="callout callout-info" id="quickstart">
+      <!-- ================= LÀM TASK MỚI ================= -->
+      <section class="panel-group is-active" id="tab-feature" data-flow="feature">
+        <div class="callout callout-info">
           <div class="callout-body">
-            <strong>Lần đầu dùng?</strong> Pipeline này nhận một file mô tả yêu cầu (spec
-            <code>.md</code>) và một thư mục dự án, rồi tự thiết kế → chia việc → viết code → tự kiểm
-            thử bằng trình duyệt thật cho tới khi đạt. Anh chỉ cần điền 4 bước bên dưới.
-            <a href="#" data-goto="guide">Xem hướng dẫn chi tiết →</a>
+            <strong>Làm task mới</strong> — xây một tính năng <em>chưa có</em>. Đầu vào là một file
+            spec (<code>.md</code>) và thư mục dự án đích; hệ thống tự thiết kế → duyệt thiết kế → chia
+            việc → viết code → kiểm thử E2E bằng trình duyệt thật. Muốn bê nguyên một tính năng
+            <em>đã có</em> ở dự án khác sang? Dùng tab
+            <a href="#" data-goto="clone">Clone từ dự án khác →</a>
           </div>
-          <button class="btn btn-ghost" id="quickstart-hide" title="Ẩn hộp này">Ẩn</button>
-        </div>
-
-        <div class="mode-switch" id="mode-switch">
-          <button class="mode-btn is-active" data-mode="feature">
-            <span class="mode-title">Làm task mới</span>
-            <span class="mode-desc">Từ file spec → thiết kế → code → kiểm thử E2E</span>
-          </button>
-          <button class="mode-btn" data-mode="clone">
-            <span class="mode-title">Clone từ dự án khác</span>
-            <span class="mode-desc">Chỉ cần tên tính năng + 2 đường dẫn, không cần spec</span>
-          </button>
         </div>
 
         <!-- Bước 1 -->
@@ -64,17 +59,17 @@
             </div>
           </div>
           <div class="field">
-            <label for="project-be">Thư mục BE</label>
+            <label for="feature-project-be">Thư mục BE</label>
             <div class="row">
-              <input id="project-be" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\BE-CSDL" />
-              <button class="btn btn-ghost" data-browse="project-be">Chọn thư mục…</button>
+              <input id="feature-project-be" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\BE-CSDL" />
+              <button class="btn btn-ghost" data-browse="feature-project-be">Chọn thư mục…</button>
             </div>
           </div>
           <div class="field">
-            <label for="project-fe">Thư mục FE</label>
+            <label for="feature-project-fe">Thư mục FE</label>
             <div class="row">
-              <input id="project-fe" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\FE-CSDL" />
-              <button class="btn btn-ghost" data-browse="project-fe">Chọn thư mục…</button>
+              <input id="feature-project-fe" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\FE-CSDL" />
+              <button class="btn btn-ghost" data-browse="feature-project-fe">Chọn thư mục…</button>
             </div>
           </div>
           <p class="hint">
@@ -84,15 +79,190 @@
           </p>
         </div>
 
-        <!-- Bước 2 — chế độ clone -->
-        <div class="card step mode-only-clone hidden" id="step-clone">
+        <!-- Bước 2 -->
+        <div class="card step">
+          <div class="step-head">
+            <span class="step-num">2</span>
+            <div>
+              <h2>Chọn file spec (.md)</h2>
+              <p class="step-desc">
+                File mô tả anh muốn làm gì. Càng rõ tiêu chí nghiệm thu, AI càng ít đoán sai.
+                Chưa có file? Bấm <strong>Soạn spec mới</strong> để viết ngay trong trang này.
+              </p>
+            </div>
+          </div>
+          <div class="row">
+            <input id="spec-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\plans\tinh-nang-abc\spec.md" />
+            <button class="btn btn-ghost" data-browse="spec">Chọn file…</button>
+            <button class="btn btn-ghost" id="spec-edit">Soạn spec mới</button>
+          </div>
+
+          <div class="field sub-field">
+            <label for="reference-path">
+              Dự án tham khảo pattern <span class="optional">không bắt buộc</span>
+            </label>
+            <div class="row">
+              <input id="reference-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\TKDT" />
+              <button class="btn btn-ghost" data-browse="reference">Chọn thư mục…</button>
+            </div>
+            <p class="hint">
+              Cho AI <strong>đọc</strong> thêm một dự án khác để học cách team viết code (cấu trúc
+              module, cách gọi API, component dùng chung…) trong khi vẫn làm theo spec của anh. Bị chặn
+              ghi vào đó — mọi file sinh ra đều nằm trong dự án đích. Không khai báo thì AI
+              <strong>không nhìn thấy</strong> dự án này. Nếu mục tiêu là <em>bê nguyên</em> một tính
+              năng đã có thì dùng tab <a href="#" data-goto="clone">Clone</a>, không cần viết spec.
+            </p>
+          </div>
+        </div>
+
+        <!-- Bước 3 -->
+        <div class="card step">
+          <div class="step-head">
+            <span class="step-num">3</span>
+            <div>
+              <h2>Cơ sở dữ liệu <span class="optional">không bắt buộc</span></h2>
+              <p class="step-desc">
+                Chỉ chọn khi tính năng có đụng tới database. Bỏ qua nếu không cần.
+              </p>
+            </div>
+          </div>
+          <div class="row">
+            <select id="db-mode">
+              <option value="none">Không dùng database</option>
+              <option value="connection">Đã có database sẵn — nhập chuỗi kết nối</option>
+              <option value="schema-file">Tạo database mới — từ file schema</option>
+            </select>
+          </div>
+          <div class="row hidden" id="db-connection-row">
+            <input id="db-connection" type="password" spellcheck="false" placeholder="postgres://user:pass@host/db" />
+            <button class="btn btn-ghost" id="db-reveal" type="button">Hiện</button>
+          </div>
+          <p class="hint hidden" id="db-connection-hint">
+            🔒 Chuỗi này chỉ nằm trong bộ nhớ của lần chạy hiện tại: không lưu vào preset, không lưu
+            vào trình duyệt, không ghi vào log, và bị che nếu lỡ xuất hiện trong output.
+          </p>
+          <div class="row hidden" id="db-schema-row">
+            <input id="db-schema-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\schema.sql" />
+            <button class="btn btn-ghost" data-browse="schema">Chọn file…</button>
+          </div>
+        </div>
+
+        <!-- Bước 4 -->
+        <div class="card step">
+          <div class="step-head">
+            <span class="step-num">4</span>
+            <div>
+              <h2>Kiểm tra rồi chạy</h2>
+              <p class="step-desc">
+                Một lần chạy có thể mất từ vài phút tới vài chục phút. Có thể đóng tab — pipeline vẫn
+                chạy, mở lại trang là thấy tiếp.
+              </p>
+            </div>
+          </div>
+
+          <label class="precheck">
+            <input type="checkbox" id="feature-precheck" />
+            <span>
+              Tôi đã <strong>commit hoặc stash</strong> các thay đổi đang dở trong thư mục dự án đích.
+              <span class="hint-inline">Bắt buộc — công cụ ghi đè trực tiếp và không có bản sao lưu.</span>
+            </span>
+          </label>
+
+          <label class="precheck">
+            <input type="checkbox" id="feature-fresh" />
+            <span>
+              Chạy lại từ đầu (bỏ tiến độ đã lưu)
+              <span class="hint-inline">
+                Mặc định: nếu lần trước bị dừng giữa chừng với cùng dự án + cùng spec, hệ thống tự
+                chạy tiếp từ chỗ dừng (bỏ qua thiết kế và các task đã xong). Tick khi anh đã xoá code và
+                muốn làm lại sạch từ đầu.
+              </span>
+            </span>
+          </label>
+
+          <div class="field">
+            <label for="feature-metadata-standards">Áp dụng metadata standards (DDI/GSIM/SDC…)</label>
+            <select id="feature-metadata-standards">
+              <option value="apply">Có — theo file .metadata-standards.yml của thư mục dự án (mặc định)</option>
+              <option value="skip">Không — bỏ qua cho riêng lần chạy này, dù thư mục dự án có file đó</option>
+            </select>
+            <p class="hint">
+              Dự án chưa có file <code>.metadata-standards.yml</code> thì chọn "Có" cũng không tác động
+              gì — không có gì để áp dụng. Chọn "Không" không xoá hay sửa file đó, chỉ bỏ qua cho một
+              lần chạy này.
+            </p>
+          </div>
+
+          <div class="actions">
+            <button class="btn btn-primary" id="feature-run-start" disabled>▶ Chạy task mới</button>
+          </div>
+          <p class="error-text hidden" id="feature-run-error"></p>
+
+          <div class="preset-bar">
+            <span class="preset-label">Bộ thiết lập task mới:</span>
+            <select id="feature-preset-select" title="Các bộ dự án + spec đã lưu">
+              <option value="">— Chọn —</option>
+            </select>
+            <button class="btn btn-ghost" id="feature-preset-save">Lưu thiết lập hiện tại</button>
+            <button class="btn btn-ghost" id="feature-preset-delete">Xoá</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= CLONE TỪ DỰ ÁN KHÁC ================= -->
+      <section class="panel-group" id="tab-clone" data-flow="clone">
+        <div class="callout callout-info">
+          <div class="callout-body">
+            <strong>Clone từ dự án khác</strong> — bê một tính năng <em>đã có</em> ở repo mẫu sang dự
+            án đích. <strong>Không cần spec</strong>: mã nguồn bên mẫu chính là bản đặc tả. Hệ thống tự
+            truy tìm → đọc dự án đích → lập bảng ánh xạ → port → kiểm phủ → kiểm nối FE↔BE → kiểm biên
+            dịch → unit test. Không có bước thiết kế, không chạy E2E. Muốn làm tính năng mới theo spec
+            thì dùng tab <a href="#" data-goto="feature">Làm task mới →</a>
+          </div>
+        </div>
+
+        <!-- Bước 1 -->
+        <div class="card step">
+          <div class="step-head">
+            <span class="step-num">1</span>
+            <div>
+              <h2>Chọn thư mục dự án đích</h2>
+              <p class="step-desc">
+                Nơi code được port sang. Chọn riêng thư mục <strong>BE</strong> và <strong>FE</strong>
+                — mỗi ô là thư mục có file build riêng (<code>pom.xml</code>, <code>package.json</code>…).
+              </p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="clone-project-be">Thư mục BE</label>
+            <div class="row">
+              <input id="clone-project-be" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\BE-CSDL" />
+              <button class="btn btn-ghost" data-browse="clone-project-be">Chọn thư mục…</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="clone-project-fe">Thư mục FE</label>
+            <div class="row">
+              <input id="clone-project-fe" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\FE-CSDL" />
+              <button class="btn btn-ghost" data-browse="clone-project-fe">Chọn thư mục…</button>
+            </div>
+          </div>
+          <p class="hint">
+            Chỉ có BE hoặc chỉ có FE thì để trống ô còn lại. Nếu BE và FE nằm chung một thư mục
+            gốc, chọn cùng thư mục đó cho cả hai ô. ⚠️ Code được ghi trực tiếp vào các thư mục này,
+            không tạo nhánh riêng và không sao lưu.
+          </p>
+        </div>
+
+        <!-- Bước 2 -->
+        <div class="card step">
           <div class="step-head">
             <span class="step-num">2</span>
             <div>
               <h2>Clone cái gì, từ đâu</h2>
               <p class="step-desc">
-                Không cần spec. Hệ thống tự lục repo mẫu tìm mọi thứ liên quan (SQL, BE, FE), đọc cấu
-                trúc dự án đích, tự quyết định đặt code vào đâu, rồi port sang.
+                Hệ thống tự lục repo mẫu tìm mọi thứ liên quan (SQL, BE, FE), đọc cấu trúc dự án đích,
+                tự quyết định đặt code vào đâu, rồi port sang.
               </p>
             </div>
           </div>
@@ -144,88 +314,21 @@
           </label>
         </div>
 
-        <!-- Bước 2 — chế độ task mới -->
-        <div class="card step mode-only-feature" id="step-spec">
-          <div class="step-head">
-            <span class="step-num">2</span>
-            <div>
-              <h2>Chọn file spec (.md)</h2>
-              <p class="step-desc">
-                File mô tả anh muốn làm gì. Càng rõ tiêu chí nghiệm thu, AI càng ít đoán sai.
-                Chưa có file? Bấm <strong>Soạn spec mới</strong> để viết ngay trong trang này.
-              </p>
-            </div>
-          </div>
-          <div class="row">
-            <input id="spec-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\plans\tinh-nang-abc\spec.md" />
-            <button class="btn btn-ghost" data-browse="spec">Chọn file…</button>
-            <button class="btn btn-ghost" id="spec-edit">Soạn spec mới</button>
-          </div>
-
-          <div class="field sub-field">
-            <label for="reference-path">
-              Repo mẫu để tham chiếu <span class="optional">không bắt buộc</span>
-            </label>
-            <div class="row">
-              <input id="reference-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\TKDT" />
-              <button class="btn btn-ghost" data-browse="reference">Chọn thư mục…</button>
-            </div>
-            <p class="hint">
-              Dùng khi muốn clone một màn/tính năng từ dự án khác. AI được <strong>đọc</strong> repo
-              này để sao chép pattern, nhưng bị chặn ghi vào đó — mọi file sinh ra đều nằm trong dự án
-              đích. Không khai báo ở đây thì AI <strong>không nhìn thấy</strong> repo mẫu, vì phạm vi
-              truy cập mặc định chỉ là thư mục dự án đích.
-            </p>
-          </div>
-        </div>
-
         <!-- Bước 3 -->
-        <div class="card step mode-only-feature">
+        <div class="card step">
           <div class="step-head">
             <span class="step-num">3</span>
             <div>
-              <h2>Cơ sở dữ liệu <span class="optional">không bắt buộc</span></h2>
-              <p class="step-desc">
-                Chỉ chọn khi tính năng có đụng tới database. Bỏ qua nếu không cần.
-              </p>
-            </div>
-          </div>
-          <div class="row">
-            <select id="db-mode">
-              <option value="none">Không dùng database</option>
-              <option value="connection">Đã có database sẵn — nhập chuỗi kết nối</option>
-              <option value="schema-file">Tạo database mới — từ file schema</option>
-            </select>
-          </div>
-          <div class="row hidden" id="db-connection-row">
-            <input id="db-connection" type="password" spellcheck="false" placeholder="postgres://user:pass@host/db" />
-            <button class="btn btn-ghost" id="db-reveal" type="button">Hiện</button>
-          </div>
-          <p class="hint hidden" id="db-connection-hint">
-            🔒 Chuỗi này chỉ nằm trong bộ nhớ của lần chạy hiện tại: không lưu vào preset, không lưu
-            vào trình duyệt, không ghi vào log, và bị che nếu lỡ xuất hiện trong output.
-          </p>
-          <div class="row hidden" id="db-schema-row">
-            <input id="db-schema-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\schema.sql" />
-            <button class="btn btn-ghost" data-browse="schema">Chọn file…</button>
-          </div>
-        </div>
-
-        <!-- Bước 4 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num" id="step-run-num">4</span>
-            <div>
               <h2>Kiểm tra rồi chạy</h2>
               <p class="step-desc">
-                Một lần chạy có thể mất từ vài phút tới vài chục phút. Có thể đóng tab — pipeline vẫn
+                Một lần clone có thể mất từ vài phút tới vài chục phút. Có thể đóng tab — pipeline vẫn
                 chạy, mở lại trang là thấy tiếp.
               </p>
             </div>
           </div>
 
           <label class="precheck">
-            <input type="checkbox" id="precheck" />
+            <input type="checkbox" id="clone-precheck" />
             <span>
               Tôi đã <strong>commit hoặc stash</strong> các thay đổi đang dở trong thư mục dự án đích.
               <span class="hint-inline">Bắt buộc — công cụ ghi đè trực tiếp và không có bản sao lưu.</span>
@@ -233,58 +336,67 @@
           </label>
 
           <label class="precheck">
-            <input type="checkbox" id="run-fresh" />
+            <input type="checkbox" id="clone-fresh" />
             <span>
               Chạy lại từ đầu (bỏ tiến độ đã lưu)
               <span class="hint-inline">
-                Mặc định: nếu lần trước bị dừng giữa chừng với cùng project + cùng spec, hệ thống tự
-                chạy tiếp từ chỗ dừng (bỏ qua thiết kế và các task đã xong). Tick khi bạn đã xoá code và
-                muốn làm lại sạch từ đầu.
+                Mặc định: nếu lần trước bị dừng giữa chừng với cùng dự án + cùng từ khoá + cùng repo
+                mẫu, hệ thống tự chạy tiếp từ chỗ dừng (dùng lại bảng ánh xạ và các nhóm file đã port).
+                Tick khi anh đã xoá code đã port và muốn làm lại sạch từ đầu.
               </span>
             </span>
           </label>
 
           <div class="field">
-            <label for="metadata-standards-mode">Áp dụng metadata standards (DDI/GSIM/SDC…)</label>
-            <select id="metadata-standards-mode">
+            <label for="clone-metadata-standards">Áp dụng metadata standards (DDI/GSIM/SDC…)</label>
+            <select id="clone-metadata-standards">
               <option value="apply">Có — theo file .metadata-standards.yml của thư mục dự án (mặc định)</option>
               <option value="skip">Không — bỏ qua cho riêng lần chạy này, dù thư mục dự án có file đó</option>
             </select>
             <p class="hint">
-              Dự án chưa có file <code>.metadata-standards.yml</code> thì chọn "Có" cũng không tác động
-              gì — không có gì để áp dụng. Chọn "Không" không xoá hay sửa file đó, chỉ bỏ qua cho một
-              lần chạy này.
+              Khi áp dụng, bước port vẫn giữ đúng code bên mẫu — chỉ <em>báo</em> chỗ vi phạm chuẩn,
+              không tự cấu trúc lại. Dự án chưa có file <code>.metadata-standards.yml</code> thì chọn
+              "Có" cũng không tác động gì.
             </p>
           </div>
 
           <div class="actions">
-            <button class="btn btn-primary" id="run-start" disabled>▶ Chạy pipeline</button>
-            <button class="btn btn-danger" id="run-stop" disabled>■ Dừng</button>
-            <span class="run-meta" id="run-meta"></span>
+            <button class="btn btn-primary" id="clone-run-start" disabled>▶ Chạy clone</button>
           </div>
-          <p class="error-text hidden" id="run-error"></p>
+          <p class="error-text hidden" id="clone-run-error"></p>
 
           <div class="preset-bar">
-            <span class="preset-label">Bộ thiết lập đã lưu:</span>
-            <select id="preset-select" title="Các cặp dự án + spec đã lưu">
+            <span class="preset-label">Bộ thiết lập clone:</span>
+            <select id="clone-preset-select" title="Các bộ dự án đích + repo mẫu + từ khoá đã lưu">
               <option value="">— Chọn —</option>
             </select>
-            <button class="btn btn-ghost" id="preset-save">Lưu thiết lập hiện tại</button>
-            <button class="btn btn-ghost" id="preset-delete">Xoá</button>
+            <button class="btn btn-ghost" id="clone-preset-save">Lưu thiết lập hiện tại</button>
+            <button class="btn btn-ghost" id="clone-preset-delete">Xoá</button>
           </div>
         </div>
+      </section>
 
-        <!-- Tiến trình -->
+      <!-- Tiến trình + nhật ký của lần chạy hiện tại. Dùng chung cho hai luồng:
+           app.js chuyển khối này vào tab luồng đang mở. -->
+      <div class="run-monitor" id="run-monitor">
         <div class="card" id="status-card">
           <div class="card-head">
-            <h2>Tiến trình</h2>
-            <span class="status-pill" id="status-pill">chưa chạy</span>
+            <div class="monitor-title">
+              <h2>Tiến trình</h2>
+              <span class="flow-tag hidden" id="run-flow"></span>
+              <span class="run-subject" id="run-subject"></span>
+            </div>
+            <div class="card-head-actions">
+              <span class="status-pill" id="status-pill">chưa chạy</span>
+              <button class="btn btn-danger" id="run-stop" disabled>■ Dừng</button>
+            </div>
           </div>
+          <p class="hint hidden" id="run-elsewhere"></p>
+          <div class="run-meta" id="run-meta"></div>
           <ol class="stages" id="stages"></ol>
           <div class="result hidden" id="result"></div>
         </div>
 
-        <!-- Log -->
         <div class="card card-log">
           <div class="card-head">
             <h2>Nhật ký trực tiếp</h2>
@@ -302,7 +414,7 @@
           </div>
           <div class="log" id="log"><div class="log-empty">Chưa có lần chạy nào.</div></div>
         </div>
-      </section>
+      </div>
 
       <!-- ================= SOẠN SPEC ================= -->
       <section class="panel-group" id="tab-spec">
@@ -341,6 +453,11 @@
             <div class="card-head">
               <h2>Các lần chạy</h2>
               <div class="card-head-actions">
+                <select id="runs-filter" title="Lọc theo luồng">
+                  <option value="all">Tất cả</option>
+                  <option value="feature">Task mới</option>
+                  <option value="clone">Clone</option>
+                </select>
                 <button class="btn btn-ghost" id="runs-refresh">Tải lại</button>
                 <button class="btn btn-danger" id="runs-clear">Xóa tất cả</button>
               </div>
@@ -361,64 +478,46 @@
         <div class="card guide">
           <h2 class="guide-title">Hướng dẫn sử dụng aidev</h2>
 
-          <h3>0. Hai chế độ — chọn đúng cái</h3>
+          <h3>0. Hai luồng — chọn đúng tab</h3>
           <table class="guide-table">
             <tr>
               <td><strong>Làm task mới</strong></td>
               <td>
-                Xây tính năng chưa có. Cần <strong>file spec</strong>. Chạy 6 giai đoạn mô tả bên dưới,
-                chốt bằng kiểm thử E2E trên trình duyệt thật.
+                Xây tính năng <strong>chưa có</strong>. Cần <strong>file spec</strong>. Chạy 6 giai
+                đoạn (mục 1), chốt bằng kiểm thử E2E trên trình duyệt thật. Tab “Soạn spec” chỉ phục vụ
+                luồng này.
               </td>
             </tr>
             <tr>
               <td><strong>Clone từ dự án khác</strong></td>
               <td>
-                Bê một tính năng đã có từ repo khác sang. <strong>Không cần spec</strong> — chỉ cần
-                tên tính năng + đường dẫn repo mẫu + dự án đích. Mã nguồn bên mẫu chính là bản đặc tả.
+                Bê một tính năng <strong>đã có</strong> từ repo khác sang. <strong>Không cần
+                spec</strong> — chỉ cần từ khoá tính năng + repo mẫu + dự án đích. Mã nguồn bên mẫu chính
+                là bản đặc tả. Chạy 8 giai đoạn (mục 4), chốt bằng kiểm phủ + kiểm biên dịch + unit test,
+                không có E2E.
               </td>
             </tr>
           </table>
           <p>
-            Chế độ clone chạy một quy trình khác hẳn: <em>Truy tìm → Đọc dự án đích → Lập bảng ánh xạ
-            → Port → Kiểm phủ → Kiểm biên dịch</em>. Không có bước thiết kế và duyệt thiết kế, vì
-            không có gì để thiết kế — thứ cần quyết là <strong>đặt file ở đâu</strong>, và thứ cần
-            chứng minh là <strong>không sót file</strong>.
-          </p>
-          <ul>
-            <li>
-              <strong>Bảng ánh xạ</strong> là thứ đáng đọc nhất: từng file nguồn đi đâu, đổi package
-              gì. Nó nằm trong báo cáo kèm dấu <code>[x]</code>/<code>[ ]</code> cho từng dòng.
-            </li>
-            <li>
-              <strong>Kiểm phủ chạy bằng code, không phải AI tự chấm</strong>: mỗi dòng trong bảng
-              phải có file thật trên đĩa. Thiếu dòng nào liệt kê ra dòng đó.
-            </li>
-            <li>
-              <strong>Không chạy E2E.</strong> Code vừa port thường chưa chạy được (thiếu config,
-              thiếu bảng DB) — bắt E2E pass là chặn nhầm. Thay bằng kiểm biên dịch.
-            </li>
-            <li>
-              Thiếu file hoặc build fail thì kết quả là <strong>“chưa trọn vẹn”</strong>, không phải
-              “hoàn tất”. Code đã port vẫn nằm trên đĩa.
-            </li>
-          </ul>
-          <p class="guide-note">
-            Giới hạn cần biết: kiểm phủ bắt được <em>thiếu file</em>, không bắt được <em>đặt nhầm chỗ
-            nhưng hợp lý</em>. Một controller bị đặt vào <code>modules/category</code> trong khi team
-            anh vẫn để ở <code>modules/metadata</code> thì vẫn compile, vẫn tính là đủ. Vì vậy bảng
-            ánh xạ được hiện ra để anh liếc, chứ không giấu trong log.
+            Hai luồng là hai quy trình riêng, không phải một quy trình có công tắc: mỗi tab có form
+            riêng, bộ thiết lập đã lưu riêng, và tiến độ đã lưu (để chạy tiếp khi bị dừng) cũng riêng.
+            Luồng task mới có ô <em>“Dự án tham khảo pattern”</em> (mục 2) — ô đó chỉ cho AI đọc thêm
+            để học cách viết, <strong>không</strong> phải cách để clone; muốn bê nguyên tính năng thì
+            dùng tab Clone.
           </p>
 
-          <h3>1. Chế độ “task mới” làm gì?</h3>
+          <h2 class="guide-part">Phần A — Làm task mới</h2>
+
+          <h3>1. Luồng “task mới” làm gì?</h3>
           <p>
-            Anh đưa vào <strong>một file spec</strong> và <strong>một thư mục dự án</strong>. Hệ
+            Anh đưa vào <strong>một file spec</strong> và <strong>thư mục dự án đích</strong>. Hệ
             thống chạy 6 giai đoạn, mỗi giai đoạn là một phiên AI riêng biệt:
           </p>
           <ol class="guide-stages">
             <li>
-              <strong>Kiểm kê repo mẫu</strong> — chỉ chạy khi anh khai báo repo mẫu. Quét repo đó
-              một lần, lập danh sách file cần clone kèm vai trò từng file, rồi đưa danh sách này cho
-              tất cả giai đoạn sau làm checklist.
+              <strong>Kiểm kê repo mẫu</strong> — chỉ chạy khi anh khai báo dự án tham khảo. Quét dự
+              án đó một lần, lập danh sách file liên quan kèm vai trò từng file, rồi đưa danh sách này
+              cho tất cả giai đoạn sau làm checklist.
             </li>
             <li>
               <strong>Thiết kế &amp; kiến trúc</strong> — đọc spec và mã nguồn hiện có, đề xuất
@@ -452,68 +551,49 @@
             test. Đây là chốt chặn để AI không tự sửa code cho test của chính nó pass.
           </p>
 
-          <h3>2. Chuẩn bị trước khi chạy</h3>
-          <ul>
-            <li>
-              <strong>Commit hoặc stash</strong> mọi thay đổi đang dở trong dự án đích. Công cụ ghi
-              trực tiếp vào thư mục làm việc, không tạo nhánh và không sao lưu.
-            </li>
-            <li>
-              <strong>Credential</strong>: cần <code>ANTHROPIC_API_KEY</code> hoặc
-              <code>CLAUDE_CODE_OAUTH_TOKEN</code> trong file <code>.env</code> của thư mục cài đặt
-              (xem góc trên bên phải trang này để biết đang dùng cái nào).
-            </li>
-            <li>
-              Dự án web có <code>package.json</code> với lệnh khởi động sẽ chạy trơn nhất, vì giai
-              đoạn E2E cần bật được ứng dụng lên để kiểm thử.
-            </li>
-          </ul>
-
-          <h3>3. Clone từ một dự án mẫu</h3>
+          <h3>2. Dự án tham khảo pattern (không bắt buộc)</h3>
           <p>
-            Mặc định mỗi AI chỉ nhìn thấy <strong>thư mục dự án đích</strong> — repo mẫu nằm ở ổ khác,
-            thư mục khác đều vô hình với nó. Muốn clone một màn từ dự án A sang dự án B thì phải khai
-            báo A ở ô <strong>“Repo mẫu để tham chiếu”</strong> tại bước 2 (hoặc cờ
-            <code>--reference</code> khi chạy dòng lệnh, dùng được nhiều lần).
+            Mặc định mỗi AI chỉ nhìn thấy <strong>thư mục dự án đích</strong> — dự án nằm ở ổ khác,
+            thư mục khác đều vô hình với nó. Muốn AI học cách một dự án khác đã làm một màn tương tự
+            (rồi làm theo spec của anh) thì khai báo dự án đó ở ô <strong>“Dự án tham khảo
+            pattern”</strong> tại bước 2 (hoặc cờ <code>--reference</code> khi chạy dòng lệnh, dùng được
+            nhiều lần).
           </p>
           <ul>
             <li>
-              Khai báo repo mẫu sẽ kích hoạt <strong>giai đoạn Kiểm kê</strong>: một phiên riêng chỉ
-              làm mỗi việc quét repo mẫu và lập danh sách file cần clone. Danh sách đó được đưa cho
-              các giai đoạn sau làm checklist, và được ghi vào báo cáo — chạy xong anh đối chiếu nó
-              với <code>git diff --stat</code> trong dự án đích là biết có sót gì không.
+              Khai báo dự án tham khảo sẽ kích hoạt <strong>giai đoạn Kiểm kê</strong>: một phiên riêng
+              chỉ làm mỗi việc quét dự án đó và lập danh sách file liên quan. Danh sách đó được đưa cho
+              các giai đoạn sau làm checklist, và được ghi vào báo cáo.
             </li>
             <li>
-              Ba giai đoạn Thiết kế, Chia việc và Viết code sẽ <strong>đọc</strong> được repo mẫu.
-              Giai đoạn E2E thì không — nó chấm theo tiêu chí nghiệm thu, cho thêm quyền chỉ tăng rủi
-              ro.
+              Ba giai đoạn Thiết kế, Chia việc và Viết code sẽ <strong>đọc</strong> được dự án tham
+              khảo. Giai đoạn E2E thì không — nó chấm theo tiêu chí nghiệm thu, cho thêm quyền chỉ tăng
+              rủi ro.
             </li>
             <li>
               <strong>Nên trỏ vào thư mục con thay vì gốc repo.</strong> Trỏ thẳng vào module chứa
-              màn cần clone sẽ nhanh hơn và tránh việc AI lạc vào <code>node_modules</code> hay
-              <code>target/</code>. Khai báo được nhiều đường dẫn bằng cờ <code>--reference</code>
-              khi chạy dòng lệnh.
+              màn liên quan sẽ nhanh hơn và tránh việc AI lạc vào <code>node_modules</code> hay
+              <code>target/</code>.
             </li>
             <li>
-              Repo mẫu <strong>chỉ đọc</strong>: mọi lệnh ghi/sửa file vào đó đều bị chặn ở tầng quyền,
-              không chỉ nhắc suông trong prompt.
+              Dự án tham khảo <strong>chỉ đọc</strong>: mọi lệnh ghi/sửa file vào đó đều bị chặn ở tầng
+              quyền, không chỉ nhắc suông trong prompt.
             </li>
             <li>
-              Trong spec nên chỉ đích danh: “clone màn Danh mục đơn vị tính, xem
-              <code>src/…/units</code> trong repo mẫu”. AI đọc được không có nghĩa là nó tự biết phải
-              đọc chỗ nào.
+              Trong spec nên chỉ đích danh: “làm giống màn Danh mục đơn vị tính, xem
+              <code>src/…/units</code> trong dự án tham khảo”. AI đọc được không có nghĩa là nó tự biết
+              phải đọc chỗ nào.
             </li>
           </ul>
           <p class="guide-note">
             Hai điều cần nói thẳng. <strong>Một:</strong> giai đoạn viết code được chạy lệnh shell,
-            nên về lý thuyết một lệnh shell vẫn có thể ghi vào repo mẫu — chốt chặn chỉ đóng đường
-            ghi file trực tiếp. Commit repo mẫu trước khi chạy. <strong>Hai:</strong> kiểm kê làm
-            tăng khả năng phủ hết, <em>không phải</em> đảm bảo không sót. Bản kiểm kê vẫn có thể bỏ
-            lọt file, và E2E chỉ kiểm những gì có trong tiêu chí nghiệm thu của anh. Bước đối chiếu
-            cuối cùng vẫn là việc của anh.
+            nên về lý thuyết một lệnh shell vẫn có thể ghi vào dự án tham khảo — chốt chặn chỉ đóng
+            đường ghi file trực tiếp. Commit dự án đó trước khi chạy. <strong>Hai:</strong> nếu việc
+            thật ra là bê nguyên một tính năng sang, luồng <strong>Clone</strong> làm việc đó tốt hơn:
+            nó có bảng ánh xạ từng file và kiểm phủ bằng code, luồng task mới thì không.
           </p>
 
-          <h3>4. Viết spec thế nào cho AI làm đúng</h3>
+          <h3>3. Viết spec thế nào cho AI làm đúng</h3>
           <p>Khung tối thiểu — bấm <strong>Chèn mẫu</strong> ở tab “Soạn spec” để có sẵn:</p>
           <pre><code># Tên tính năng
 
@@ -542,9 +622,91 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
             <li>Thiếu tiêu chí nghiệm thu thì giai đoạn E2E sẽ đánh trượt, dù code có chạy.</li>
           </ul>
 
-          <h3>5. Trong lúc chạy</h3>
+          <h2 class="guide-part">Phần B — Clone từ dự án khác</h2>
+
+          <h3>4. Luồng “clone” làm gì?</h3>
+          <p>
+            Không có bước thiết kế và duyệt thiết kế, vì không có gì để thiết kế — thứ cần quyết là
+            <strong>đặt file ở đâu</strong>, và thứ cần chứng minh là <strong>không sót file</strong>.
+            Hệ thống chạy 8 giai đoạn:
+          </p>
+          <ol class="guide-stages">
+            <li><strong>Truy tìm</strong> — lục repo mẫu tìm mọi file thuộc tính năng: SQL, BE, FE.</li>
+            <li>
+              <strong>Đọc dự án đích</strong> — layout module, package gốc, quy ước FE và SQL của dự án
+              đích.
+            </li>
+            <li>
+              <strong>Lập bảng ánh xạ</strong> — từng file nguồn đi đâu trong dự án đích, phải đổi
+              những gì; file không cần port (bản trùng, đã có sẵn tương đương) được đánh dấu rõ.
+            </li>
+            <li><strong>Port code</strong> — ghi từng nhóm file theo thứ tự DB → BE → FE.</li>
+            <li>
+              <strong>Kiểm phủ</strong> — <em>chạy bằng code, không phải AI tự chấm</em>: mỗi dòng
+              trong bảng ánh xạ phải có file thật trên đĩa. Thiếu dòng nào liệt kê ra dòng đó.
+            </li>
+            <li>
+              <strong>Kiểm nối FE↔BE</strong> — cũng bằng code: import trong file FE có trỏ tới file
+              thật không, API mà FE gọi có controller BE nào map không.
+            </li>
+            <li>
+              <strong>Kiểm biên dịch</strong> — build lại dự án đích; chỉ lỗi ở file vừa port (hoặc do
+              chúng gây ra) mới tính. Bỏ qua được bằng ô “Bỏ qua bước kiểm biên dịch”.
+            </li>
+            <li>
+              <strong>Unit test</strong> — viết và chạy unit test CRUD cho BE và API client FE; test
+              fail thì một phiên khác sửa code (không được sửa test), tối đa 2 vòng. Bỏ qua được bằng ô
+              “Bỏ qua bước unit test”.
+            </li>
+          </ol>
           <ul>
-            <li>Dải 6 ô ở mục <strong>Tiến trình</strong> cho biết đang ở giai đoạn nào, vòng thứ mấy.</li>
+            <li>
+              <strong>Bảng ánh xạ</strong> là thứ đáng đọc nhất: từng file nguồn đi đâu, đổi package
+              gì. Nó nằm trong báo cáo kèm dấu <code>[x]</code>/<code>[ ]</code> cho từng dòng.
+            </li>
+            <li>
+              <strong>Không chạy E2E.</strong> Code vừa port thường chưa chạy được (thiếu config,
+              thiếu bảng DB) — bắt E2E pass là chặn nhầm. Thay bằng kiểm biên dịch và unit test.
+            </li>
+            <li>
+              Thiếu file, nối FE↔BE hỏng, build fail hoặc test fail thì kết quả là
+              <strong>“chưa trọn vẹn”</strong>, không phải “hoàn tất”. Code đã port vẫn nằm trên đĩa.
+            </li>
+          </ul>
+          <p class="guide-note">
+            Giới hạn cần biết: kiểm phủ bắt được <em>thiếu file</em>, không bắt được <em>đặt nhầm chỗ
+            nhưng hợp lý</em>. Một controller bị đặt vào <code>modules/category</code> trong khi team
+            anh vẫn để ở <code>modules/metadata</code> thì vẫn compile, vẫn tính là đủ. Vì vậy bảng
+            ánh xạ được hiện ra để anh liếc, chứ không giấu trong log.
+          </p>
+
+          <h2 class="guide-part">Dùng chung cho cả hai luồng</h2>
+
+          <h3>5. Chuẩn bị trước khi chạy</h3>
+          <ul>
+            <li>
+              <strong>Commit hoặc stash</strong> mọi thay đổi đang dở trong dự án đích. Công cụ ghi
+              trực tiếp vào thư mục làm việc, không tạo nhánh và không sao lưu.
+            </li>
+            <li>
+              <strong>Credential</strong>: cần <code>ANTHROPIC_API_KEY</code> hoặc
+              <code>CLAUDE_CODE_OAUTH_TOKEN</code> trong file <code>.env</code> của thư mục cài đặt
+              (xem góc trên bên phải trang này để biết đang dùng cái nào).
+            </li>
+            <li>
+              Task mới: dự án web có <code>package.json</code> với lệnh khởi động sẽ chạy trơn nhất, vì
+              giai đoạn E2E cần bật được ứng dụng lên để kiểm thử. Clone: máy cần build được dự án đích,
+              nếu không thì tick bỏ qua kiểm biên dịch.
+            </li>
+          </ul>
+
+          <h3>6. Trong lúc chạy</h3>
+          <ul>
+            <li>
+              Khối <strong>Tiến trình</strong> nằm dưới form của cả hai tab và luôn hiện lần chạy hiện
+              tại, kèm nhãn cho biết đó là task mới hay clone. Dải ô cho biết đang ở giai đoạn nào (6 ô
+              với task mới, 8 ô với clone).
+            </li>
             <li>
               <strong>Nhật ký trực tiếp</strong> hiện mọi dòng pipeline in ra. Tick “Chỉ mốc giai
               đoạn” để lọc bớt nhiễu.
@@ -557,46 +719,63 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
               Nút <strong>Dừng</strong> tắt pipeline và mọi tiến trình con nó sinh ra (dev server,
               trình duyệt Playwright). Code đã ghi ra đĩa <em>không</em> bị hoàn tác.
             </li>
-            <li>Mỗi lúc chỉ chạy được một pipeline — bấm chạy khi đang có run khác sẽ bị từ chối.</li>
+            <li>
+              Mỗi lúc chỉ chạy được một lần — kể cả khác luồng. Đang clone thì nút chạy của tab task
+              mới cũng bị khoá, và ngược lại.
+            </li>
           </ul>
 
-          <h3>6. Đọc kết quả</h3>
+          <h3>7. Đọc kết quả</h3>
           <table class="guide-table">
             <tr>
               <td><span class="badge" data-status="done">Hoàn tất</span></td>
-              <td>E2E đã đạt. Vào thư mục dự án chạy <code>git diff</code> để xem AI sửa gì, tự review rồi commit.</td>
+              <td>
+                Task mới: E2E đã đạt. Clone: đủ file, nối FE↔BE ổn, build và unit test qua (trừ bước
+                anh chọn bỏ qua). Vào thư mục dự án chạy <code>git diff</code> để xem đã sửa gì, tự
+                review rồi commit.
+              </td>
             </tr>
             <tr>
               <td><span class="badge" data-status="escalated-specs">Chưa duyệt</span></td>
               <td>
-                Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Giai đoạn này chưa đụng tới code. Chạy lại
-                với cùng spec sẽ sửa tiếp từ bản thiết kế cuối theo phản hồi; nếu phản hồi cho thấy spec
-                còn mơ hồ thì sửa spec (khi đó thiết kế làm lại từ đầu).
+                <em>Chỉ task mới.</em> Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Giai đoạn này chưa
+                đụng tới code. Chạy lại với cùng spec sẽ sửa tiếp từ bản thiết kế cuối theo phản hồi;
+                nếu phản hồi cho thấy spec còn mơ hồ thì sửa spec (khi đó thiết kế làm lại từ đầu).
               </td>
             </tr>
             <tr>
               <td><span class="badge" data-status="escalated-e2e">E2E chưa đạt</span></td>
               <td>
-                Đã viết code nhưng E2E chưa đạt tiêu chí nghiệm thu. Hệ thống dừng ngay, không code
-                lại. Code vẫn nằm trên đĩa, không bị xoá — xem báo cáo để biết tiêu chí nào trượt, sửa
-                rồi chạy lại.
+                <em>Chỉ task mới.</em> Đã viết code nhưng E2E chưa đạt tiêu chí nghiệm thu. Hệ thống
+                dừng ngay, không code lại. Code vẫn nằm trên đĩa — xem báo cáo để biết tiêu chí nào
+                trượt, sửa rồi chạy lại.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="badge" data-status="incomplete">Chưa trọn vẹn</span></td>
+              <td>
+                <em>Chỉ clone.</em> Còn file trong bảng ánh xạ chưa được ghi ra, nối FE↔BE hỏng, hoặc
+                build/test không qua. Code đã port vẫn nằm trên đĩa; báo cáo liệt kê đúng chỗ thiếu.
+                Sửa tay xong chạy lại với cùng thiết lập sẽ vào thẳng bước kiểm phủ + build.
               </td>
             </tr>
             <tr>
               <td><span class="badge" data-status="errored">Lỗi</span></td>
               <td>
                 Pipeline dừng giữa chừng (hết hạn mức <code>rate_limit</code>, mất mạng, hết
-                credential…) và không tự chạy lại. Kết quả nói rõ dừng ở task nào, task nào đã xong.
+                credential…) và không tự chạy lại. Kết quả nói rõ dừng ở đâu (task nào / nhóm file nào)
+                và cái gì đã xong; chạy lại với cùng thiết lập sẽ tiếp tục từ chỗ dừng.
               </td>
             </tr>
           </table>
           <p>
-            Mọi lần chạy đều được ghi lại đầy đủ trong tab <strong>Lịch sử chạy</strong>: từng bản đề
-            xuất thiết kế, quyết định duyệt, danh sách task, và bằng chứng cho từng tiêu chí nghiệm
-            thu. Chuỗi kết nối database không bao giờ bị ghi vào đây.
+            Mọi lần chạy đều được ghi lại đầy đủ trong tab <strong>Lịch sử chạy</strong>, có nhãn và bộ
+            lọc theo luồng. Task mới: từng bản đề xuất thiết kế, quyết định duyệt, danh sách task, bằng
+            chứng cho từng tiêu chí nghiệm thu. Clone: bảng ánh xạ, kết quả kiểm phủ, kiểm nối, build,
+            test. Chuỗi kết nối database không bao giờ bị ghi vào đây.
           </p>
 
-          <h3>7. Lưu ý an toàn</h3>
+          <h3>8. Lưu ý an toàn</h3>
           <ul>
             <li>
               Trang này chỉ mở ở <code>127.0.0.1</code> và <strong>không có đăng nhập</strong>. Nó
@@ -604,19 +783,25 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
               của chính anh. Đừng đưa nó ra mạng qua tunnel hay reverse proxy.
             </li>
             <li>
-              Chỉ trỏ vào những dự án mà anh chấp nhận cho AI sửa trực tiếp. Giai đoạn viết code và
-              E2E có quyền chạy lệnh shell trong dự án đó.
+              Chỉ trỏ vào những dự án mà anh chấp nhận cho AI sửa trực tiếp. Giai đoạn viết code, E2E
+              và port/sửa của clone có quyền chạy lệnh shell trong dự án đó.
             </li>
             <li>
-              Nội dung spec đi thẳng vào prompt của mọi giai đoạn. Đừng dán vào spec văn bản lấy từ
-              nguồn không tin cậy.
+              Nội dung spec (và từ khoá clone) đi thẳng vào prompt của mọi giai đoạn. Đừng dán vào đó
+              văn bản lấy từ nguồn không tin cậy.
             </li>
           </ul>
 
-          <h3>8. Chạy bằng dòng lệnh</h3>
-          <p>Giao diện này chỉ là lớp vỏ của đúng một lệnh, vẫn dùng được khi cần:</p>
-          <pre><code>aidev --spec "D:\...\spec.md" --project "D:\...\du-an"
-aidev --spec "D:\...\spec.md" --project "D:\...\du-an" --reference "D:\...\du-an-mau"
+          <h3>9. Chạy bằng dòng lệnh</h3>
+          <p>Giao diện này chỉ là lớp vỏ của hai lệnh, vẫn dùng được khi cần:</p>
+          <pre><code># Làm task mới
+aidev --spec "D:\...\spec.md" --project-be "D:\...\BE" --project-fe "D:\...\FE"
+aidev --spec "D:\...\spec.md" --project "D:\...\du-an" --reference "D:\...\du-an-tham-khao"
+
+# Clone từ dự án khác
+aidev clone --what "nghề nghiệp" --from-be "D:\...\mau\BE" --from-fe "D:\...\mau\FE" \
+            --project-be "D:\...\BE" --project-fe "D:\...\FE"
+
 aidev ui --port 5000 --no-open   # chính trang này</code></pre>
         </div>
       </section>

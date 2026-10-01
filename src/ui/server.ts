@@ -284,6 +284,7 @@ async function upsertPreset(req: IncomingMessage, res: ServerResponse): Promise<
 
   const presets = await savePreset({
     name,
+    mode: body.mode === "clone" ? "clone" : "feature",
     projectPath: String(body.projectPath ?? ""),
     projectBe: String(body.projectBe ?? ""),
     projectFe: String(body.projectFe ?? ""),
@@ -291,6 +292,9 @@ async function upsertPreset(req: IncomingMessage, res: ServerResponse): Promise<
     dbMode: (body.dbMode as DbMode) ?? "none",
     dbSchemaPath: String(body.dbSchemaPath ?? ""),
     referencePath: String(body.referencePath ?? ""),
+    what: String(body.what ?? ""),
+    cloneFromBe: String(body.cloneFromBe ?? ""),
+    cloneFromFe: String(body.cloneFromFe ?? ""),
   });
   sendJson(res, 200, { presets });
 }

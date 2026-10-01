@@ -2,6 +2,7 @@ import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { isTokenUsage, type TokenUsage } from "../token-usage.js";
 import { runsDir } from "./paths.js";
+import type { RunMode } from "./stages.js";
 
 /**
  * Read-only view over the `runs/` folder RunLogger writes.
@@ -16,6 +17,8 @@ export interface RunSummary {
   startedAt: string | null;
   finishedAt: string | null;
   status: string;
+  /** Which flow produced the run, so history can tell a port from a new feature. */
+  mode: RunMode;
   projectPath: string | null;
   projectName: string | null;
   specName: string | null;
@@ -95,6 +98,7 @@ async function readSummary(id: string): Promise<RunSummary> {
   const startedAt = asString(log?.startedAt);
   const finishedAt = asString(log?.finishedAt);
   const projectPath = asString((log?.spec as Record<string, unknown> | undefined)?.projectPath);
+  const mode = runModeOfLog(log, id);
 
   return {
     id,
@@ -102,9 +106,11 @@ async function readSummary(id: string): Promise<RunSummary> {
     finishedAt,
     // "unknown" rather than a guess: a run killed mid-flight never wrote a log.
     status: asString(log?.finalStatus) ?? "unknown",
+    mode,
     projectPath,
     projectName: projectPath ? path.basename(projectPath) : null,
-    specName: specNameFromRunId(id, projectPath),
+    // A clone run is named by what it ports; its id only holds a slug of that.
+    specName: (mode === "clone" ? asString(log?.what) : null) ?? specNameFromRunId(id, projectPath),
     taskCount: Array.isArray(log?.tasks) ? log.tasks.length : 0,
     durationMs: startedAt && finishedAt ? Date.parse(finishedAt) - Date.parse(startedAt) : null,
     usage: await readUsage(id),
@@ -129,6 +135,17 @@ async function readLog(id: string): Promise<Record<string, unknown> | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * The clone RunLogger writes `mode: "clone"`; the feature one writes no mode at
+ * all. A clone run killed before its log was written still has `clone-` after
+ * the project name in its folder name, so that is the fallback.
+ */
+export function runModeOfLog(log: Record<string, unknown> | null, id: string): RunMode {
+  if (log?.mode === "clone") return "clone";
+  if (log) return "feature";
+  return /^\d{4}-\d{2}-\d{2}T[\d-]+Z-.+?-clone-/.test(id) ? "clone" : "feature";
 }
 
 /**

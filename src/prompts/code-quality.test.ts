@@ -20,6 +20,9 @@ const SECTION_MARKERS = [
   "MATCH THE CODE AROUND YOU",
   "USE THE PROJECT'S OWN FORMATTER AND LINTER",
   "LEAVE NOTHING HALF-DONE",
+  "KISS — PREFER THE SIMPLEST THING THAT MEETS THE REQUIREMENT",
+  "YAGNI — BUILD WHAT WAS ASKED, NOT WHAT MIGHT BE NEEDED LATER",
+  "KEEP THE PIPELINE GREEN, NOT JUST YOUR OWN COMPILE",
 ];
 
 describe("CODE_QUALITY_RULES", () => {
@@ -46,6 +49,38 @@ describe("CODE_QUALITY_RULES", () => {
     // A concrete house style would be wrong for every repo that chose otherwise.
     expect(CODE_QUALITY_RULES).not.toMatch(/\b(2|4) spaces\b/);
     expect(CODE_QUALITY_RULES).not.toMatch(/\b(80|100|120) (columns|characters)\b/);
+  });
+
+  it("names all three golden principles explicitly: DRY, KISS, YAGNI", () => {
+    expect(CODE_QUALITY_RULES).toMatch(/\bDRY\b/);
+    expect(CODE_QUALITY_RULES).toMatch(/\bKISS\b/);
+    expect(CODE_QUALITY_RULES).toMatch(/\bYAGNI\b/);
+  });
+
+  it("forbids speculative flexibility built before a second real use exists", () => {
+    const flat = CODE_QUALITY_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain("Do not add error handling, retries, or a fallback path for a scenario the");
+    expect(flat).toContain("configurable framework in anticipation");
+  });
+
+  it("mirrors the pipeline's actual build instead of a bare local compile check", () => {
+    const flat = CODE_QUALITY_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain(".gitlab-ci.yml");
+    expect(flat).toContain("An unregistered unit is invisible to the build and deploy graph");
+    expect(flat).toMatch(/lockfile regenerated and committed/);
+  });
+
+  it("warns that a type-checker is not the build, since bundlers strip types without validating them", () => {
+    const flat = CODE_QUALITY_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain("A type-checker is not a substitute for this");
+    expect(flat).toMatch(/esbuild, webpack, vite/);
+  });
+
+  it("warns that a hand-written stand-in for generated code has unverified names and a fragile hand-patch", () => {
+    const flat = CODE_QUALITY_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain("do not trust a reasoned guess at its exact names");
+    expect(flat).toContain("is only as durable as the next regeneration");
+    expect(flat).toMatch(/MULTIPART_FORM_DATA_VALUE/);
   });
 
   it("reaches the coding stage's system prompt", async () => {

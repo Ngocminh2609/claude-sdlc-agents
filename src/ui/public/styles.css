@@ -107,6 +107,7 @@ h3 {
   font: inherit;
   cursor: pointer;
   border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 
 .tab:hover {
@@ -278,6 +279,7 @@ textarea {
   font: 500 13px "Segoe UI", system-ui, sans-serif;
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 }
 
 .btn:hover:not(:disabled) {
@@ -331,12 +333,20 @@ textarea {
   border-radius: 999px;
   border: 1px solid var(--border);
   color: var(--muted);
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .status-pill[data-status="running"] {
   color: var(--accent);
   border-color: var(--accent-dim);
   background: rgba(110, 168, 254, 0.1);
+}
+
+.status-pill[data-status="running"]::before {
+  content: "●";
+  display: inline-block;
+  margin-right: 6px;
+  animation: stage-pulse-dot 1.4s ease-in-out infinite;
 }
 
 .status-pill[data-status="done"] {
@@ -369,6 +379,7 @@ textarea {
   padding: 9px 10px;
   background: var(--panel-2);
   min-width: 0;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.6s ease;
 }
 
 .stage-label {
@@ -377,6 +388,67 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color 0.2s ease;
+}
+
+/* State icon so a stage's status reads at a glance without relying on color
+   alone (done/active/setback also differ only by color otherwise). */
+.stage-label::before {
+  display: inline-block;
+  width: 1.1em;
+}
+
+.stage[data-state="pending"] .stage-label::before {
+  content: "○";
+  color: var(--border);
+}
+
+.stage[data-state="done"] .stage-label::before {
+  content: "✓";
+}
+
+.stage[data-state="active"] .stage-label::before {
+  content: "●";
+  animation: stage-pulse-dot 1.4s ease-in-out infinite;
+}
+
+.stage[data-state="setback"] .stage-label::before {
+  content: "⚠";
+}
+
+/* The active stage gets a slow breathing glow, so a run that takes minutes
+   still reads as "alive" on a glance back instead of looking stalled. */
+.stage[data-state="active"] {
+  animation: stage-pulse-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes stage-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes stage-pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(110, 168, 254, 0);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(110, 168, 254, 0.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage,
+  .stage-label::before,
+  .status-pill[data-status="running"]::before {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 .stage-detail {
@@ -570,46 +642,77 @@ textarea {
   border-radius: 4px;
 }
 
-.mode-switch {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
+/* --- Flows ---------------------------------------------------------------
+   "Task mới" and "Clone" are separate tabs, set apart from the tool tabs
+   (spec editor, history, guide) by a divider. */
 
-.mode-btn {
-  text-align: left;
-  padding: 12px 14px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
+.tab-flow {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-}
-
-.mode-btn:hover {
-  border-color: var(--accent-dim);
-}
-
-.mode-btn.is-active {
-  border-color: var(--accent);
-  background: rgba(110, 168, 254, 0.08);
-}
-
-.mode-title {
+  align-items: flex-start;
+  line-height: 1.3;
   font-weight: 600;
 }
 
-.mode-btn.is-active .mode-title {
-  color: var(--accent);
+.tab-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
 }
 
-.mode-desc {
-  font-size: 12px;
+.tab-sep {
+  width: 1px;
+  margin: 10px 8px;
+  background: var(--border);
+}
+
+/* Which flow a run belongs to — on the monitor and in the history list. */
+.flow-tag {
+  font: 600 10px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  flex: none;
+}
+
+.flow-tag[data-flow="clone"] {
+  border-color: #5b4a1c;
+  color: var(--warn);
+}
+
+.run-monitor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.monitor-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.run-subject {
   color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#run-elsewhere {
+  margin: 0 0 10px;
+}
+
+.guide .guide-part {
+  margin: 34px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 16px;
 }
 
 .sub-field {
@@ -856,6 +959,8 @@ textarea {
 }
 
 .run-item-name {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
@@ -900,6 +1005,11 @@ textarea {
 .badge[data-status="done"] {
   color: var(--ok);
   border-color: #24502f;
+}
+
+.badge[data-status="incomplete"] {
+  color: var(--warn);
+  border-color: #5b4a1c;
 }
 
 .badge[data-status="errored"],
@@ -1050,4 +1160,26 @@ textarea {
   .history {
     grid-template-columns: 1fr;
   }
+}
+
+/* The history header now also holds the flow filter: keep the title on one
+   line and let the buttons drop below it in the narrow column. */
+.card-runs .card-head {
+  flex-wrap: wrap;
+}
+
+.card-runs .card-head h2 {
+  white-space: nowrap;
+}
+
+#runs-filter {
+  width: auto;
+}
+
+#clone-what {
+  width: 100%;
+}
+
+.hint a {
+  color: var(--accent);
 }

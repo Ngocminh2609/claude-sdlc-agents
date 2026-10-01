@@ -39,6 +39,16 @@ Cover, for each layer the project actually has:
   adds entities depends on this answer.
 - Naming: the casing and suffix conventions actually used for files, classes and
   columns — quote real examples from the code rather than generalising.
+- CI/CD: find the project's actual pipeline config (.gitlab-ci.yml,
+  .github/workflows/*, Jenkinsfile, azure-pipelines.yml, bitbucket-pipelines.yml)
+  and quote the exact build/lint/test commands and flags each job runs, the
+  toolchain image/version it's pinned to, and whether it scopes to one
+  module/package (e.g. -pl/--filter/-am) rather than the whole tree. Say plainly
+  when a stage you'd expect (lint, type-check, unit tests) is disabled, commented
+  out, or missing — a later stage needs to know the pipeline will not catch that
+  class of error itself. If a Dockerfile drives the pipeline's build, note how it
+  registers which modules/packages get built (an explicit COPY or build-list per
+  module means a new one must be added there too, not just to the source tree).
 
 Report what the project does, not what it should do. Where the project is
 inconsistent, say so and name the dominant pattern. Do not propose changes, do

@@ -176,7 +176,7 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
   const serverApi = describeServerApi(portedServerApi(mapping, roots));
   const runBuild = async (): Promise<CloneBuildVerdict> => {
     onProgress("Clone build: compiling the target project");
-    const verdict = await verifyCloneBuild(mapping, await findFreePorts(), roots);
+    const verdict = await verifyCloneBuild(mapping, conventions, await findFreePorts(), roots);
     logger?.recordCloneBuild(verdict);
     onProgress(`Clone build: ${verdict.ok ? "pass" : "fail"}`);
     return verdict;

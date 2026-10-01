@@ -34,8 +34,14 @@ project" part of QA) will use instead of re-exploring the project themselves:
 1. conventions — how the project is organised: top-level layout, module/package
    structure, naming and casing conventions actually used (quote real examples),
    and how the project is started/built/tested (the scripts or commands, read
-   from package.json or equivalent). Report what the project does, not what it
-   should do.
+   from package.json or equivalent). Also find the project's actual CI/CD config
+   (.gitlab-ci.yml, .github/workflows/*, Jenkinsfile, azure-pipelines.yml,
+   bitbucket-pipelines.yml, or a Dockerfile it invokes) and quote the exact
+   build/lint/test commands and flags it runs and the toolchain version it's
+   pinned to — that is the real gate later coding and E2E work has to pass, which
+   can differ from what looks buildable locally. Say plainly when a stage you'd
+   expect (lint, type-check, unit tests) is disabled or missing there. Report
+   what the project does, not what it should do.
 2. relevantFiles — existing files this spec's work should read, follow, or
    reuse: helpers, utilities, base classes, similar existing features,
    configuration the new work must integrate with. This is about what THIS

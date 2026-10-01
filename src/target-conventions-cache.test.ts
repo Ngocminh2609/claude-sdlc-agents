@@ -65,7 +65,7 @@ describe("getCachedTargetConventions", () => {
         [path.resolve("/tmp/project")]: {
           gitHead: "abc123",
           conventions: { summary: "modules/ layout" },
-          version: 2,
+          version: 3,
         },
       }),
     );
@@ -143,7 +143,7 @@ describe("storeTargetConventions", () => {
     const [, contents] = writeFile.mock.calls[0];
     const written = JSON.parse(contents as string);
     const key = path.resolve("/tmp/project");
-    expect(written[key]).toEqual({ gitHead: "abc123", conventions: { summary: "modules/ layout" }, version: 2 });
+    expect(written[key]).toEqual({ gitHead: "abc123", conventions: { summary: "modules/ layout" }, version: 3 });
   });
 
   it("preserves other projects' cached entries when adding one", async () => {

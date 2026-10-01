@@ -35,10 +35,12 @@ const CACHE_PATH = path.join(TOOL_ROOT, "runs", ".target-conventions-cache.json"
 /**
  * Bumped whenever the Target Conventions prompt starts asking for something
  * new: an answer cached under an older prompt lacks it (version 2 added how
- * tables get created), and an unchanged git HEAD would otherwise keep serving
- * that incomplete answer forever.
+ * tables get created; version 3 added the project's actual CI/CD config —
+ * pipeline build/lint/test commands, pinned toolchain, disabled stages), and
+ * an unchanged git HEAD would otherwise keep serving that incomplete answer
+ * forever.
  */
-const CONVENTIONS_VERSION = 2;
+const CONVENTIONS_VERSION = 3;
 
 interface CacheEntry {
   gitHead: string;
