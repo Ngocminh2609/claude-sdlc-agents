@@ -93,13 +93,81 @@ npm run pipeline -- --spec ./specs/my-feature.md --project /path/to/target/proje
 
 To remove the global command later: `npm unlink -g claude-sdlc-agents`.
 
+Optional SQL folder:
+- `--project-sql <dir>` — where the run's database scripts go (for example the repo's `SQL/`
+  folder). Never the working directory, and only alongside `--project`/`--project-be`/`--project-fe`.
+  Without it, scripts live in the BE folder.
+
 Optional DB flags (pass at most one):
-- `--db-connection "postgres://user:pass@host/db"` — an existing database the code should integrate with.
-- `--db-schema ./schema.sql` — a schema/description file to design a new DB from.
+- `--db-connection "<string>"` — the database the run creates its tables in (usually empty for
+  a new feature). Needs `--project-sql`. See [Database scripts](#database-scripts).
+- `--db-schema ./schema.sql` — a schema/description file to design from. Nothing is run against a database.
+
+## Database scripts
+
+With `--db-connection` and `--project-sql`, nobody has to copy the generated DDL into a SQL client:
+
+```bash
+aidev --spec ./specs/don-vi-tinh.md --project-be D:/app/BE --project-fe D:/app/FE \
+      --project-sql D:/app/SQL --db-connection "jdbc:postgresql://10.0.0.5:5432/appdb?user=app&password=…"
+```
+
+- **The engine comes from the connection string** (`src/database.ts`): URL (`postgresql://`,
+  `sqlserver://`/`mssql://`, `mysql://`), JDBC (`jdbc:postgresql:`, `jdbc:sqlserver://host:1433;databaseName=…`,
+  `jdbc:mysql:`) or a SQL Server ADO string (`Server=…;Database=…;User Id=…;Password=…`). PostgreSQL,
+  SQL Server and MySQL scripts are run. Oracle is recognised and refused with a clear message.
+- **Checked before anything is spent.** The run connects first. A wrong password or an unreachable host
+  stops it in a second, before any agent call.
+- **The agents are told the engine, the host/database and the SQL folder, never the credentials.**
+  Design, task breakdown and Coding are asked to write every schema change as `.sql` files in that
+  engine's syntax in the SQL folder, following its naming (`01-…`, `02-…`).
+- **After every coding task** the pipeline (`src/database-scripts.ts`, plain code) runs each new script
+  in that folder against the database, in file-name order (numbers compared as numbers), each in its own
+  transaction, so the next task and E2E find the tables in place.
+  - Scripts already in the folder when the plan was made are the baseline and are never run.
+  - Applied scripts are recorded by content hash in the checkpoint, so a resumed run does not create
+    a table twice.
+  - A script that already ran (or was there before) and has been edited stops the run. Put the change
+    in a new, later-numbered script instead.
+  - Files whose name contains `rollback` are never run.
+  - **A new script with a top-level `DROP`, `TRUNCATE` or `DELETE` is refused, and nothing in that batch
+    runs** (`src/sql-safety.ts`). Defining a procedure or function whose body deletes rows is allowed.
+    `ON DELETE CASCADE`, `GRANT DELETE`, and `DROP NOT NULL`/`DROP DEFAULT` are not counted.
+  - A script the database rejects is rolled back and stops the run with the database's own error.
+    MySQL commits DDL implicitly, so a failed MySQL script can leave the tables created before the
+    failing statement.
 
 Optional reference flag (repeatable):
 - `--reference /path/to/sample-project` — a source tree the agents may **read** to copy
   patterns from, for "build this screen the way the sample project does it".
+
+## Drafting a spec from a request
+
+No spec yet? Describe what you want in plain words and let a read-only agent draft one:
+
+```bash
+aidev spec --request "Thêm màn hình danh mục đơn vị tính: xem, tìm, thêm/sửa/xoá" \
+           --project-be D:/app/backend --project-fe D:/app/frontend \
+           --out ./specs/don-vi-tinh.md
+# or: --request-file ./requests/don-vi-tinh.txt
+```
+
+The Spec Draft stage (`src/stages/spec-draft.ts`) gets `Read`/`Glob`/`Grep` only. It reads
+the target (plus any `--reference`, the project index and the relevant FIS skills) so the
+draft names real modules and screens, and writes the sections the rest of the pipeline relies
+on: *Bối cảnh*, *Yêu cầu*, *Ràng buộc*, *Tiêu chí nghiệm thu* (each one checkable in a
+browser, because E2E grades against them), and *Câu hỏi mở* for anything the request left
+undecided. Anything it inferred is marked *(giả định)*.
+
+The command stops after writing the file. It never starts the feature pipeline. A person
+reads the draft, fixes it, answers the open questions, and then runs `aidev --spec <file>`.
+That review step is the gate before any code gets written. An existing `--out` file is
+refused before the agent runs, unless you pass `--overwrite`.
+
+In the UI, *Làm task mới* has five steps: 1. target folders (BE, FE, SQL, optional reference),
+2. draft a spec (folder to save it in, the request, **Sinh spec**), 3. the spec file, which step 2
+fills in when its draft finishes (**Xem / sửa spec** opens it for review), 4. database, 5. check and run.
+The file name comes from the request (`<date>-<first words>.md`).
 
 ## Cloning from a sample project
 
@@ -432,6 +500,44 @@ It does not trust the Coding stage's own account of what it verified — the Cod
 4. Runs the tests and maps every acceptance criterion to concrete evidence — a criterion with no covering test fails the run, even if everything else passes.
 
 This stage can create/edit only files under `e2e/`, files named `*.spec.ts`/`*.spec.js`, or `playwright.config.*` — enforced by a `canUseTool` callback, not just an instruction — so it can report defects but cannot patch the application to make its own tests pass.
+
+**The verdict is not the agent's alone.** A test can pass on what the screen shows while the API behind it
+answered 500, and the agent's report is its own claim. So the pipeline adds two things in plain code
+(`src/e2e-guard.ts`, `src/e2e-check.ts`):
+
+1. **API guard.** Before the agent starts, the pipeline writes `e2e/aidev-guard.ts` into the E2E folder:
+   the FE folder, or the project folder when there is only one. Every test must import `test`/`expect`
+   from it. While a test runs, the guard fails it when any fetch/XHR to the app (a loopback host):
+   - answers **5xx**;
+   - fails at the network level (cancelled requests from leaving a page do not count);
+   - answers a **4xx the test did not declare** with `apiGuard.allow(status, urlPattern)`. Only 4xx can
+     be declared, for a test that provokes a validation error on purpose;
+   - or when the page throws an uncaught error.
+
+   The guard attaches what it saw to every test, so a test without that attachment is one that bypassed it.
+2. **The pipeline's own re-run.** After the agent finishes, the pipeline rewrites the guard (agent edits
+   are discarded) and writes `aidev.playwright.config.ts` next to the project's Playwright config. That
+   file is the same config with `trace`, `screenshot` and `video` forced on and the reports redirected.
+   The pipeline then runs `npx playwright test` itself (timeout `config.e2eCheckTimeoutMs`) and judges
+   from Playwright's JSON results. **Pass requires all of these:**
+   - the agent says pass;
+   - at least one test ran;
+   - no test failed, flaked or was skipped;
+   - every test ran under the guard;
+   - the guard saw no API problem.
+
+   Every problem (method, URL, status, test name) goes into the final message and `report.md`.
+
+Evidence goes to `runs/<run>/e2e-evidence/`: `results/` holds traces, screenshots and videos, and
+`report/` holds Playwright's HTML report. The *Lịch sử chạy* tab shows a button that opens the report,
+with the trace viewer and video for each test, served by the UI from that folder only.
+
+Verified against a sample app with real Playwright + Chromium: a test that passed on screen while
+`POST /api/units` answered 500 was failed with that call named; a declared 400 passed; a test importing
+`@playwright/test` directly was flagged as unguarded. Not covered: flows the spec's acceptance criteria
+do not mention, and API calls to a non-loopback host (an app whose browser calls a remote server
+directly). Both `e2e/aidev-guard.ts` and `aidev.playwright.config.ts` stay in the target project, so
+review them before committing.
 
 ## Tests
 

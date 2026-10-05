@@ -12,9 +12,23 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
   rm,
 }));
 
-const { clearRuns, deleteRun, isValidRunId, RunNotFoundError, runModeOfLog, specNameFromRunId } = await import(
-  "./runs.js"
-);
+const { clearRuns, deleteRun, evidenceFile, isValidRunId, RunNotFoundError, runModeOfLog, specNameFromRunId } =
+  await import("./runs.js");
+
+describe("evidenceFile", () => {
+  const id = "2026-10-05T03-00-00-000Z-app-spec";
+
+  it("maps a request path into that run's evidence folder", () => {
+    expect(evidenceFile(id, "report/index.html")).toBe(path.join(runsDir, id, "e2e-evidence", "report", "index.html"));
+  });
+
+  it("refuses anything that would leave the evidence folder, or a bad run id", () => {
+    expect(evidenceFile(id, "../log.json")).toBeNull();
+    expect(evidenceFile(id, "../../../.env")).toBeNull();
+    expect(evidenceFile(id, "")).toBeNull();
+    expect(evidenceFile("..", "report/index.html")).toBeNull();
+  });
+});
 
 beforeEach(() => {
   readdir.mockReset();

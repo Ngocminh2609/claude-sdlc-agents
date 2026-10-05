@@ -40,6 +40,24 @@ describe("buildRoots", () => {
   it("refuses one project folder and separate folders together", () => {
     expect(() => buildRoots({ project: app, be })).toThrow(/not both/);
   });
+
+  it("adds a SQL folder last, never as the working directory", () => {
+    const sql = path.resolve("/work/sql");
+    expect(buildRoots({ be, fe, sql })).toEqual([
+      { role: "be", path: be },
+      { role: "fe", path: fe },
+      { role: "sql", path: sql },
+    ]);
+    expect(buildRoots({ project: app, sql })).toEqual([
+      { role: "app", path: app },
+      { role: "sql", path: sql },
+    ]);
+  });
+
+  it("drops a SQL folder that is a code folder already, and refuses one on its own", () => {
+    expect(buildRoots({ be, sql: be })).toEqual([{ role: "be", path: be }]);
+    expect(() => buildRoots({ sql: be })).toThrow(/needs a project folder/);
+  });
 });
 
 describe("roots helpers", () => {

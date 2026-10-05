@@ -24,6 +24,9 @@ export interface Preset {
   /** Separate target folders; the same folder in both means one project. */
   projectBe: string;
   projectFe: string;
+  /** Feature flow only: where database scripts go, and where drafted specs are saved. */
+  projectSql: string;
+  specDir: string;
   /** Feature flow only. */
   specPath: string;
   dbMode: "none" | "connection" | "schema-file";
@@ -92,6 +95,8 @@ function sanitize(input: PresetInput): PresetInput {
     projectPath: input.projectPath?.trim() ?? "",
     projectBe: input.projectBe?.trim() ?? "",
     projectFe: input.projectFe?.trim() ?? "",
+    projectSql: input.projectSql?.trim() ?? "",
+    specDir: input.specDir?.trim() ?? "",
     specPath: input.specPath?.trim() ?? "",
     dbMode: input.dbMode,
     dbSchemaPath: input.dbSchemaPath?.trim() ?? "",

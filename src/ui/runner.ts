@@ -4,7 +4,8 @@ import { appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseEventLine, EVENT_STREAM_ENV } from "../events.js";
-import { buildRoots } from "../target-roots.js";
+import { buildRoots, type RootRole } from "../target-roots.js";
+import { killTree } from "../kill-tree.js";
 import { addUsage, describeUsage, emptyUsage, subtractUsage, totalTokens, type TokenUsage } from "../token-usage.js";
 import { repoRoot } from "./paths.js";
 import {
@@ -56,11 +57,17 @@ export interface RunRequest {
   /** Separate target folders. The same folder in both is treated as one project. */
   projectBePath?: string;
   projectFePath?: string;
+  /** Where database scripts go; required when `dbMode` is "connection", since those scripts are what gets run. */
+  projectSqlPath?: string;
   /** Clone mode: separate BE/FE source folders in the reference project. */
   referenceBePath?: string;
   referenceFePath?: string;
-  /** Feature mode only. */
+  /** Feature mode: the spec to build. Spec mode: where the draft is written. */
   specPath?: string;
+  /** Spec mode only: the plain-language request to draft a spec from. */
+  request?: string;
+  /** Spec mode only: replace an existing file at `specPath`. */
+  overwrite?: boolean;
   /** Clone mode only: what to port, in the user's words. */
   what?: string;
   dbMode: DbMode;
@@ -129,7 +136,19 @@ export type RunRejectionCode =
   | "reference-not-found"
   | "reference-required"
   | "what-required"
-  | "db-connection-required";
+  | "db-connection-required"
+  | "request-required"
+  | "spec-path-required"
+  | "spec-exists"
+  | "sql-folder-required";
+
+/** The CLI flag that names each kind of target folder. */
+const TARGET_FLAG: Record<RootRole, string> = {
+  app: "--project",
+  be: "--project-be",
+  fe: "--project-fe",
+  sql: "--project-sql",
+};
 
 export class RunnerBusyError extends Error {
   readonly code: RunRejectionCode = "busy";
@@ -188,18 +207,20 @@ export class PipelineRunner {
     if (this.child) throw new RunnerBusyError();
 
     const clone = request.mode === "clone";
+    if (!request.projectPath?.trim() && !request.projectBePath?.trim() && !request.projectFePath?.trim()) {
+      throw new RunRequestError("Choose the target project folder(s).", "project-not-found");
+    }
     const roots = buildRoots({
       project: request.projectPath,
       be: request.projectBePath,
       fe: request.projectFePath,
+      sql: request.projectSqlPath,
     });
-    if (!roots.length) throw new RunRequestError("Choose the target project folder(s).", "project-not-found");
     for (const root of roots) assertDirectory(root.path, "Project folder", "project-not-found");
     const projectPath = roots[0].path;
-    const targetArgs =
-      roots.length === 1 && roots[0].role === "app"
-        ? ["--project", projectPath]
-        : roots.flatMap((root) => [root.role === "fe" ? "--project-fe" : "--project-be", root.path]);
+    const targetArgs = roots.flatMap((root) => [TARGET_FLAG[root.role], root.path]);
+
+    if (request.mode === "spec") return this.startSpecDraft(request, projectPath, targetArgs);
 
     const specPath = clone ? null : path.resolve(request.specPath ?? "");
     const what = clone ? (request.what ?? "").trim() : null;
@@ -250,6 +271,10 @@ export class PipelineRunner {
       if (!value) {
         throw new RunRequestError("A database connection string is required.", "db-connection-required");
       }
+      // The scripts the run applies are the new ones in this folder; without it there is nothing to apply.
+      if (!roots.some((root) => root.role === "sql")) {
+        throw new RunRequestError("Running scripts against the database needs a SQL folder.", "sql-folder-required");
+      }
       args.push("--db-connection", value);
       this.secret = value;
     } else if (request.dbMode === "schema-file") {
@@ -261,19 +286,59 @@ export class PipelineRunner {
       this.secret = null;
     }
 
-    this.seq = 0;
-    this.lines = [];
-    this.stopping = false;
-    this.state = {
-      id: new Date().toISOString(),
-      status: "running",
+    return this.launch(args, {
       mode: request.mode,
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
       projectPath,
       specPath,
       what,
       dbMode: clone ? "none" : request.dbMode,
+    });
+  }
+
+  /**
+   * `aidev spec`: read-only, writes one new file, and ends there. Confirming
+   * the draft and building from it is a separate feature run the person
+   * starts — this method never chains into one.
+   */
+  private startSpecDraft(request: RunRequest, projectPath: string, targetArgs: string[]): RunState {
+    const text = (request.request ?? "").trim();
+    if (!text) throw new RunRequestError("Describe what the spec should cover.", "request-required");
+    if (!request.specPath?.trim()) {
+      throw new RunRequestError("Choose where to save the drafted spec.", "spec-path-required");
+    }
+    const specPath = path.resolve(request.specPath);
+    // Asked here, not left to the CLI, so the UI can ask the person before any
+    // agent runs instead of after a draft has been paid for.
+    if (existsSync(specPath) && !request.overwrite) {
+      throw new RunRequestError(`Spec file already exists: ${specPath}`, "spec-exists", specPath);
+    }
+
+    const args = ["spec", "--request", text, ...targetArgs, "--out", specPath];
+    for (const candidate of request.referencePaths ?? []) {
+      if (!candidate.trim()) continue;
+      const reference = path.resolve(candidate.trim());
+      assertDirectory(reference, "Reference repository", "reference-not-found");
+      args.push("--reference", reference);
+    }
+    if (request.overwrite) args.push("--overwrite");
+    this.secret = null;
+
+    return this.launch(args, { mode: "spec", projectPath, specPath, what: null, dbMode: "none" });
+  }
+
+  private launch(
+    args: string[],
+    run: Pick<RunState, "mode" | "projectPath" | "specPath" | "what" | "dbMode">,
+  ): RunState {
+    this.seq = 0;
+    this.lines = [];
+    this.stopping = false;
+    this.state = {
+      ...run,
+      id: new Date().toISOString(),
+      status: "running",
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
       stage: null,
       stageDetail: null,
       completedStages: [],
@@ -537,25 +602,4 @@ function assertDirectory(candidate: string, label: string, code: RunRejectionCod
 
 function quoteForDisplay(arg: string): string {
   return /\s/.test(arg) ? `"${arg}"` : arg;
-}
-
-/**
- * Kills the pipeline and everything it spawned. `child.kill()` alone would
- * leave the grandchildren (tsx, a dev server started by the E2E stage,
- * Playwright's browsers) running and holding ports.
- */
-function killTree(pid: number): void {
-  if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-    return;
-  }
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // Already gone — nothing to stop.
-    }
-  }
 }

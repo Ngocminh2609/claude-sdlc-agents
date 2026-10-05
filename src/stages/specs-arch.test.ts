@@ -25,17 +25,32 @@ describe("runSpecsArch", () => {
     }
   });
 
-  it("includes db connection info in the prompt when present", async () => {
+  it("tells the design which database engine and scripts folder to plan for, never the connection itself", async () => {
     runTextQuery.mockResolvedValue({ ok: true, text: "a proposal" });
 
     await runSpecsArch(
-      { ...spec, dbInfo: { kind: "connection", value: "postgres://example" } },
+      {
+        ...spec,
+        dbInfo: { kind: "connection", value: "" },
+        database: { dialect: "postgresql", description: "PostgreSQL at db.local:5432/app", scriptsDir: "/tmp/sql" },
+      },
       null,
       undefined,
     );
 
     const [prompt] = runTextQuery.mock.calls[0];
-    expect(prompt).toContain("postgres://example");
+    expect(prompt).toContain("PostgreSQL at db.local:5432/app");
+    expect(prompt).toContain("/tmp/sql");
+    expect(prompt).not.toMatch(/postgres(ql)?:\/\//);
+  });
+
+  it("includes a schema file's content in the prompt", async () => {
+    runTextQuery.mockResolvedValue({ ok: true, text: "a proposal" });
+
+    await runSpecsArch({ ...spec, dbInfo: { kind: "schema-file", value: "CREATE TABLE unit (id int);" } }, null, undefined);
+
+    const [prompt] = runTextQuery.mock.calls[0];
+    expect(prompt).toContain("CREATE TABLE unit (id int);");
   });
 
   it("includes the prior proposal and reviewer feedback in the revision prompt", async () => {

@@ -19,6 +19,8 @@ const base = {
   projectPath: "",
   projectBe: "D:/target/BE",
   projectFe: "D:/target/FE",
+  projectSql: "",
+  specDir: "",
   specPath: "",
   dbMode: "none" as const,
   dbSchemaPath: "",

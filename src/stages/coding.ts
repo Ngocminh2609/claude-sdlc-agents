@@ -1,5 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
+import { databasePromptSection } from "../database-scripts.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
@@ -130,6 +131,7 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     "--- Spec ---",
     spec.specMarkdown,
     ...targetRootsPromptSection(roots),
+    ...databasePromptSection(spec.database, "code"),
     "",
     "--- Approved design (implement your task within it; do not redesign) ---",
     approvedProposal,

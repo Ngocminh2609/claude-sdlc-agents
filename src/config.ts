@@ -8,6 +8,9 @@ export const config = {
   // Maven target/ trees) the original 15/10/10 budgets were spent on
   // exploration before any output was produced.
   maxTurns: {
+    // Reads the target to ground a spec in its real modules — the same kind
+    // of exploration the design stage does, with no reference tree on top.
+    specDraft: 40,
     specsArch: 40,
     // A reference repo is a second tree to walk on the same budget, so the
     // design stage gets more room when one is in play. The inventory stage
@@ -44,6 +47,9 @@ export const config = {
   // Rounds of "fix the ported code, then re-run build and tests" before a
   // clone run gives up and reports incomplete with the remaining failures.
   maxCloneFixRounds: 2,
+  // The pipeline's own re-run of the E2E tests starts every app server again
+  // (a Spring Boot build can take minutes) and records video for every test.
+  e2eCheckTimeoutMs: 20 * 60 * 1000,
   // Hard cap on how many installed FIS skills go into a stage's prompt, after
   // ranking by relevance to the spec (or `clone --what`) — see
   // `skills-catalog.ts`. A machine with dozens of skills installed would

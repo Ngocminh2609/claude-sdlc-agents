@@ -112,4 +112,16 @@ describe("the wording this file depends on", () => {
       expect(pipelineSource).toContain(literal);
     }
   });
+
+  it("is still the wording src/index.ts emits for a spec draft", async () => {
+    const source = await readFile(path.join(srcDir, "index.ts"), "utf-8");
+
+    for (const literal of [
+      'onProgress("Spec draft: reading the project and drafting the spec from the request")',
+      "onProgress(`Spec draft: written to ${outPath}`)",
+    ]) {
+      expect(source).toContain(literal);
+      expect(stageOfProgress(literal.replace(/^onProgress\(["`]/, ""))).toBe("spec-draft");
+    }
+  });
 });

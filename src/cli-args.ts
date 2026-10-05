@@ -16,6 +16,8 @@ export interface TargetArgs {
   project?: string;
   be?: string;
   fe?: string;
+  /** Where database scripts go (`--project-sql`). Optional, and only alongside a code folder. */
+  sql?: string;
 }
 
 export interface Args {
@@ -30,7 +32,7 @@ export interface Args {
 }
 
 export const USAGE =
-  "Usage: aidev --spec <path.md> (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--db-connection <string> | --db-schema <path>] [--reference <dir>]... [--fresh] [--no-metadata-standards]";
+  "Usage: aidev --spec <path.md> (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--project-sql <dir>] [--db-connection <string> (needs --project-sql) | --db-schema <path>] [--reference <dir>]... [--fresh] [--no-metadata-standards]";
 
 export const CLONE_USAGE =
   'Usage: aidev clone --what "<keyword>" (--from <dir>... | --from-be <dir> [--from-fe <dir>] | --from-fe <dir>) (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--no-build] [--no-tests] [--fresh] [--no-metadata-standards]';
@@ -98,6 +100,66 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
   return { what: what.trim(), target, from, skipBuild, skipTests, fresh, noMetadataStandards };
 }
 
+export const SPEC_DRAFT_USAGE =
+  'Usage: aidev spec (--request "<text>" | --request-file <path>) (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--project-sql <dir>] --out <path.md> [--reference <dir>]... [--overwrite]';
+
+/** `aidev spec`: draft a spec from a plain-language request, for a person to confirm. */
+export interface SpecDraftArgs {
+  /** Exactly one of these two is set. */
+  requestText?: string;
+  requestFile?: string;
+  target: TargetArgs;
+  outPath: string;
+  referencePaths: string[];
+  /** Replace an existing file at `outPath`. Without it, an existing file stops the command. */
+  overwrite: boolean;
+}
+
+export function parseSpecDraftArgs(argv: string[]): SpecDraftArgs {
+  let requestText: string | undefined;
+  let requestFile: string | undefined;
+  let outPath: string | undefined;
+  let overwrite = false;
+  const target: TargetArgs = {};
+  const referencePaths: string[] = [];
+
+  for (let i = 0; i < argv.length; i++) {
+    if (takeTarget(argv, i, target)) {
+      i++;
+      continue;
+    }
+    switch (argv[i]) {
+      case "--request":
+        requestText = argv[++i];
+        break;
+      case "--request-file":
+        requestFile = argv[++i];
+        break;
+      case "--out":
+        outPath = argv[++i];
+        break;
+      case "--reference":
+        referencePaths.push(argv[++i]);
+        break;
+      case "--overwrite":
+        overwrite = true;
+        break;
+    }
+  }
+
+  const hasText = Boolean(requestText?.trim());
+  if (hasText === Boolean(requestFile) || !outPath || !hasTarget(target)) throw new Error(SPEC_DRAFT_USAGE);
+  assertOneTargetKind(target, SPEC_DRAFT_USAGE);
+
+  return {
+    ...(hasText ? { requestText: requestText?.trim() } : { requestFile }),
+    target,
+    outPath,
+    referencePaths,
+    overwrite,
+  };
+}
+
 export function parseArgs(argv: string[]): Args {
   let specPath: string | undefined;
   let dbInfo: DbInfo | undefined;
@@ -151,6 +213,9 @@ function takeTarget(argv: string[], i: number, target: TargetArgs): boolean {
       return true;
     case "--project-fe":
       target.fe = argv[i + 1];
+      return true;
+    case "--project-sql":
+      target.sql = argv[i + 1];
       return true;
     default:
       return false;

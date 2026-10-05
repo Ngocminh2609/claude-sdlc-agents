@@ -9,6 +9,7 @@ import type {
   CloneWiring,
   CloneInput,
   CloneMapping,
+  E2eCheck,
   E2eVerdict,
   ProjectContext,
   ReferenceInventory,
@@ -19,6 +20,9 @@ import type {
 } from "./types.js";
 
 const TOOL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Folder under a run's directory holding the pipeline's own E2E evidence. */
+export const E2E_EVIDENCE_DIR = "e2e-evidence";
 
 /**
  * Run folders are named the same way whichever pipeline produced them, so the
@@ -42,6 +46,37 @@ function slugify(label: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
   return slug || "run";
+}
+
+/**
+ * The pipeline's own E2E check in the report: counts, every API problem with
+ * the test it happened in, and where the evidence is. The agent's criteria
+ * list above is its claim; this section is what the re-run measured.
+ */
+function e2eCheckLines(check: E2eCheck | undefined): string[] {
+  if (!check) return [];
+  const lines = ["", "**Pipeline E2E check (re-run with the API guard):**", ""];
+  if (!check.ran) {
+    lines.push(`- Did not complete: ${check.error ?? "unknown error"}`);
+  } else {
+    lines.push(
+      `- Tests: ${check.total} — passed ${check.passed}, failed ${check.failed}, flaky ${check.flaky}, skipped ${check.skipped}`,
+      `- API problems: ${check.apiProblems.length}`,
+    );
+    for (const problem of check.apiProblems) {
+      const what =
+        problem.kind === "http"
+          ? `\`${problem.method} ${problem.url}\` → HTTP ${problem.status}`
+          : problem.kind === "network"
+            ? `\`${problem.method} ${problem.url}\` → ${problem.message}`
+            : `page error on \`${problem.url}\`: ${problem.message}`;
+      lines.push(`  - ${what} (in "${problem.test}")`);
+    }
+    for (const test of check.failedTests) lines.push(`- Failed: ${test}`);
+    for (const test of check.unguardedTests) lines.push(`- Not under the API guard: ${test}`);
+  }
+  lines.push(`- Evidence (trace, screenshots, video, HTML report): \`${check.evidenceDir}\``);
+  return lines;
 }
 
 async function persist(runDir: string, data: unknown, markdown: string): Promise<string> {
@@ -95,6 +130,11 @@ export class RunLogger {
 
   recordSpecsArch(attempt: number, proposal: string): void {
     this.specsArch.push({ attempt, proposal });
+  }
+
+  /** Inside this run's folder, so the history view can serve the E2E traces, videos and report. */
+  get evidenceDir(): string {
+    return path.join(this.runDir, E2E_EVIDENCE_DIR);
   }
 
   recordReview(attempt: number, review: ReviewVerdict): void {
@@ -288,6 +328,7 @@ export class RunLogger {
           for (const ac of e2eEntry.verdict.acceptanceCriteria ?? []) {
             lines.push(`  - [${ac.covered ? "x" : " "}] ${ac.criterion} — ${ac.evidence}`);
           }
+          lines.push(...e2eCheckLines(e2eEntry.verdict.check));
         }
         lines.push("");
       }

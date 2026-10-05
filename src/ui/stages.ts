@@ -35,16 +35,26 @@ export const CLONE_STAGE_IDS = [
   "tests",
 ] as const;
 
-export type RunMode = "feature" | "clone";
+/** Drafting a spec from a request (`aidev spec`) — read-only, stops at the draft. */
+export const SPEC_STAGE_IDS = ["spec-draft"] as const;
 
-export type StageId = (typeof FEATURE_STAGE_IDS)[number] | (typeof CLONE_STAGE_IDS)[number];
+/** "spec" is a run the UI can start, not a third pipeline: it ends at a file a person confirms. */
+export type RunMode = "feature" | "clone" | "spec";
+
+export type StageId =
+  | (typeof FEATURE_STAGE_IDS)[number]
+  | (typeof CLONE_STAGE_IDS)[number]
+  | (typeof SPEC_STAGE_IDS)[number];
 
 export const STAGE_IDS_BY_MODE: Record<RunMode, readonly StageId[]> = {
   feature: FEATURE_STAGE_IDS,
   clone: CLONE_STAGE_IDS,
+  spec: SPEC_STAGE_IDS,
 };
 
 export function stageOfProgress(message: string): StageId | null {
+  if (message.startsWith("Spec draft:")) return "spec-draft";
+
   // Clone pipeline
   if (message.startsWith("Clone locate:")) return "locate";
   if (message.startsWith("Clone conventions:")) return "conventions";

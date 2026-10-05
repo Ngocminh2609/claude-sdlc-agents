@@ -1,3 +1,4 @@
+import type { DatabaseContext } from "./database-scripts.js";
 import type { IndexRef } from "./project-index.js";
 import type { MetadataStandards } from "./metadata-standards.js";
 import type { SkillCatalog } from "./skills-catalog.js";
@@ -15,6 +16,11 @@ export interface SpecInput {
   /** Separate BE/FE folders, or one "app" folder. Absent means just `projectPath`. */
   targetRoots?: ProjectRoot[];
   dbInfo?: DbInfo;
+  /**
+   * Set when the user gave a connection: the database the run's scripts are
+   * applied to. Never carries credentials — this object reaches every prompt.
+   */
+  database?: DatabaseContext;
   /** Absolute paths to read-only source trees agents may copy patterns from. */
   referencePaths?: string[];
   /** Refreshed indexes of the target and reference repos — see `project-index.ts`. */
@@ -264,6 +270,36 @@ export interface E2eVerdict {
   summary: string;
   acceptanceCriteria?: AcceptanceCriterionCheck[];
   failedScenarios?: string[];
+  /** The pipeline's own Playwright run (`src/e2e-check.ts`); absent only on a verdict from before it existed. */
+  check?: E2eCheck;
+}
+
+/** An API call (or page error) the E2E guard saw go wrong while a test ran. */
+export interface E2eApiProblem {
+  test: string;
+  kind: "http" | "network" | "page-error";
+  method?: string;
+  url: string;
+  status?: number;
+  message?: string;
+}
+
+/** What the pipeline's own run of the E2E tests found, read from Playwright's JSON results. */
+export interface E2eCheck {
+  /** False when the run could not happen or produced no results — see `error`. */
+  ran: boolean;
+  error?: string;
+  total: number;
+  passed: number;
+  failed: number;
+  flaky: number;
+  skipped: number;
+  failedTests: string[];
+  /** Tests that did not import `test` from the guard, so their API calls went unchecked. */
+  unguardedTests: string[];
+  apiProblems: E2eApiProblem[];
+  /** Where the traces, screenshots, videos and HTML report were written. */
+  evidenceDir: string;
 }
 
 export interface E2eAttempt extends E2eVerdict {

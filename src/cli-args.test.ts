@@ -2,7 +2,51 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { parseArgs, parseCloneArgs, resolveReferencePaths } from "./cli-args.js";
+import { parseArgs, parseCloneArgs, parseSpecDraftArgs, resolveReferencePaths } from "./cli-args.js";
+
+describe("--project-sql", () => {
+  it("is read by every command that takes a target", () => {
+    const sql = ["--project-be", "/b", "--project-sql", "/s"];
+    expect(parseArgs(["--spec", "a.md", ...sql]).target).toEqual({ be: "/b", sql: "/s" });
+    expect(parseSpecDraftArgs(["--request", "x", "--out", "/o.md", ...sql]).target.sql).toBe("/s");
+  });
+
+  it("is not a target on its own", () => {
+    expect(() => parseArgs(["--spec", "a.md", "--project-sql", "/s"])).toThrow(/Usage/);
+  });
+});
+
+describe("parseSpecDraftArgs", () => {
+  const target = ["--project", "/tmp/p", "--out", "/tmp/spec.md"];
+
+  it("takes the request as text or as a file, but not both and not neither", () => {
+    expect(parseSpecDraftArgs(["--request", "  add a unit list  ", ...target]).requestText).toBe("add a unit list");
+    expect(parseSpecDraftArgs(["--request-file", "/tmp/req.md", ...target]).requestFile).toBe("/tmp/req.md");
+    expect(() => parseSpecDraftArgs(["--request", "x", "--request-file", "/tmp/req.md", ...target])).toThrow(/Usage/);
+    expect(() => parseSpecDraftArgs(target)).toThrow(/Usage/);
+    expect(() => parseSpecDraftArgs(["--request", "   ", ...target])).toThrow(/Usage/);
+  });
+
+  it("requires a target and an --out path", () => {
+    expect(() => parseSpecDraftArgs(["--request", "x", "--out", "/tmp/spec.md"])).toThrow(/Usage/);
+    expect(() => parseSpecDraftArgs(["--request", "x", "--project", "/tmp/p"])).toThrow(/Usage/);
+  });
+
+  it("accepts separate BE/FE targets but not mixed with --project", () => {
+    const args = parseSpecDraftArgs(["--request", "x", "--project-be", "/b", "--project-fe", "/f", "--out", "/o.md"]);
+    expect(args.target).toEqual({ be: "/b", fe: "/f" });
+    expect(() =>
+      parseSpecDraftArgs(["--request", "x", "--project", "/p", "--project-be", "/b", "--out", "/o.md"]),
+    ).toThrow(/not both/);
+  });
+
+  it("does not overwrite unless asked, and collects references", () => {
+    expect(parseSpecDraftArgs(["--request", "x", ...target]).overwrite).toBe(false);
+    const args = parseSpecDraftArgs(["--request", "x", ...target, "--overwrite", "--reference", "/r1", "--reference", "/r2"]);
+    expect(args.overwrite).toBe(true);
+    expect(args.referencePaths).toEqual(["/r1", "/r2"]);
+  });
+});
 
 describe("parseArgs", () => {
   it("requires both --spec and --project", () => {

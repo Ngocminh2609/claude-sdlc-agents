@@ -1,8 +1,21 @@
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import process from "node:process";
 import { describeUsage, onUsage, usageSoFar } from "./token-usage.js";
 import { refreshIndexesForRun, refreshProjectIndexes } from "./project-index.js";
-import { parseArgs, parseCloneArgs, resolveReferencePaths, type Args, type TargetArgs } from "./cli-args.js";
+import {
+  parseArgs,
+  parseCloneArgs,
+  parseSpecDraftArgs,
+  resolveReferencePaths,
+  type Args,
+  type TargetArgs,
+} from "./cli-args.js";
+import { runSpecDraft, type SpecDraftInput } from "./stages/spec-draft.js";
+import { connectDatabase, describeDatabase, parseConnection, type SqlRunner } from "./database.js";
+import type { DatabaseContext } from "./database-scripts.js";
+import { StageError } from "./stage-error.js";
 import { assertRootsExist, buildRoots, type ProjectRoot } from "./target-roots.js";
 import { missingBuildManifestWarning } from "./clone-build-manifest-check.js";
 import { runClonePipeline } from "./clone-pipeline.js";
@@ -27,6 +40,10 @@ async function loadSpec(args: Args): Promise<SpecInput> {
   if (dbInfo?.kind === "schema-file") {
     const schemaContent = await readFile(dbInfo.value, "utf-8");
     dbInfo = { kind: "schema-file", value: schemaContent };
+  } else if (dbInfo?.kind === "connection") {
+    // The connection string stays in `runFeature`, which opens it. What the
+    // stages learn about the database comes from `spec.database`, credential-free.
+    dbInfo = { kind: "connection", value: "" };
   }
 
   const referencePaths = resolveReferencePaths(
@@ -82,19 +99,73 @@ function report(status: string, message: string, logPath?: string): void {
 async function runFeature(argv: string[]): Promise<void> {
   const args = parseArgs(argv);
   const spec = await loadSpec(args);
-  const logger = new RunLogger(spec, args.specPath);
-  for (const line of describeMetadataStandardsOverride(args.noMetadataStandards)) onProgress(line);
-  onProgress(describeMetadataStandards(spec.metadataStandards));
-  onProgress(describeSkillCatalog(spec.skillCatalog));
-  spec.projectIndexes = await refreshIndexesForRun(
-    [...(spec.targetRoots ?? []).map((root) => root.path), ...(spec.referencePaths ?? [])],
-    onProgress,
-  );
 
-  process.chdir(spec.projectPath);
+  // Checked first, before anything is spent: a wrong password should cost a
+  // second, not a design round.
+  let sqlRunner: SqlRunner | undefined;
+  if (args.dbInfo?.kind === "connection") {
+    try {
+      const opened = await openDatabase(args.dbInfo.value, spec.targetRoots ?? []);
+      spec.database = opened.database;
+      sqlRunner = opened.runner;
+    } catch (error) {
+      if (error instanceof StageError) return report("errored", error.message);
+      throw error;
+    }
+    onProgress(`Database check: connected to ${spec.database.description}; new scripts in ${spec.database.scriptsDir} will be applied after each task`);
+  }
 
-  const result = await runPipeline({ spec, logger, onProgress, fresh: args.fresh });
-  report(result.status, result.message, result.logPath);
+  try {
+    const logger = new RunLogger(spec, args.specPath);
+    for (const line of describeMetadataStandardsOverride(args.noMetadataStandards)) onProgress(line);
+    onProgress(describeMetadataStandards(spec.metadataStandards));
+    onProgress(describeSkillCatalog(spec.skillCatalog));
+    spec.projectIndexes = await refreshIndexesForRun(
+      [...(spec.targetRoots ?? []).map((root) => root.path), ...(spec.referencePaths ?? [])],
+      onProgress,
+    );
+
+    process.chdir(spec.projectPath);
+
+    const result = await runPipeline({ spec, logger, onProgress, fresh: args.fresh, sqlRunner });
+    report(result.status, result.message, result.logPath);
+  } finally {
+    await sqlRunner?.close().catch(() => {});
+  }
+}
+
+/**
+ * Connects to the user's database and says where its scripts live. Every
+ * failure is a StageError worded for the user — with the password, should a
+ * driver ever echo it, masked out.
+ */
+async function openDatabase(
+  connection: string,
+  roots: ProjectRoot[],
+): Promise<{ database: DatabaseContext; runner: SqlRunner }> {
+  const sqlRoot = roots.find((root) => root.role === "sql");
+  if (!sqlRoot) {
+    throw new StageError(
+      "Database: a connection was given without a SQL folder (--project-sql). The scripts to run need a folder of their own.",
+    );
+  }
+  const target = parseConnection(connection);
+  const description = describeDatabase(target);
+  try {
+    const runner = await connectDatabase(target);
+    return { database: { dialect: target.dialect, description, scriptsDir: sqlRoot.path }, runner };
+  } catch (error) {
+    if (error instanceof StageError) throw error;
+    console.error("Database connection failed:", error);
+    const reason = error instanceof Error ? error.message : String(error);
+    const masked = target.password ? reason.split(target.password).join("***") : reason;
+    // A Spring-style URL (credentials kept in separate properties) reached the driver as
+    // "client password must be a string" on a real run, which said nothing about the cause.
+    const hint = target.password
+      ? ""
+      : " — no password was found in the connection string. Put it in, e.g. postgresql://user:password@host:5432/db or jdbc:postgresql://host:5432/db?user=…&password=… (URL-encode @ # / ? : % in the password).";
+    throw new StageError(`Database: could not connect to ${description}: ${masked}${hint}`);
+  }
 }
 
 async function runClone(argv: string[]): Promise<void> {
@@ -135,7 +206,8 @@ async function runClone(argv: string[]): Promise<void> {
   // Checked per folder: BE and FE each build on their own. Skipped entirely
   // under --no-build: there is nothing to warn about if it won't run.
   if (!args.skipBuild) {
-    for (const root of targetRoots) {
+    // A SQL folder holds scripts, not a build.
+    for (const root of targetRoots.filter((candidate) => candidate.role !== "sql")) {
       const warning = missingBuildManifestWarning(root.path);
       if (warning) onProgress(`Warning: ${warning}`);
     }
@@ -156,6 +228,60 @@ async function runClone(argv: string[]): Promise<void> {
     fresh: args.fresh,
   });
   report(result.status, result.message, result.logPath);
+}
+
+/**
+ * `aidev spec` — drafts a spec from a plain-language request and writes it to
+ * `--out`, then stops. It never starts the feature pipeline itself: the draft
+ * is for a person to read, correct and confirm, and only then does
+ * `aidev --spec <out>` (or the UI's confirm button) build from it.
+ */
+async function runSpecDraftCommand(argv: string[]): Promise<void> {
+  const args = parseSpecDraftArgs(argv);
+  // Resolved before the chdir below, so a relative --out means the caller's folder.
+  const outPath = path.resolve(args.outPath);
+  // Checked before any agent runs: refusing afterwards would throw away a paid draft.
+  if (existsSync(outPath) && !args.overwrite) {
+    throw new Error(`--out already exists: ${outPath}. Pick another path or pass --overwrite.`);
+  }
+  const request = args.requestText ?? (await readFile(args.requestFile as string, "utf-8"));
+  const targetRoots = targetRootsFrom(args.target);
+  const referencePaths = resolveReferencePaths(
+    args.referencePaths,
+    targetRoots.map((root) => root.path),
+  );
+
+  const input: SpecDraftInput = {
+    request,
+    projectPath: targetRoots[0].path,
+    targetRoots,
+    referencePaths,
+    skillCatalog: relevantSkillCatalog(loadSkillCatalog(targetRoots), request, config.maxSkills),
+  };
+  onProgress(describeSkillCatalog(input.skillCatalog));
+  input.projectIndexes = await refreshIndexesForRun(
+    [...targetRoots.map((root) => root.path), ...referencePaths],
+    onProgress,
+  );
+
+  process.chdir(input.projectPath);
+
+  onProgress("Spec draft: reading the project and drafting the spec from the request");
+  let markdown: string;
+  try {
+    markdown = await runSpecDraft(input);
+  } catch (error) {
+    if (error instanceof StageError) return report("errored", error.message);
+    throw error;
+  }
+
+  await mkdir(path.dirname(outPath), { recursive: true });
+  await writeFile(outPath, markdown, "utf-8");
+  onProgress(`Spec draft: written to ${outPath}`);
+  report(
+    "done",
+    `Spec draft written to ${outPath}. Read it, correct it (check the open questions and every "(giả định)"), then build it with: aidev --spec "${outPath}" and the same target folders.`,
+  );
 }
 
 /**
@@ -180,6 +306,7 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === "clone") return runClone(argv.slice(1));
   if (argv[0] === "index") return runIndex(argv.slice(1));
+  if (argv[0] === "spec") return runSpecDraftCommand(argv.slice(1));
   return runFeature(argv);
 }
 

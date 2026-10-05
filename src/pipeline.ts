@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { config } from "./config.js";
 import { runSpecsArch } from "./stages/specs-arch.js";
@@ -15,6 +16,8 @@ import { metadataStandardsFingerprint } from "./metadata-standards.js";
 import { skillCatalogFingerprint } from "./skills-catalog.js";
 import { StageError } from "./stage-error.js";
 import { rootsOf, type ProjectRoot } from "./target-roots.js";
+import { applyNewScripts, snapshotScripts, type SqlScriptState } from "./database-scripts.js";
+import type { SqlRunner } from "./database.js";
 import type { RunLogger } from "./run-log.js";
 import type {
   CompletedTask,
@@ -37,6 +40,13 @@ export interface PipelineOptions {
   logger?: RunLogger;
   /** Discard any progress saved by a stopped run and start from the beginning. */
   fresh?: boolean;
+  /**
+   * An open connection to the user's database, when one was given. The
+   * scripts each task writes into `spec.database.scriptsDir` are applied
+   * through it right after that task. The caller opens and closes it, so the
+   * connection string itself never enters the pipeline.
+   */
+  sqlRunner?: SqlRunner;
 }
 
 /**
@@ -65,6 +75,8 @@ export interface BuildCheckpoint {
   approvedProposal: string;
   tasks: TaskItem[];
   completedTasks: CompletedTask[];
+  /** Which SQL scripts were already there, and which this run applied (database runs only). */
+  sqlScripts?: SqlScriptState;
 }
 
 /** Everything a stopped run leaves for the next one (see `checkpoint.ts`). */
@@ -99,6 +111,12 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
 
   const { inventory, projectContext, approvedProposal, tasks } = plan;
   const completedTasks = [...plan.completedTasks];
+  // A plan saved before this run had a database has no baseline yet: what is
+  // in the folder now counts as already there.
+  const sqlScripts =
+    opts.sqlRunner && spec.database
+      ? (plan.sqlScripts ?? { baseline: await snapshotScripts(spec.database.scriptsDir), applied: {} })
+      : undefined;
   const saveProgress = () =>
     saveCheckpoint<FeatureCheckpoint>("feature", spec.projectPath, checkpointKey, {
       phase: "build",
@@ -107,7 +125,24 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
       approvedProposal,
       tasks,
       completedTasks: [...completedTasks],
+      ...(sqlScripts ? { sqlScripts } : {}),
     });
+  // Runs whatever new scripts are in the SQL folder. Called after every task,
+  // so the next task and E2E find the tables in place, and once more before
+  // E2E for a resumed run whose last task wrote scripts that never ran.
+  const applyScripts = async () => {
+    if (!opts.sqlRunner || !spec.database || !sqlScripts) return;
+    await applyNewScripts({
+      dir: spec.database.scriptsDir,
+      state: sqlScripts,
+      runner: opts.sqlRunner,
+      onProgress,
+      save: saveProgress,
+    });
+  };
+  // Saved before any task runs: a run killed mid-task must not resume with
+  // that task's half-written scripts counted as the baseline.
+  if (sqlScripts && !plan.sqlScripts) await saveProgress();
 
   // --- Coding, once per task, then E2E/QA once ---
   // One pass only, by design. The earlier loop re-coded every task from the
@@ -140,10 +175,23 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
     logger?.recordCoding(1, task.id, summary);
     completedTasks.push({ id: task.id, description: task.description, summary });
     await saveProgress();
+    await applyScripts();
   }
 
+  await applyScripts();
   onProgress("E2E/QA: running");
-  const e2e = await runE2eTest(spec, approvedProposal, projectContext, await findFreePorts());
+  const e2e = await runE2eTest(spec, approvedProposal, projectContext, await findFreePorts(), {
+    // A run without a logger (tests, embedding) still needs somewhere to put the evidence.
+    evidenceDir: logger?.evidenceDir ?? path.join(tmpdir(), `aidev-e2e-evidence-${Date.now()}`),
+    onProgress,
+  });
+  if (e2e.check) {
+    onProgress(
+      e2e.check.ran
+        ? `E2E/QA check: ${e2e.check.passed}/${e2e.check.total} passed, ${e2e.check.apiProblems.length} API problem(s), ${e2e.check.unguardedTests.length} unguarded test(s)`
+        : "E2E/QA check: the pipeline's own Playwright run did not complete",
+    );
+  }
   logger?.recordE2e(1, e2e);
   onProgress(`E2E/QA verdict: ${e2e.verdict}`);
 
@@ -411,6 +459,9 @@ function featureFingerprint(spec: SpecInput): string {
     spec.specMarkdown,
     spec.dbInfo?.kind ?? null,
     spec.dbInfo?.kind === "schema-file" ? spec.dbInfo.value : null,
+    // The scripts are written in this engine's syntax; another engine needs another design.
+    // Appended only when present, so runs without a database keep their saved progress.
+    ...(spec.database ? [spec.database.dialect] : []),
     [...(spec.referencePaths ?? [])].sort(),
     // Moving from one folder to separate BE/FE folders changes where every
     // planned file lives, so a plan saved for one layout does not carry over.

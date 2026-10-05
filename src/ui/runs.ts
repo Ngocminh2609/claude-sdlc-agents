@@ -1,6 +1,7 @@
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { isTokenUsage, type TokenUsage } from "../token-usage.js";
+import { E2E_EVIDENCE_DIR } from "../run-log.js";
 import { runsDir } from "./paths.js";
 import type { RunMode } from "./stages.js";
 
@@ -31,6 +32,17 @@ export interface RunSummary {
 export interface RunDetail extends RunSummary {
   finalMessage: string;
   report: string;
+  /** Whether the pipeline's E2E check left a Playwright HTML report (traces, screenshots, video) to open. */
+  hasE2eReport: boolean;
+}
+
+/** Where a file of a run's E2E evidence lives, or null for anything outside that folder. */
+export function evidenceFile(id: string, relative: string): string | null {
+  if (!isValidRunId(id)) return null;
+  const base = path.join(runsDir, id, E2E_EVIDENCE_DIR);
+  const resolved = path.resolve(base, relative);
+  // A request path like "../../.env" must not leave the evidence folder.
+  return resolved.startsWith(base + path.sep) ? resolved : null;
 }
 
 export class RunNotFoundError extends Error {
@@ -86,10 +98,12 @@ export async function readRun(id: string): Promise<RunDetail> {
     () => "_This run has no report.md — it was interrupted before the log was written._",
   );
 
+  const htmlReport = evidenceFile(id, path.join("report", "index.html"));
   return {
     ...summary,
     finalMessage: typeof log?.finalMessage === "string" ? log.finalMessage : "",
     report,
+    hasE2eReport: htmlReport !== null && (await stat(htmlReport).then((s) => s.isFile()).catch(() => false)),
   };
 }
 

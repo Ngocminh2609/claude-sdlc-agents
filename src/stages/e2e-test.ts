@@ -1,10 +1,12 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { config, networkExfilBashBlocklist } from "../config.js";
+import { databasePromptSection } from "../database-scripts.js";
 import { projectContextPromptSection } from "./project-context.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
-import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
+import { rootPath, rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
+import { combineVerdict, prepareE2e, runE2eCheck } from "../e2e-check.js";
 import type { E2eVerdict, ProjectContext, SpecInput } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the E2E/QA agent in an automated SDLC pipeline.
@@ -77,11 +79,41 @@ const restrictWritesToE2eFiles: CanUseTool = async (toolName, input) => {
   return { behavior: "deny", message: `Tool "${toolName}" is not permitted in the E2E stage.` };
 };
 
+/**
+ * Prompt block for what the pipeline enforces around the agent's tests. The
+ * guard and the re-run exist so the verdict does not rest on the agent's word.
+ */
+function guardPromptSection(e2eRoot: string): string[] {
+  return [
+    "",
+    "--- API guard and evidence (enforced by the pipeline, not optional) ---",
+    `Set Playwright up in ${e2eRoot}: its playwright.config.* and the e2e/ folder go there.`,
+    `${e2eRoot}/e2e/aidev-guard.ts already exists and is rewritten by the pipeline. Every test file must import`,
+    '`test` and `expect` from it (relative path, e.g. `import { test, expect } from "./aidev-guard"`), never from',
+    '"@playwright/test" directly. It fails a test whose API calls to the app answer 5xx, fail at the network level,',
+    "or answer a 4xx the test did not declare, and a test whose page throws an uncaught error. A test that",
+    "provokes an error response on purpose (a validation case) declares it: take `apiGuard` from the test",
+    "arguments and call `apiGuard.allow(400, /\\/api\\/units/)` before the action. A 5xx can never be allowed.",
+    "When you are done the pipeline runs your tests once more itself, with trace, screenshot and video on, and",
+    "decides the verdict from those results: any failed, flaky or skipped test, any test that bypasses the",
+    "guard, or any API problem makes this stage fail, whatever you report. Do not create",
+    "aidev.playwright.config.ts and do not edit aidev-guard.ts. Stop every server you started before you",
+    "finish, so that run can start them again on the same ports.",
+  ];
+}
+
+export interface E2eRunOptions {
+  /** Where the pipeline's own run writes its traces, screenshots, videos and reports. */
+  evidenceDir: string;
+  onProgress?: (message: string) => void;
+}
+
 export async function runE2eTest(
   spec: SpecInput,
   approvedProposal: string,
-  projectContext?: ProjectContext | null,
-  runtimePorts: number[] = [],
+  projectContext: ProjectContext | null | undefined,
+  runtimePorts: number[],
+  { evidenceDir, onProgress }: E2eRunOptions,
 ): Promise<E2eVerdict> {
   // Deliberately a fresh query() call (no continue/resume) so this stage has
   // no memory of the Coding stage's own session — independent verification.
@@ -102,11 +134,15 @@ export async function runE2eTest(
   const roots = rootsOf(spec);
   const secondary = withSkillDirs(secondaryRootDirs(roots), spec.skillCatalog);
   if (secondary.length) options.additionalDirectories = secondary;
+  // The browser tests belong with the client; a single-folder project keeps them at its root.
+  const e2eRoot = rootPath(roots, "fe");
+  await prepareE2e(e2eRoot);
 
   const prompt = [
     "--- Spec ---",
     spec.specMarkdown,
     ...targetRootsPromptSection(roots),
+    ...databasePromptSection(spec.database, "e2e"),
     "",
     "--- Approved design (what the implementation should satisfy) ---",
     approvedProposal,
@@ -116,6 +152,7 @@ export async function runE2eTest(
     ...projectContextPromptSection(projectContext, { includeRelevantFiles: false }),
     ...skillCatalogPromptSection(spec.skillCatalog),
     ...runtimePortsPromptSection(runtimePorts),
+    ...guardPromptSection(e2eRoot),
   ].join("\n");
 
   const result = await runStructuredQuery<E2eVerdict>(prompt, options, E2E_SCHEMA);
@@ -127,5 +164,8 @@ export async function runE2eTest(
       summary: `E2E stage failed to produce a verdict: ${result.error ?? "unknown error"}`,
     };
   }
-  return result.data;
+  // The agent's verdict alone is not enough: the pipeline re-runs the tests
+  // itself and both have to agree on a pass.
+  const check = await runE2eCheck(e2eRoot, evidenceDir, onProgress);
+  return combineVerdict(result.data, check);
 }

@@ -511,3 +511,54 @@ describe("runPipeline", () => {
     expect(result.message).not.toContain("secret/path.ts");
   });
 });
+
+describe("runPipeline — database scripts", () => {
+  it("applies the scripts a task wrote right after that task, before the next one and before E2E", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const sqlDir = await mkdtemp(path.join(tmpdir(), "aidev-pipeline-sql-"));
+    await writeFile(path.join(sqlDir, "00-existing.sql"), "CREATE TABLE before_run(id int);");
+
+    const events: string[] = [];
+    const runner = {
+      runScript: vi.fn(async (sql: string) => void events.push(`db: ${sql}`)),
+      close: vi.fn(async () => {}),
+    };
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    breakDownTasks.mockResolvedValue({
+      tasks: [
+        { id: "task-1", description: "schema" },
+        { id: "task-2", description: "api" },
+      ],
+    });
+    runCoding.mockImplementation(async ({ task }: { task: { id: string } }) => {
+      events.push(`code: ${task.id}`);
+      if (task.id === "task-1") await writeFile(path.join(sqlDir, "01-unit.sql"), "CREATE TABLE unit(id int);");
+      return "done";
+    });
+    runE2eTest.mockImplementation(async () => {
+      events.push("e2e");
+      return { verdict: "pass", summary: "ok" };
+    });
+
+    try {
+      const result = await runPipeline({
+        spec: {
+          ...spec,
+          database: { dialect: "postgresql", description: "PostgreSQL at db/app", scriptsDir: sqlDir },
+        },
+        sqlRunner: runner,
+      });
+
+      expect(result.status).toBe("done");
+      // The script that was there before the run never runs; the new one runs once, right after task-1.
+      expect(events).toEqual(["code: task-1", "db: CREATE TABLE unit(id int);", "code: task-2", "e2e"]);
+      const lastSave = saveCheckpoint.mock.calls.at(-1)?.[3];
+      expect(Object.keys(lastSave.sqlScripts.applied)).toEqual(["01-unit.sql"]);
+      expect(Object.keys(lastSave.sqlScripts.baseline)).toEqual(["00-existing.sql"]);
+    } finally {
+      await rm(sqlDir, { recursive: true, force: true });
+    }
+  });
+});

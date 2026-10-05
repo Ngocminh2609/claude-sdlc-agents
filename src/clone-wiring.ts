@@ -50,8 +50,8 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "target", "build", "dist", "o
 const MAX_SERVER_FILES = 20000;
 
 export function checkWiring(mapping: CloneMapping, roots: ProjectRoot[]): CloneWiring {
-  const clientFolders = roots.filter((root) => root.role !== "be");
-  const serverFolders = roots.filter((root) => root.role !== "fe");
+  const clientFolders = roots.filter((root) => root.role === "fe" || root.role === "app");
+  const serverFolders = roots.filter((root) => root.role === "be" || root.role === "app");
 
   // A set: two mapping entries may land in the same file (several sources
   // merged into one page), and each file is checked once.
@@ -225,7 +225,7 @@ type Endpoint = ServerEndpoint;
  * project's, or a guess.
  */
 export function portedServerApi(mapping: CloneMapping, roots: ProjectRoot[]): ServerEndpoint[] {
-  const serverFolders = roots.filter((root) => root.role !== "fe");
+  const serverFolders = roots.filter((root) => root.role === "be" || root.role === "app");
   const files = new Set(
     mapping.entries
       .filter((entry) => serverFolders.some((root) => root.path === rootPath(roots, entry.root)))

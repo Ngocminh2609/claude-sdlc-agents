@@ -14,7 +14,7 @@ import {
   type DbMode,
   type RunnerEvent,
 } from "./runner.js";
-import { clearRuns, deleteRun, listRuns, readRun, RunNotFoundError } from "./runs.js";
+import { clearRuns, deleteRun, evidenceFile, listRuns, readRun, RunNotFoundError } from "./runs.js";
 import { STAGE_IDS_BY_MODE, type RunMode } from "./stages.js";
 
 /**
@@ -67,6 +67,8 @@ const server = createServer((req, res) => {
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${HOST}`);
   const route = `${req.method} ${url.pathname}`;
+
+  if (req.method === "GET" && url.pathname.startsWith("/evidence/")) return sendEvidence(res, url.pathname);
 
   switch (route) {
     case "GET /":
@@ -149,7 +151,7 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
   if (!["none", "connection", "schema-file"].includes(dbMode)) {
     return sendJson(res, 400, { error: `Unknown dbMode: ${String(body.dbMode)}` });
   }
-  if (!["feature", "clone"].includes(mode)) {
+  if (!["feature", "clone", "spec"].includes(mode)) {
     return sendJson(res, 400, { error: `Unknown mode: ${String(body.mode)}` });
   }
 
@@ -158,6 +160,8 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
       mode,
       specPath: String(body.specPath ?? ""),
       what: String(body.what ?? ""),
+      request: String(body.request ?? ""),
+      overwrite: body.overwrite === true,
       skipBuild: body.skipBuild === true,
       skipTests: body.skipTests === true,
       fresh: body.fresh === true,
@@ -165,6 +169,7 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
       projectPath: optionalString(body.projectPath),
       projectBePath: optionalString(body.projectBePath),
       projectFePath: optionalString(body.projectFePath),
+      projectSqlPath: optionalString(body.projectSqlPath),
       referenceBePath: optionalString(body.referenceBePath),
       referenceFePath: optionalString(body.referenceFePath),
       dbMode,
@@ -288,6 +293,8 @@ async function upsertPreset(req: IncomingMessage, res: ServerResponse): Promise<
     projectPath: String(body.projectPath ?? ""),
     projectBe: String(body.projectBe ?? ""),
     projectFe: String(body.projectFe ?? ""),
+    projectSql: String(body.projectSql ?? ""),
+    specDir: String(body.specDir ?? ""),
     specPath: String(body.specPath ?? ""),
     dbMode: (body.dbMode as DbMode) ?? "none",
     dbSchemaPath: String(body.dbSchemaPath ?? ""),
@@ -310,7 +317,40 @@ const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  // What a Playwright HTML report and its trace viewer load.
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".webm": "video/webm",
+  ".zip": "application/zip",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".md": "text/markdown; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
 };
+
+/**
+ * `/evidence/<run id>/<path>` — a file of that run's E2E evidence, so the
+ * Playwright HTML report (and the traces and videos it links to) opens from
+ * the history view. `evidenceFile` keeps the path inside the evidence folder.
+ */
+async function sendEvidence(res: ServerResponse, pathname: string): Promise<void> {
+  const [id = "", ...rest] = pathname.slice("/evidence/".length).split("/").map((part) => decodeURIComponent(part));
+  const file = evidenceFile(id, rest.join("/"));
+  if (!file) return sendJson(res, 404, { error: "Not found." });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, {
+      "Content-Type": CONTENT_TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream",
+      "Cache-Control": "no-store",
+    });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: "Not found." });
+  }
+}
 
 async function sendStatic(res: ServerResponse, name: string): Promise<void> {
   // `name` is a literal from the route table above, never request-derived —

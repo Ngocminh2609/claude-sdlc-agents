@@ -1,5 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
+import { databasePromptSection } from "../database-scripts.js";
 import { config } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
@@ -29,10 +30,14 @@ coding stage does not have to retrofit them:
 
 ${CODE_QUALITY_RULES}`;
 
+/**
+ * A schema file shapes the design, so its content goes in. A connection does
+ * not: its credentials never reach a prompt, only `spec.database` (engine,
+ * host, scripts folder) does, through `databasePromptSection`.
+ */
 function dbContext(spec: SpecInput): string[] {
-  if (!spec.dbInfo) return [];
-  const label = spec.dbInfo.kind === "connection" ? "Existing database connection" : "Database schema file";
-  return ["", `--- ${label} ---`, spec.dbInfo.value];
+  if (spec.dbInfo?.kind !== "schema-file") return databasePromptSection(spec.database, "design");
+  return ["", "--- Database schema file ---", spec.dbInfo.value];
 }
 
 export async function runSpecsArch(

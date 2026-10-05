@@ -83,6 +83,9 @@ async function runQueryLoop<T>(
           "SDK query() flagged is_error on a result message.",
           lastAssistantError ? `Last assistant-reported error: ${lastAssistantError}.` : "",
           `subtype: ${message.subtype}`,
+          // The notice itself is what says *why* — e.g. "Claude Code 2.1.245 does not support this
+          // model", which "unknown" above hid on a real run. Console only, like the rest of this line.
+          message.subtype === "success" && message.result ? `\nResult text: ${message.result.slice(0, 500)}` : "",
         );
         // The reason is the SDK's own code ("rate_limit", "error_max_turns",
         // ...), not raw exception text, so it is safe to surface — and it is

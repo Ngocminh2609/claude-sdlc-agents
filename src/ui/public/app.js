@@ -14,7 +14,13 @@ const $ = (id) => document.getElementById(id);
 const el = {
   topbarMeta: $("topbar-meta"),
   tabs: $("tabs"),
+  projectSql: $("feature-project-sql"),
   specPath: $("spec-path"),
+  specDir: $("spec-dir"),
+  specRequest: $("spec-request"),
+  specDraftStart: $("spec-draft-start"),
+  specDraftError: $("spec-draft-error"),
+  specDraftResult: $("spec-draft-result"),
   referencePath: $("reference-path"),
   cloneWhat: $("clone-what"),
   cloneFromBe: $("clone-from-be"),
@@ -90,6 +96,10 @@ const isFlow = (name) => FLOWS.includes(name);
 // --- Wording ---------------------------------------------------------------
 
 const STAGE_TEXT = {
+  "spec-draft": {
+    label: "Sinh spec từ yêu cầu",
+    tip: "Đọc dự án đích (chỉ đọc, không sửa file) rồi viết spec theo khung: bối cảnh, yêu cầu, ràng buộc, tiêu chí nghiệm thu, câu hỏi mở.",
+  },
   inventory: {
     label: "1. Kiểm kê repo mẫu",
     tip: "Quét repo mẫu một lần, lập danh sách file cần clone cho các giai đoạn sau. Bỏ qua khi không khai báo repo mẫu.",
@@ -101,7 +111,10 @@ const STAGE_TEXT = {
   },
   tasks: { label: "4. Chia việc", tip: "Cắt thiết kế đã duyệt thành các task nhỏ." },
   coding: { label: "5. Viết code & unit test", tip: "Làm lần lượt từng task." },
-  e2e: { label: "6. Kiểm thử E2E", tip: "Playwright chạy trình duyệt thật, chấm theo tiêu chí nghiệm thu." },
+  e2e: {
+    label: "6. Kiểm thử E2E",
+    tip: "AI viết test Playwright theo tiêu chí nghiệm thu, rồi hệ thống tự chạy lại toàn bộ test với bộ canh API: API nào trả 5xx, lỗi mạng, 4xx không khai báo, hoặc trang lỗi JS đều làm test trượt. Lưu trace, ảnh, video từng test để xem lại ở tab Lịch sử.",
+  },
 
   locate: { label: "1. Truy tìm", tip: "Lục repo mẫu tìm mọi file thuộc tính năng này: SQL, BE, FE." },
   conventions: {
@@ -152,7 +165,10 @@ const STATUS_BADGE = {
 };
 
 /** What the user sees on screen as the name of each flow. */
-const FLOW_TEXT = { feature: "Task mới", clone: "Clone" };
+const FLOW_TEXT = { feature: "Task mới", clone: "Clone", spec: "Sinh spec" };
+
+/** The tab a run belongs to: a spec draft is started from, and feeds, the "task mới" form. */
+const flowOfMode = (mode) => (mode === "spec" ? "feature" : mode);
 
 /**
  * What to do next, per flow: the two pipelines stop for different reasons and
@@ -180,6 +196,12 @@ const NEXT_STEPS = {
     stopped:
       "Anh đã bấm Dừng. Các file đã port <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án đích. Bấm Chạy clone lại với cùng thiết lập sẽ tiếp tục từ nhóm đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
   },
+  spec: {
+    done: "Đã sinh spec và điền vào bước 3 — <strong>chưa có code nào được viết</strong>. Bấm <strong>Xem / sửa spec</strong> ở bước 3: đọc kỹ, sửa chỗ sai, trả lời mục <em>Câu hỏi mở</em> và kiểm các chỗ ghi <em>(giả định)</em>. Xong thì làm tiếp bước 4 và 5.",
+    errored:
+      "Sinh spec không thành công, <strong>không có file nào bị sửa</strong>. Kết quả bên dưới ghi lý do (ví dụ <code>rate_limit</code> — chờ hạn mức reset). Có thể viết rõ hơn yêu cầu rồi bấm Sinh spec lại.",
+    stopped: "Anh đã dừng việc sinh spec. Không có file nào bị sửa.",
+  },
 };
 
 const RUN_ERROR_TEXT = {
@@ -191,6 +213,10 @@ const RUN_ERROR_TEXT = {
   "reference-required": () => "Chế độ clone bắt buộc phải có repo mẫu.",
   "what-required": () => "Nhập tên tính năng cần clone.",
   "db-connection-required": () => "Anh chọn “đã có database sẵn” thì phải nhập chuỗi kết nối.",
+  "request-required": () => "Mô tả yêu cầu trước khi bấm Sinh spec.",
+  "spec-path-required": () => "Chưa có đường dẫn để lưu spec.",
+  "spec-exists": (detail) => `File spec đã tồn tại: ${detail}`,
+  "sql-folder-required": () => "Có chuỗi kết nối DB thì phải chọn thư mục SQL ở bước 1 — script tạo bảng được lưu và chạy từ đó.",
 };
 
 const SPEC_TEMPLATE = `# Tên tính năng
@@ -300,9 +326,12 @@ function saveForm() {
     JSON.stringify({
       featureProjectBe: forms.feature.projectBe.value,
       featureProjectFe: forms.feature.projectFe.value,
+      featureProjectSql: el.projectSql.value,
+      specDir: el.specDir.value,
       cloneProjectBe: forms.clone.projectBe.value,
       cloneProjectFe: forms.clone.projectFe.value,
       specPath: el.specPath.value,
+      specRequest: el.specRequest.value,
       referencePath: el.referencePath.value,
       cloneWhat: el.cloneWhat.value,
       cloneFromBe: el.cloneFromBe.value,
@@ -322,9 +351,12 @@ function restoreForm() {
     const legacyFe = saved.projectFe ?? saved.projectPath ?? "";
     forms.feature.projectBe.value = saved.featureProjectBe ?? legacyBe;
     forms.feature.projectFe.value = saved.featureProjectFe ?? legacyFe;
+    el.projectSql.value = saved.featureProjectSql || "";
+    el.specDir.value = saved.specDir || "";
     forms.clone.projectBe.value = saved.cloneProjectBe ?? legacyBe;
     forms.clone.projectFe.value = saved.cloneProjectFe ?? legacyFe;
     el.specPath.value = saved.specPath || "";
+    el.specRequest.value = saved.specRequest || "";
     el.referencePath.value = saved.referencePath || "";
     el.cloneWhat.value = saved.cloneWhat || "";
     el.cloneFromBe.value = saved.cloneFromBe ?? saved.cloneFrom ?? "";
@@ -349,12 +381,13 @@ const isRunning = () => runState?.status === "running";
 
 /** Whether a flow's own inputs (besides the target folders) are filled in. */
 const FLOW_INPUTS_FILLED = {
-  feature: () => el.specPath.value.trim(),
+  // Scripts are applied from the SQL folder, so a database run needs one.
+  feature: () => el.specPath.value.trim() && (el.dbMode.value !== "connection" || el.projectSql.value.trim()),
   clone: () => el.cloneWhat.value.trim() && (el.cloneFromBe.value.trim() || el.cloneFromFe.value.trim()),
 };
 
 const FLOW_MISSING_HINT = {
-  feature: "Điền thư mục BE/FE, file spec và tick ô xác nhận ở trên",
+  feature: "Điền thư mục BE/FE, file spec (bước 3), thư mục SQL nếu có chuỗi kết nối DB, và tick ô xác nhận",
   clone: "Điền thư mục BE/FE đích, từ khoá tính năng, repo mẫu (BE/FE) và tick ô xác nhận",
 };
 
@@ -378,16 +411,34 @@ function syncRunButtons() {
         ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
         : FLOW_MISSING_HINT[flow];
   }
+
+  // Drafting only reads the project, so it needs no commit/stash tick.
+  const feature = forms.feature;
+  const canDraft =
+    (feature.projectBe.value.trim() || feature.projectFe.value.trim()) &&
+    el.specDir.value.trim() &&
+    el.specRequest.value.trim() &&
+    !running;
+  el.specDraftStart.disabled = !canDraft;
+  el.specDraftStart.title = canDraft
+    ? "AI đọc dự án và sinh spec — chưa viết code"
+    : running
+      ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
+      : "Điền thư mục BE/FE ở bước 1, thư mục lưu spec và yêu cầu";
 }
 
 el.dbMode.addEventListener("change", () => {
   syncDbMode();
+  syncRunButtons();
   saveForm();
 });
 
 for (const input of [
   ...FLOWS.flatMap((flow) => [forms[flow].projectBe, forms[flow].projectFe]),
+  el.projectSql,
   el.specPath,
+  el.specDir,
+  el.specRequest,
   el.referencePath,
   el.cloneWhat,
   el.cloneFromBe,
@@ -417,6 +468,8 @@ let presets = [];
 
 const PRESET_FIELDS = {
   feature: () => ({
+    projectSql: el.projectSql.value,
+    specDir: el.specDir.value,
     specPath: el.specPath.value,
     referencePath: el.referencePath.value,
     dbMode: el.dbMode.value,
@@ -431,6 +484,8 @@ const PRESET_FIELDS = {
 
 const APPLY_PRESET = {
   feature: (preset) => {
+    el.projectSql.value = preset.projectSql || "";
+    el.specDir.value = preset.specDir || "";
     el.specPath.value = preset.specPath || "";
     el.referencePath.value = preset.referencePath || "";
     el.dbMode.value = preset.dbMode || "none";
@@ -587,6 +642,16 @@ const FOLDER_FIELDS = {
     sibling: forms.feature.projectBe,
     title: "Chọn thư mục FE của dự án đích",
   },
+  "feature-project-sql": {
+    field: el.projectSql,
+    sibling: forms.feature.projectBe,
+    title: "Chọn thư mục SQL của dự án đích (nơi lưu script tạo bảng)",
+  },
+  "spec-dir": {
+    field: el.specDir,
+    sibling: forms.feature.projectBe,
+    title: "Chọn thư mục lưu file spec",
+  },
   "clone-project-be": {
     field: forms.clone.projectBe,
     sibling: forms.clone.projectFe,
@@ -697,6 +762,88 @@ for (const flow of FLOWS) {
   });
 }
 
+// --- Step 2: draft a spec from the request, then hand it to step 3 ----------
+
+/** ASCII file-name slug of the request's first words: "Thêm màn hình đơn vị tính" → "them-man-hinh-don-vi-tinh". */
+function slugOf(text) {
+  return (
+    text
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[đĐ]/g, "d")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+/, "")
+      .split("-")
+      .slice(0, 8)
+      .join("-")
+      .replace(/-+$/, "") || "spec"
+  );
+}
+
+/** `<spec folder>/<date>-<slug>.md` — dated, so a later draft of the same request does not overwrite it. */
+function draftSpecPath() {
+  const dir = el.specDir.value.trim().replace(/[\\/]+$/, "");
+  const separator = appConfig.platform === "win32" ? "\\" : "/";
+  const stamp = new Date().toISOString().slice(0, 10);
+  return `${dir}${separator}${stamp}-${slugOf(el.specRequest.value)}.md`;
+}
+
+/**
+ * The id of the draft run this page saw running. Only that run's finish fills
+ * step 3 — a page loaded after an old draft finished must not swap the spec
+ * the user has since picked.
+ */
+let watchedDraftId = null;
+
+async function startSpecDraft(specPath, overwrite = false) {
+  el.specDraftError.classList.add("hidden");
+  el.specDraftResult.classList.add("hidden");
+  const feature = forms.feature;
+  try {
+    await api("/api/run", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "spec",
+        projectBePath: feature.projectBe.value,
+        projectFePath: feature.projectFe.value,
+        projectSqlPath: el.projectSql.value,
+        request: el.specRequest.value,
+        specPath,
+        overwrite,
+        referencePaths: el.referencePath.value.trim() ? [el.referencePath.value.trim()] : [],
+      }),
+    });
+    saveForm();
+  } catch (error) {
+    if (error.code === "spec-exists" && confirm(`File ${error.detail} đã có. Ghi đè bằng spec mới?`)) {
+      return startSpecDraft(specPath, true);
+    }
+    const translate = RUN_ERROR_TEXT[error.code];
+    el.specDraftError.textContent = translate ? translate(error.detail ?? "") : error.message;
+    el.specDraftError.classList.remove("hidden");
+  }
+}
+
+el.specDraftStart.addEventListener("click", () => startSpecDraft(draftSpecPath()));
+
+/** A draft that just finished becomes step 3's spec, with a pointer to review it before running. */
+function useFinishedDraft(state) {
+  if (state.mode !== "spec") return;
+  if (state.status === "running") {
+    watchedDraftId = state.id;
+    return;
+  }
+  if (state.id !== watchedDraftId) return;
+  watchedDraftId = null;
+  if (state.status !== "done" || !state.specPath) return;
+  el.specPath.value = state.specPath;
+  saveForm();
+  syncRunButtons();
+  el.specDraftResult.innerHTML = `✔ Đã sinh <code>${escapeHtml(state.specPath)}</code> và điền vào bước 3. Bấm <strong>Xem / sửa spec</strong> ở bước 3 để đọc lại trước khi chạy.`;
+  el.specDraftResult.classList.remove("hidden");
+}
+
 /**
  * The two flows send different fields. Built here rather than at the click so
  * the shape of each request is readable in one place.
@@ -722,6 +869,7 @@ function runBody(flow) {
   }
   return {
     ...common,
+    projectSqlPath: el.projectSql.value,
     specPath: el.specPath.value,
     referencePaths: el.referencePath.value.trim() ? [el.referencePath.value.trim()] : [],
     dbMode: el.dbMode.value,
@@ -767,6 +915,7 @@ function renderState(state) {
   renderRunSubject(state);
   renderStages(state);
   renderResult(state);
+  useFinishedDraft(state);
 }
 
 /** Whether the block is showing a real run rather than the idle placeholder. */
@@ -784,7 +933,7 @@ function renderRunSubject(state) {
   el.runFlow.dataset.flow = state.mode;
   el.runSubject.textContent = shown ? (state.mode === "clone" ? state.what : baseName(state.specPath)) ?? "" : "";
 
-  const elsewhere = shown && state.mode !== activeFlow;
+  const elsewhere = shown && flowOfMode(state.mode) !== activeFlow;
   el.runElsewhere.classList.toggle("hidden", !elsewhere);
   if (elsewhere) {
     const other = FLOW_TEXT[state.mode] ?? state.mode;
@@ -1113,7 +1262,11 @@ async function selectRun(id) {
   try {
     const { run } = await api(`/api/run-detail?id=${encodeURIComponent(id)}`);
     el.reportTitle.textContent = run.specName ?? run.id;
-    el.report.innerHTML = renderMarkdown(run.report);
+    // The pipeline's own E2E re-run: every test's trace, screenshots and video, in Playwright's viewer.
+    const evidence = run.hasE2eReport
+      ? `<p class="evidence-link"><a class="btn btn-ghost" href="/evidence/${encodeURIComponent(run.id)}/report/index.html" target="_blank" rel="noopener">🎬 Mở báo cáo E2E — trace, ảnh chụp, video từng test</a></p>`
+      : "";
+    el.report.innerHTML = evidence + renderMarkdown(run.report);
     el.report.scrollTop = 0;
   } catch (error) {
     el.report.innerHTML = `<p class="hint">${escapeHtml(error.message)}</p>`;
@@ -1224,6 +1377,8 @@ async function init() {
   restoreForm();
   restoreTab();
   el.specFilePath.value = defaultSpecPath();
+  if (!el.specDir.value) el.specDir.value = appConfig.specsDir;
+  syncRunButtons();
 
   const initial = await api("/api/state");
   currentRunId = initial.state.id;

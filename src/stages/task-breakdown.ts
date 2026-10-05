@@ -1,5 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
+import { databasePromptSection } from "../database-scripts.js";
 import { config } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { extraDirectories, referencePromptSection } from "../reference-repos.js";
@@ -57,6 +58,9 @@ export async function breakDownTasks(
     "--- Spec ---",
     spec.specMarkdown,
     ...targetRootsPromptSection(roots),
+    // Scripts run after the task that writes them, so a task that needs a
+    // table has to come after the task that creates it.
+    ...databasePromptSection(spec.database, "design"),
     "",
     "--- Approved design ---",
     approvedProposal,

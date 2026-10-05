@@ -721,6 +721,19 @@ textarea {
   border-top: 1px solid var(--border-soft);
 }
 
+.evidence-link {
+  margin: 0 0 14px;
+}
+
+/* Plain-language request for the spec draft: prose, so not the editor's mono font or height. */
+.request-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 130px;
+  font-family: inherit;
+}
+
 .optional {
   font-size: 11px;
   font-weight: 500;

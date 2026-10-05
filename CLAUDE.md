@@ -117,6 +117,34 @@
   fixes, appended to the approved design) rather than rejecting it; reject is
   for a design that needs rethinking. Don't tighten this back to approve-only:
   review rounds are capped, and strictness burned all three on one real run.
+- `aidev spec` (`src/stages/spec-draft.ts`, UI mode `"spec"`) drafts a spec
+  from a plain-language request and stops at the file. It is read-only
+  (`Read`/`Glob`/`Grep`) and must never chain into the feature pipeline by
+  itself: a person reviewing and confirming the draft is the whole point of
+  the step. In the UI a finished draft only fills step 3 (the spec file). The
+  person still reviews it and starts step 5 through the usual commit/stash
+  gate. Do not add an "auto-run after drafting" option. That would remove the
+  only review between an AI's guess and code written into a working tree.
+- Database scripts (`src/database.ts`, `src/database-scripts.ts`,
+  `src/sql-safety.ts`): with `--db-connection`, the pipeline itself runs the
+  new `.sql` files from the `--project-sql` folder after each coding task.
+  Which files run, in what order, and whether one is allowed to run, are
+  decided by plain code (content hashes, file names, statement scan), never by
+  a model. Keep it that way, for the same reason `checkCoverage` stays
+  deterministic. The connection string never reaches a prompt, the
+  checkpoint, the run log or a preset: stages get `spec.database`
+  (engine, host/db, folder) only. Refusing top-level DROP/TRUNCATE/DELETE is a
+  user decision (2026-10-05). Do not relax it into a warning. The pre-run
+  baseline is what keeps the pipeline from re-running scripts that were
+  already in the folder; never drop it to "run everything new-looking".
+- A feature run's E2E verdict is decided by `combineVerdict` (`src/e2e-check.ts`): the agent's pass
+  counts only when the pipeline's own Playwright re-run agrees. That means tests exist, none
+  failed/flaked/skipped, every one carries the guard's attachment, and the guard saw no API problem.
+  Keep it that way: a verdict resting on the agent's word alone is the gap this closes, since a test
+  can pass on the screen while the API behind it answered 500. The guard and the wrapper config
+  (`src/e2e-guard.ts`) are rewritten right before that re-run, so an edit by the E2E agent cannot
+  weaken them. Do not let the agent skip the re-run, and do not make 5xx allowable through
+  `apiGuard.allow`.
 - A stopped run resumes from `src/checkpoint.ts`: saved after the project
   scan, every rejected design round, the breakdown and every task (clone:
   after the mapping and every group), keyed by

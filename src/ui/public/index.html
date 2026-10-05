@@ -38,8 +38,9 @@
         <div class="callout callout-info">
           <div class="callout-body">
             <strong>Làm task mới</strong> — xây một tính năng <em>chưa có</em>. Đầu vào là một file
-            spec (<code>.md</code>) và thư mục dự án đích; hệ thống tự thiết kế → duyệt thiết kế → chia
-            việc → viết code → kiểm thử E2E bằng trình duyệt thật. Muốn bê nguyên một tính năng
+            spec (<code>.md</code>, tự viết hoặc để AI sinh từ yêu cầu ở bước 2) và thư mục dự án đích;
+            hệ thống tự thiết kế → duyệt thiết kế → chia việc → viết code (và chạy script tạo bảng vào
+            DB nếu có chuỗi kết nối) → kiểm thử E2E bằng trình duyệt thật. Muốn bê nguyên một tính năng
             <em>đã có</em> ở dự án khác sang? Dùng tab
             <a href="#" data-goto="clone">Clone từ dự án khác →</a>
           </div>
@@ -52,8 +53,8 @@
             <div>
               <h2>Chọn thư mục dự án đích</h2>
               <p class="step-desc">
-                Nơi AI sẽ viết code. Chọn riêng thư mục <strong>BE</strong> (server, script DB) và
-                <strong>FE</strong> (giao diện) — mỗi ô là thư mục có file build riêng
+                Nơi AI sẽ ghi code: <strong>BE</strong> (server), <strong>FE</strong> (giao diện) và
+                <strong>SQL</strong> (script tạo bảng). BE/FE là thư mục có file build riêng
                 (<code>pom.xml</code>, <code>package.json</code>…).
               </p>
             </div>
@@ -72,30 +73,20 @@
               <button class="btn btn-ghost" data-browse="feature-project-fe">Chọn thư mục…</button>
             </div>
           </div>
-          <p class="hint">
-            Chỉ có BE hoặc chỉ có FE thì để trống ô còn lại. Nếu BE và FE nằm chung một thư mục
-            gốc, chọn cùng thư mục đó cho cả hai ô. ⚠️ AI sửa trực tiếp vào các thư mục này, không tạo
-            nhánh riêng và không sao lưu.
-          </p>
-        </div>
-
-        <!-- Bước 2 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">2</span>
-            <div>
-              <h2>Chọn file spec (.md)</h2>
-              <p class="step-desc">
-                File mô tả anh muốn làm gì. Càng rõ tiêu chí nghiệm thu, AI càng ít đoán sai.
-                Chưa có file? Bấm <strong>Soạn spec mới</strong> để viết ngay trong trang này.
-              </p>
+          <div class="field">
+            <label for="feature-project-sql">
+              Thư mục SQL <span class="optional">bắt buộc nếu nhập chuỗi kết nối ở bước 4</span>
+            </label>
+            <div class="row">
+              <input id="feature-project-sql" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\SQL" />
+              <button class="btn btn-ghost" data-browse="feature-project-sql">Chọn thư mục…</button>
             </div>
           </div>
-          <div class="row">
-            <input id="spec-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\plans\tinh-nang-abc\spec.md" />
-            <button class="btn btn-ghost" data-browse="spec">Chọn file…</button>
-            <button class="btn btn-ghost" id="spec-edit">Soạn spec mới</button>
-          </div>
+          <p class="hint">
+            Chỉ có BE hoặc chỉ có FE thì để trống ô còn lại. Nếu BE và FE nằm chung một thư mục
+            gốc, chọn cùng thư mục đó cho cả hai ô. Để trống ô SQL thì script DB nằm trong thư mục BE.
+            ⚠️ AI sửa trực tiếp vào các thư mục này, không tạo nhánh riêng và không sao lưu.
+          </p>
 
           <div class="field sub-field">
             <label for="reference-path">
@@ -107,18 +98,72 @@
             </div>
             <p class="hint">
               Cho AI <strong>đọc</strong> thêm một dự án khác để học cách team viết code (cấu trúc
-              module, cách gọi API, component dùng chung…) trong khi vẫn làm theo spec của anh. Bị chặn
-              ghi vào đó — mọi file sinh ra đều nằm trong dự án đích. Không khai báo thì AI
-              <strong>không nhìn thấy</strong> dự án này. Nếu mục tiêu là <em>bê nguyên</em> một tính
-              năng đã có thì dùng tab <a href="#" data-goto="clone">Clone</a>, không cần viết spec.
+              module, cách gọi API, component dùng chung…), cả lúc sinh spec lẫn lúc viết code. Bị chặn
+              ghi vào đó — mọi file sinh ra đều nằm trong dự án đích. Nếu mục tiêu là <em>bê nguyên</em>
+              một tính năng đã có thì dùng tab <a href="#" data-goto="clone">Clone</a>.
             </p>
           </div>
+        </div>
+
+        <!-- Bước 2 -->
+        <div class="card step">
+          <div class="step-head">
+            <span class="step-num">2</span>
+            <div>
+              <h2>Sinh file spec từ yêu cầu <span class="optional">bỏ qua nếu đã có spec</span></h2>
+              <p class="step-desc">
+                Mô tả bằng lời thường anh muốn làm gì. AI <strong>chỉ đọc</strong> các thư mục ở bước 1
+                để spec gọi đúng tên module, màn hình, bảng có thật — không sửa file nào — rồi lưu spec
+                vào thư mục anh chọn và điền sẵn vào bước 3.
+              </p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="spec-dir">Thư mục lưu file spec</label>
+            <div class="row">
+              <input id="spec-dir" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\plans\specs" />
+              <button class="btn btn-ghost" data-browse="spec-dir">Chọn thư mục…</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="spec-request">Yêu cầu</label>
+            <textarea
+              id="spec-request"
+              class="request-input"
+              placeholder="Ví dụ: Thêm màn hình quản lý danh mục đơn vị tính: xem danh sách, tìm theo tên, thêm/sửa/xoá; mã không được trùng."
+            ></textarea>
+          </div>
+          <div class="actions">
+            <button class="btn btn-primary" id="spec-draft-start" disabled>🤖 Sinh spec</button>
+          </div>
+          <p class="error-text hidden" id="spec-draft-error"></p>
+          <p class="hint hidden" id="spec-draft-result"></p>
         </div>
 
         <!-- Bước 3 -->
         <div class="card step">
           <div class="step-head">
             <span class="step-num">3</span>
+            <div>
+              <h2>Chọn file spec (.md)</h2>
+              <p class="step-desc">
+                Spec vừa sinh ở bước 2 được điền sẵn ở đây. <strong>Đọc và sửa trước khi chạy</strong> —
+                nhất là mục <em>Câu hỏi mở</em> và các chỗ ghi <em>(giả định)</em>: tiêu chí nghiệm thu
+                trong spec là thứ bước E2E dùng để chấm đạt hay không.
+              </p>
+            </div>
+          </div>
+          <div class="row">
+            <input id="spec-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\plans\tinh-nang-abc\spec.md" />
+            <button class="btn btn-ghost" data-browse="spec">Chọn file…</button>
+            <button class="btn btn-ghost" id="spec-edit">Xem / sửa spec</button>
+          </div>
+        </div>
+
+        <!-- Bước 4 -->
+        <div class="card step">
+          <div class="step-head">
+            <span class="step-num">4</span>
             <div>
               <h2>Cơ sở dữ liệu <span class="optional">không bắt buộc</span></h2>
               <p class="step-desc">
@@ -129,28 +174,42 @@
           <div class="row">
             <select id="db-mode">
               <option value="none">Không dùng database</option>
-              <option value="connection">Đã có database sẵn — nhập chuỗi kết nối</option>
-              <option value="schema-file">Tạo database mới — từ file schema</option>
+              <option value="connection">Có database (thường là trống) — hệ thống tự chạy script tạo bảng</option>
+              <option value="schema-file">Chỉ có file schema — AI thiết kế theo, không chạy gì vào DB</option>
             </select>
           </div>
           <div class="row hidden" id="db-connection-row">
-            <input id="db-connection" type="password" spellcheck="false" placeholder="postgres://user:pass@host/db" />
+            <input id="db-connection" type="password" spellcheck="false" placeholder="postgresql://user:pass@host:5432/db  ·  jdbc:sqlserver://host:1433;databaseName=db;user=…;password=…  ·  mysql://…" />
             <button class="btn btn-ghost" id="db-reveal" type="button">Hiện</button>
           </div>
-          <p class="hint hidden" id="db-connection-hint">
-            🔒 Chuỗi này chỉ nằm trong bộ nhớ của lần chạy hiện tại: không lưu vào preset, không lưu
-            vào trình duyệt, không ghi vào log, và bị che nếu lỡ xuất hiện trong output.
-          </p>
+          <div class="hint hidden" id="db-connection-hint">
+            <p>
+              Hệ thống <strong>tự nhận loại DB từ chuỗi kết nối</strong> (PostgreSQL, SQL Server, MySQL),
+              bảo AI viết script đúng cú pháp loại đó vào <strong>thư mục SQL ở bước 1</strong>, rồi
+              <strong>tự chạy các file .sql mới</strong> vào DB ngay sau mỗi task code — mỗi file một
+              transaction, theo thứ tự tên file. Kết nối được kiểm tra ngay lúc bắt đầu, sai thì dừng
+              trước khi tốn token.
+            </p>
+            <p>
+              An toàn: file có <code>DROP</code> / <code>TRUNCATE</code> / <code>DELETE</code> bị từ chối,
+              không chạy. File tên chứa <code>rollback</code> không bao giờ được chạy. Script đã có sẵn
+              trong thư mục trước lần chạy không bị chạy lại. Script đã chạy mà bị sửa thì dừng và báo.
+            </p>
+            <p>
+              🔒 Chuỗi kết nối chỉ nằm trong bộ nhớ của lần chạy hiện tại: không lưu vào preset, không
+              lưu vào trình duyệt, không gửi cho AI, và bị che nếu lỡ xuất hiện trong output.
+            </p>
+          </div>
           <div class="row hidden" id="db-schema-row">
             <input id="db-schema-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\schema.sql" />
             <button class="btn btn-ghost" data-browse="schema">Chọn file…</button>
           </div>
         </div>
 
-        <!-- Bước 4 -->
+        <!-- Bước 5 -->
         <div class="card step">
           <div class="step-head">
-            <span class="step-num">4</span>
+            <span class="step-num">5</span>
             <div>
               <h2>Kiểm tra rồi chạy</h2>
               <p class="step-desc">
@@ -544,6 +603,14 @@
               đúng tiêu chí nghiệm thu trong spec và chấm đạt/không đạt. Không đạt thì dừng lại và báo
               tiêu chí nào trượt — không tự code lại từ task đầu. Hệ thống tự cấp port còn trống để bật
               app, nên port mặc định (8080, 5173…) bị chiếm cũng không làm fail.
+              <br />
+              <strong>Không tin lời AI:</strong> mọi test phải chạy qua bộ canh API
+              (<code>e2e/aidev-guard.ts</code>). Sau khi AI xong, hệ thống <strong>tự chạy lại toàn bộ
+              test</strong> và chỉ tính đạt khi: không test nào trượt/chập chờn/bị bỏ qua, và
+              <strong>không API nào</strong> trả 5xx, lỗi mạng hay 4xx không khai báo, không có lỗi JS
+              trên trang — kể cả khi màn hình vẫn hiện "thành công". Mỗi API lỗi được ghi rõ method, URL,
+              mã lỗi và thuộc test nào. Trace, ảnh chụp, video từng test được lưu lại — mở bằng nút
+              <strong>Mở báo cáo E2E</strong> ở tab Lịch sử chạy.
             </li>
           </ol>
           <p class="guide-note">
@@ -621,6 +688,23 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
             </li>
             <li>Thiếu tiêu chí nghiệm thu thì giai đoạn E2E sẽ đánh trượt, dù code có chạy.</li>
           </ul>
+          <p>
+            <strong>Chưa muốn tự viết?</strong> Ở bước 2 của tab Làm task mới, chọn thư mục lưu spec,
+            mô tả yêu cầu bằng lời thường rồi bấm <strong>Sinh spec</strong>. AI chỉ đọc dự án đích để
+            viết spec theo đúng khung trên, thêm mục <em>Câu hỏi mở</em> cho những gì yêu cầu chưa nói
+            rõ và ghi <em>(giả định)</em> ở chỗ nó tự suy ra. Spec được điền sẵn vào bước 3 — bấm
+            <strong>Xem / sửa spec</strong> để đọc lại trước khi chạy. Từ dòng lệnh:
+            <code>aidev spec --request "…" --project-be … --out spec.md</code>, đọc và sửa file, rồi
+            <code>aidev --spec spec.md …</code>.
+          </p>
+          <p>
+            <strong>Database:</strong> ở bước 4 chọn “Có database”, dán chuỗi kết nối (URL, JDBC hoặc
+            chuỗi ADO của SQL Server) và chọn thư mục SQL ở bước 1. Hệ thống tự nhận loại DB, bảo AI
+            viết script đúng cú pháp vào thư mục SQL, và tự chạy các file <code>.sql</code> mới vào DB
+            sau mỗi task code. Script có <code>DROP</code>/<code>TRUNCATE</code>/<code>DELETE</code> bị
+            từ chối; file tên chứa <code>rollback</code> không bao giờ được chạy. Từ dòng lệnh:
+            <code>--project-sql &lt;thư mục&gt; --db-connection "&lt;chuỗi&gt;"</code>.
+          </p>
 
           <h2 class="guide-part">Phần B — Clone từ dự án khác</h2>
 

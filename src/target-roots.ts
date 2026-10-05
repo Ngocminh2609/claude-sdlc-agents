@@ -13,7 +13,7 @@ import path from "node:path";
  * others are opened to the agent with the SDK's `additionalDirectories`, the
  * same way reference repos are, but writable.
  */
-export type RootRole = "be" | "fe" | "app";
+export type RootRole = "be" | "fe" | "app" | "sql";
 
 export interface ProjectRoot {
   role: RootRole;
@@ -24,27 +24,39 @@ const ROLE_LABEL: Record<RootRole, string> = {
   be: "BE (server, database scripts)",
   fe: "FE (client)",
   app: "whole project",
+  sql: "SQL (database scripts)",
 };
 
 /**
  * Builds roots from what the user chose. BE and FE given as the same folder
  * collapse into one "app" root — a repo holding both is just one project.
  * BE comes first, since the build and the database usually live there.
+ *
+ * A SQL folder is never the working directory: it holds scripts, not a build,
+ * so it always goes last and only alongside a code folder. Given as the same
+ * folder as a code root, it adds nothing and is dropped.
  */
-export function buildRoots(input: { project?: string; be?: string; fe?: string }): ProjectRoot[] {
+export function buildRoots(input: { project?: string; be?: string; fe?: string; sql?: string }): ProjectRoot[] {
   const app = resolved(input.project);
   const be = resolved(input.be);
   const fe = resolved(input.fe);
+  const sql = resolved(input.sql);
 
   if (app && (be || fe)) {
     throw new Error("Give either one project folder or separate BE/FE folders, not both.");
   }
-  if (app) return [{ role: "app", path: app }];
-  if (be && fe && samePath(be, fe)) return [{ role: "app", path: be }];
+  if (sql && !app && !be && !fe) {
+    throw new Error("A SQL folder needs a project folder (or BE/FE folders) to go with it.");
+  }
 
   const roots: ProjectRoot[] = [];
-  if (be) roots.push({ role: "be", path: be });
-  if (fe) roots.push({ role: "fe", path: fe });
+  if (app) roots.push({ role: "app", path: app });
+  else if (be && fe && samePath(be, fe)) roots.push({ role: "app", path: be });
+  else {
+    if (be) roots.push({ role: "be", path: be });
+    if (fe) roots.push({ role: "fe", path: fe });
+  }
+  if (sql && !roots.some((root) => samePath(root.path, sql))) roots.push({ role: "sql", path: sql });
   return roots;
 }
 
@@ -87,7 +99,9 @@ export function targetRootsPromptSection(roots: ProjectRoot[]): string[] {
     ...roots.map((root) => `- ${ROLE_LABEL[root.role]}: ${root.path}`),
     "",
     `This project is split into separate folders. Your working directory is the first one (${roots[0].path}).`,
-    "Server code and database scripts belong in the BE folder, client code in the FE folder. Run each",
+    roots.some((root) => root.role === "sql")
+      ? "Server code belongs in the BE folder, database scripts (.sql) in the SQL folder, client code in the FE folder. Run each"
+      : "Server code and database scripts belong in the BE folder, client code in the FE folder. Run each",
     "side's build and test commands from inside its own folder (cd into it), and give every path you",
     "report relative to the folder it lives in, saying which folder that is.",
   ];
@@ -100,7 +114,9 @@ export function referenceRootsPromptSection(roots: ProjectRoot[]): string[] {
     "",
     "--- Reference folders by role (READ-ONLY) ---",
     ...roots.map((root) => `- ${ROLE_LABEL[root.role]}: ${root.path}`),
-    "Look for server code and database scripts in the BE folder and client code in the FE folder.",
+    roots.some((root) => root.role === "sql")
+      ? "Look for server code in the BE folder, database scripts in the SQL folder and client code in the FE folder."
+      : "Look for server code and database scripts in the BE folder and client code in the FE folder.",
   ];
 }
 
