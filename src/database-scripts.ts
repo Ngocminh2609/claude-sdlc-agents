@@ -148,7 +148,8 @@ export function databasePromptSection(
   return [
     "",
     "--- Database (scripts are run for you) ---",
-    `Engine: ${engine}, detected from the connection the user gave — ${database.description}. Assume it holds no tables for this feature yet.`,
+    `Engine: ${engine}, detected from the connection the user gave — ${database.description}.`,
+    "Every script already in the SQL folder has been run against this database (by an earlier run, or by hand), so the tables it creates exist. Build on them: read those scripts first and never create those tables again.",
     `Write every schema change this feature needs (CREATE TABLE, constraints, indexes, the seed rows it depends on) as .sql files in ${engine} syntax in the SQL folder: ${database.scriptsDir}.`,
     "Follow the naming already used there (for example a numeric prefix: 01-…, 02-…). After each coding task the pipeline runs every new script there against the database, in file-name order, each in its own transaction — do not run them yourself and do not leave it to the user.",
     "- Never edit a script that already exists: put a change in a new, later-numbered script. An edited script stops the run.",

@@ -280,6 +280,36 @@ describe("runPipeline — resuming a stopped run", () => {
     expect(runSpecsArch).toHaveBeenCalled();
     expect(progress.some((line) => line.includes("are on disk any more"))).toBe(true);
   });
+
+  it("resumes when the finished tasks named their files with the folder in front, or somewhere else", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const base = await mkdtemp(path.join(tmpdir(), "aidev-resume-"));
+    const be = path.join(base, "BE");
+    await mkdir(path.join(be, "src", "auth"), { recursive: true });
+    await writeFile(path.join(be, "src", "auth", "Login.java"), "class Login {}");
+
+    try {
+      for (const targetFiles of [["BE/src/auth/Login.java"], ["backend/auth/Login.java"]]) {
+        vi.clearAllMocks();
+        loadCheckpoint.mockResolvedValue({
+          status: "found",
+          savedAt: "2026-10-05T06:52:27Z",
+          data: { ...savedPlan, tasks: [{ id: "task-1", description: "a", targetFiles }, savedPlan.tasks[1]] },
+        });
+        runCoding.mockResolvedValue("implemented");
+        runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+        await runPipeline({ spec: { ...spec, projectPath: be, targetRoots: [{ role: "be", path: be }] } });
+
+        expect(runSpecsArch).not.toHaveBeenCalled();
+        expect(runCoding.mock.calls[0][0].task.id).toBe("task-2");
+      }
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("runPipeline", () => {

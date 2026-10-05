@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, type Dirent } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { config } from "./config.js";
@@ -507,8 +507,43 @@ function finishedCodeIsGone(data: BuildCheckpoint, roots: ProjectRoot[]): boolea
     .filter((task) => doneIds.has(task.id))
     .flatMap((task) => task.targetFiles ?? []);
   if (!files.length) return false;
-  // A task's file may live in either folder of a split project.
-  return files.every((file) => roots.every((root) => !existsSync(path.resolve(root.path, file))));
+  return !files.some((file) => fileIsOnDisk(file, roots));
+}
+
+/**
+ * Whether a file a finished task named is on disk. Task paths come from a
+ * model and are not reliably relative to the folder they live in — a split
+ * project can get them prefixed with the folder ("BE/src/…"), or absolute.
+ * Checked the strict way first, then without a leading folder name, and last
+ * by file name anywhere under the roots. Erring towards "still there" is the
+ * cheap side: a wrong "gone" throws away a whole plan and its finished tasks.
+ */
+function fileIsOnDisk(file: string, roots: ProjectRoot[]): boolean {
+  const segments = file.replace(/\\/g, "/").split("/").filter(Boolean);
+  const candidates = [file, segments.slice(1).join("/")].filter(Boolean);
+  for (const root of roots) {
+    if (candidates.some((candidate) => existsSync(path.resolve(root.path, candidate)))) return true;
+  }
+  const name = segments.at(-1);
+  return name ? roots.some((root) => containsFileNamed(root.path, name)) : false;
+}
+
+const UNSEARCHED_DIRS = new Set(["node_modules", ".git", "target", "dist", "build", ".idea"]);
+
+function containsFileNamed(dir: string, name: string): boolean {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name === name) return true;
+    if (entry.isDirectory() && !UNSEARCHED_DIRS.has(entry.name) && containsFileNamed(path.join(dir, entry.name), name)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function codingStoppedMessage(
