@@ -19,6 +19,20 @@ afterEach(async () => {
 });
 
 describe("RunLogger", () => {
+  it("saves the log after every step when asked, so a killed run still shows what it finished", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const logger = new RunLogger(spec, "/tmp/specs/saved-as-it-goes.md", { saveAsItGoes: true });
+    logger.recordTaskBreakdown([{ id: "task-1", description: "do the thing" }]);
+    logger.recordCoding(1, "task-1", "implemented");
+    // No finish(): this is the state a killed run leaves behind.
+    writtenDir = await logger.write();
+
+    const saved = JSON.parse(await readFile((await import("node:path")).join(writtenDir, "log.json"), "utf-8"));
+    expect(saved.finalStatus).toBe("in-progress");
+    expect(saved.coding.map((entry: { taskId: string }) => entry.taskId)).toEqual(["task-1"]);
+    expect(JSON.stringify(saved)).not.toContain("super-secret-password");
+  });
+
   it("writes log.json and report.md, and never persists the raw db connection value", async () => {
     const logger = new RunLogger(spec, "/tmp/specs/my-feature.md");
     logger.recordSpecsArch(1, "a proposal");

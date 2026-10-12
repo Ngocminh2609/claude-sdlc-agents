@@ -149,6 +149,7 @@ const STATUS_TEXT = {
   "escalated-e2e": "dừng — E2E chưa đạt",
   incomplete: "chưa trọn vẹn",
   errored: "lỗi",
+  "progress-kept": "dừng — giữ tiến độ cũ",
   stopped: "đã dừng",
   unknown: "không rõ",
 };
@@ -159,6 +160,7 @@ const STATUS_BADGE = {
   "escalated-e2e": "E2E chưa đạt",
   incomplete: "Chưa trọn vẹn",
   errored: "Lỗi",
+  "progress-kept": "Giữ tiến độ",
   stopped: "Đã dừng",
   "in-progress": "Đang dở",
   unknown: "Không rõ",
@@ -179,11 +181,13 @@ const NEXT_STEPS = {
   feature: {
     done: "E2E đã đạt. Bước tiếp theo: mở thư mục dự án, chạy <code>git diff</code> để xem AI đã sửa gì, tự review rồi commit.",
     "escalated-specs":
-      "Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Code <strong>chưa bị đụng tới</strong>. Tiến độ thiết kế đã lưu: bấm Chạy lại với cùng spec sẽ <strong>sửa tiếp từ bản thiết kế cuối</strong> theo phản hồi (thêm 3 lượt), không làm lại từ đầu. Nếu phản hồi cho thấy spec còn mơ hồ, sửa spec rồi chạy — khi đó thiết kế làm lại từ đầu.",
+      "Bên duyệt từ chối thiết kế (mỗi lần chạy chỉ thiết kế 1 vòng, không tự lặp). Code <strong>chưa bị đụng tới</strong>. Tiến độ thiết kế đã lưu: bấm Chạy lại với cùng spec sẽ <strong>sửa tiếp từ bản thiết kế cuối</strong> theo phản hồi, không làm lại từ đầu. Nếu phản hồi cho thấy spec còn mơ hồ, sửa spec rồi tick \"Chạy lại từ đầu\".",
     "escalated-e2e":
       "E2E chưa đạt — hệ thống <strong>dừng ngay, không tự code lại từ task đầu</strong>. Code đã viết <strong>vẫn nằm trên đĩa, không bị hoàn tác</strong>. Bước tiếp theo: xem kết quả bên dưới để biết kịch bản/tiêu chí nào trượt, sửa (hoặc làm rõ spec) rồi chạy lại — tiến độ đã lưu, chạy lại sẽ vào thẳng bước E2E.",
     errored:
       "Pipeline dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở giai đoạn/task nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Tiến độ đã lưu: bấm Chạy lại với cùng spec sẽ <strong>tiếp tục từ chỗ dừng</strong>, bỏ qua thiết kế và các task đã xong.",
+    "progress-kept":
+      "Có tiến độ đã lưu nhưng <strong>không khớp</strong> với lần chạy này (spec, DB, thư mục, reference, metadata standards hoặc skill đã đổi), hoặc file của các task đã xong không còn trên đĩa. Hệ thống <strong>dừng ngay, không tốn token, không làm lại</strong> và giữ nguyên tiến độ cũ. Hoàn tác thay đổi rồi Chạy lại để tiếp tục; hoặc tick \"Chạy lại từ đầu\" nếu thật sự muốn bỏ tiến độ cũ.",
     stopped:
       "Anh đã bấm Dừng. Các file AI đã ghi vào dự án <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án. Bấm Chạy lại với cùng spec sẽ tiếp tục từ task đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
   },

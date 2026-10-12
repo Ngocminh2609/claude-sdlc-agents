@@ -3,10 +3,12 @@ import { runStructuredQuery } from "../sdk-helpers.js";
 import { databasePromptSection } from "../database-scripts.js";
 import { config } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
+import { FEATURE_TEST_POLICY } from "../prompts/feature-test-policy.js";
 import { extraDirectories, referencePromptSection } from "../reference-repos.js";
 import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
+import { projectMemoryPromptSection } from "../project-memory.js";
 import type { ProjectContext, ReferenceInventory, SpecInput, TaskBreakdown } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Orchestrator, breaking an approved design into an
@@ -14,7 +16,12 @@ ordered list of discrete implementation tasks (e.g. one per API endpoint or
 feature). Each task must be independently describable and, where possible,
 touch a distinct set of files so it can be implemented without conflicting
 with the others. If the work is small enough to be one task, return a single
-task — do not split for the sake of splitting.`;
+task — do not split for the sake of splitting.
+
+Each task description ends with how that task is verified, following the rule
+below — never a list of unit test classes to write.
+
+${FEATURE_TEST_POLICY}`;
 
 const TASK_SCHEMA = {
   type: "object",
@@ -67,6 +74,7 @@ export async function breakDownTasks(
     ...referencePromptSection(spec.referencePaths, inventory),
     ...indexPromptSection(spec.projectIndexes),
     ...projectContextPromptSection(projectContext),
+    ...projectMemoryPromptSection(spec.projectMemory),
     ...skillCatalogPromptSection(spec.skillCatalog),
   ].join("\n");
 

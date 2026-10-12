@@ -822,7 +822,7 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
             <tr>
               <td><span class="badge" data-status="escalated-specs">Chưa duyệt</span></td>
               <td>
-                <em>Chỉ task mới.</em> Qua 3 lần mà bên duyệt vẫn từ chối thiết kế. Giai đoạn này chưa
+                <em>Chỉ task mới.</em> Bên duyệt từ chối thiết kế (mỗi lần chạy 1 vòng). Giai đoạn này chưa
                 đụng tới code. Chạy lại với cùng spec sẽ sửa tiếp từ bản thiết kế cuối theo phản hồi;
                 nếu phản hồi cho thấy spec còn mơ hồ thì sửa spec (khi đó thiết kế làm lại từ đầu).
               </td>
@@ -849,6 +849,14 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
                 Pipeline dừng giữa chừng (hết hạn mức <code>rate_limit</code>, mất mạng, hết
                 credential…) và không tự chạy lại. Kết quả nói rõ dừng ở đâu (task nào / nhóm file nào)
                 và cái gì đã xong; chạy lại với cùng thiết lập sẽ tiếp tục từ chỗ dừng.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="badge" data-status="progress-kept">Giữ tiến độ</span></td>
+              <td>
+                Có tiến độ đã lưu nhưng không khớp lần chạy này (spec, DB, thư mục, reference, metadata
+                standards hoặc skill đã đổi; hoặc file các task đã xong bị xoá). Dừng ngay, không tốn token,
+                không làm lại gì. Hoàn tác thay đổi rồi chạy lại để tiếp tục, hoặc tick "Chạy lại từ đầu".
               </td>
             </tr>
           </table>

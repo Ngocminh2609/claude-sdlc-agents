@@ -19,6 +19,11 @@ import type {
   TaskItem,
 } from "./types.js";
 
+export interface LoggerOptions {
+  /** Write the log after every recorded step (the CLI does; unit tests do not). */
+  saveAsItGoes?: boolean;
+}
+
 const TOOL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Folder under a run's directory holding the pipeline's own E2E evidence. */
@@ -86,6 +91,32 @@ async function persist(runDir: string, data: unknown, markdown: string): Promise
   return runDir;
 }
 
+/**
+ * Saves a run's log as it goes, not only at the end. A run killed part-way
+ * (the machine shut down, the UI server stopped) never reaches the final
+ * write, and used to leave nothing in the history at all — it looked as if
+ * its progress was gone even though the checkpoint had kept it. With this, the
+ * run stays listed as `in-progress` with every step it finished.
+ *
+ * Writes are chained so they land in order and never overlap; each is
+ * best-effort, because a failed log write must not stop the pipeline.
+ */
+class ProgressSaver {
+  private chain: Promise<void> = Promise.resolve();
+
+  queue(save: () => Promise<unknown>): void {
+    this.chain = this.chain.then(save).then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
+  /** Resolves once every queued write has finished. */
+  idle(): Promise<void> {
+    return this.chain;
+  }
+}
+
 interface SpecsArchEntry {
   attempt: number;
   proposal: string;
@@ -119,17 +150,23 @@ export class RunLogger {
   private readonly coding: CodingEntry[] = [];
   private readonly e2e: E2eEntry[] = [];
   private finalStatus = "in-progress";
+  private readonly progress = new ProgressSaver();
   private finalMessage = "";
   private readonly runId: string;
   private readonly runDir: string;
 
-  constructor(private readonly spec: SpecInput, specPath: string) {
+  constructor(
+    private readonly spec: SpecInput,
+    specPath: string,
+    private readonly options: LoggerOptions = {},
+  ) {
     this.runId = buildRunId(this.startedAt, spec.projectPath, path.basename(specPath).replace(/\.md$/i, ""));
     this.runDir = runDirFor(this.runId);
   }
 
   recordSpecsArch(attempt: number, proposal: string): void {
     this.specsArch.push({ attempt, proposal });
+    this.saveProgress();
   }
 
   /** Inside this run's folder, so the history view can serve the E2E traces, videos and report. */
@@ -139,33 +176,40 @@ export class RunLogger {
 
   recordReview(attempt: number, review: ReviewVerdict): void {
     this.reviews.push({ attempt, review });
+    this.saveProgress();
   }
 
   recordTaskBreakdown(tasks: TaskItem[]): void {
     this.tasks = tasks;
+    this.saveProgress();
   }
 
   /** null when no reference repo was given, or when the scan failed. */
   recordReferenceInventory(inventory: ReferenceInventory | null): void {
     this.referenceInventory = inventory;
+    this.saveProgress();
   }
 
   /** null when the scan failed — every stage still falls back to its own exploration. */
   recordProjectContext(context: ProjectContext | null): void {
     this.projectContext = context;
+    this.saveProgress();
   }
 
   /** This run continued a stopped one: design and these tasks were reused, not redone. */
   recordResume(savedAt: string, doneTaskIds: string[]): void {
     this.resumedFrom = { savedAt, doneTaskIds };
+    this.saveProgress();
   }
 
   recordCoding(attempt: number, taskId: string, summary: string): void {
     this.coding.push({ attempt, taskId, summary });
+    this.saveProgress();
   }
 
   recordE2e(attempt: number, verdict: E2eVerdict): void {
     this.e2e.push({ attempt, verdict });
+    this.saveProgress();
   }
 
   finish(status: string, message: string): void {
@@ -174,9 +218,20 @@ export class RunLogger {
     this.finishedAt = new Date().toISOString();
   }
 
+  /** Queues a progress write when the logger was asked to save as it goes. */
+  private saveProgress(): void {
+    if (this.options.saveAsItGoes) this.progress.queue(() => this.persistNow());
+  }
+
+  /** The final write, after any progress write still in flight. */
+  async write(): Promise<string> {
+    await this.progress.idle();
+    return this.persistNow();
+  }
+
   /** Never persists spec.dbInfo.value: it may be a connection string with a
    * real password, and a run log is not a safe place to keep credentials. */
-  async write(): Promise<string> {
+  private async persistNow(): Promise<string> {
     const data = {
       runId: this.runId,
       startedAt: this.startedAt,
@@ -366,50 +421,63 @@ export class CloneRunLogger {
   private readonly fixes: { round: number; summary: string }[] = [];
   private readonly ports: { group: string; summary: string }[] = [];
   private finalStatus = "in-progress";
+  private readonly progress = new ProgressSaver();
   private finalMessage = "";
   private readonly runId: string;
   private readonly runDir: string;
 
-  constructor(private readonly clone: CloneInput) {
+  constructor(
+    private readonly clone: CloneInput,
+    private readonly options: LoggerOptions = {},
+  ) {
     this.runId = buildRunId(this.startedAt, clone.projectPath, `clone-${clone.what}`);
     this.runDir = runDirFor(this.runId);
   }
 
   recordReferenceInventory(inventory: ReferenceInventory | null): void {
     this.referenceInventory = inventory;
+    this.saveProgress();
   }
 
   recordTargetConventions(conventions: TargetConventions | null): void {
     this.conventions = conventions;
+    this.saveProgress();
   }
 
   recordCloneMapping(mapping: CloneMapping | null): void {
     this.mapping = mapping;
+    this.saveProgress();
   }
 
   recordClonePort(group: string, summary: string): void {
     this.ports.push({ group, summary });
+    this.saveProgress();
   }
 
   recordCloneCoverage(coverage: CloneCoverage): void {
     this.coverage = coverage;
+    this.saveProgress();
   }
 
   recordCloneWiring(wiring: CloneWiring): void {
     this.wiring = wiring;
+    this.saveProgress();
   }
 
   recordCloneBuild(build: CloneBuildVerdict): void {
     this.build = build;
+    this.saveProgress();
   }
 
   /** The latest test verdict wins; earlier ones stay in the history for the report. */
   recordCloneTests(tests: CloneTestVerdict): void {
     this.testRuns.push(tests);
+    this.saveProgress();
   }
 
   recordCloneFix(round: number, summary: string): void {
     this.fixes.push({ round, summary });
+    this.saveProgress();
   }
 
   finish(status: string, message: string): void {
@@ -418,7 +486,18 @@ export class CloneRunLogger {
     this.finishedAt = new Date().toISOString();
   }
 
+  /** Queues a progress write when the logger was asked to save as it goes. */
+  private saveProgress(): void {
+    if (this.options.saveAsItGoes) this.progress.queue(() => this.persistNow());
+  }
+
+  /** The final write, after any progress write still in flight. */
   async write(): Promise<string> {
+    await this.progress.idle();
+    return this.persistNow();
+  }
+
+  private async persistNow(): Promise<string> {
     const data = {
       runId: this.runId,
       mode: "clone",

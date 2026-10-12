@@ -9,8 +9,18 @@ import { cachedStage, repoVersions } from "./stage-cache.js";
 import { inventoryProjectContext } from "./stages/project-context.js";
 import { breakDownTasks } from "./stages/task-breakdown.js";
 import { runCoding } from "./stages/coding.js";
+import { isActiveStep, StepJournal, type ActiveStep } from "./step-session.js";
+import { refreshProjectIndexes } from "./project-index.js";
+import {
+  manifestKeyOf,
+  rememberConventions,
+  rememberFeatureStatus,
+  rememberTask,
+  reusableConventions,
+  specIdentity,
+} from "./project-memory.js";
 import { runE2eTest } from "./stages/e2e-test.js";
-import { clearCheckpoint, fingerprint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import { clearCheckpoint, fingerprint, loadCheckpoint, progressKeptMessage, saveCheckpoint } from "./checkpoint.js";
 import { findFreePorts } from "./free-ports.js";
 import { metadataStandardsFingerprint } from "./metadata-standards.js";
 import { skillCatalogFingerprint } from "./skills-catalog.js";
@@ -29,7 +39,7 @@ import type {
 } from "./types.js";
 
 export interface PipelineResult {
-  status: "done" | "escalated-specs" | "escalated-e2e" | "errored";
+  status: "done" | "escalated-specs" | "escalated-e2e" | "errored" | "progress-kept";
   message: string;
   logPath?: string;
 }
@@ -50,23 +60,38 @@ export interface PipelineOptions {
 }
 
 /**
- * Saved while the design is still under review, after the project scan and
- * after every rejected round — so a run that is stopped, killed, or runs out
- * of review rounds resumes by revising its last proposal instead of scanning
- * and designing from nothing again.
+ * Saved before the project scan starts, so a run killed during the scan
+ * resumes the scan's own agent session instead of scanning from nothing.
+ */
+export interface ScanCheckpoint {
+  phase: "scan";
+  activeStep?: ActiveStep;
+}
+
+/**
+ * Saved while the design is still under review: after the project scan, after
+ * a proposal is written, after a rejected round and once it is approved — so a
+ * run stopped or killed at any point picks up at the step it was in (see
+ * `step-session.ts`), and a rejected design is revised, not redone.
  */
 export interface DesignCheckpoint {
   phase: "design";
   inventory: ReferenceInventory | null;
   projectContext: ProjectContext | null;
-  /** null when the run stopped before the first proposal was written. */
+  /** The last rejected proposal; null while none has been rejected. */
   lastProposal: string | null;
   lastFeedback: string | null;
+  /** A proposal written but not reviewed yet. */
+  draft?: string;
+  /** The approved design, amendments included, when only the breakdown is left. */
+  approved?: string;
+  /** The design step whose agent session was running when this was saved. */
+  activeStep?: ActiveStep;
 }
 
 /**
  * Saved once the design is approved: the plan and the tasks already finished.
- * Written after the breakdown and after every task.
+ * Written after the breakdown, before and after every task, and before E2E.
  */
 export interface BuildCheckpoint {
   phase: "build";
@@ -75,18 +100,23 @@ export interface BuildCheckpoint {
   approvedProposal: string;
   tasks: TaskItem[];
   completedTasks: CompletedTask[];
+  /** The Coding task or E2E step whose agent session was running when this was saved. */
+  activeStep?: ActiveStep;
   /** Which SQL scripts were already there, and which this run applied (database runs only). */
   sqlScripts?: SqlScriptState;
 }
 
 /** Everything a stopped run leaves for the next one (see `checkpoint.ts`). */
-export type FeatureCheckpoint = DesignCheckpoint | BuildCheckpoint;
+export type FeatureCheckpoint = ScanCheckpoint | DesignCheckpoint | BuildCheckpoint;
 
 type RunOutcome = Omit<PipelineResult, "logPath">;
 
 export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult> {
   try {
     const result = await runPipelineInner(opts);
+    if (opts.spec.projectMemory && result.status !== "progress-kept") {
+      await bestEffort(() => rememberFeatureStatus(rootsOf(opts.spec), specIdentity(opts.spec.specMarkdown), result.status));
+    }
     opts.logger?.finish(result.status, result.message);
     const logPath = await opts.logger?.write();
     return { ...result, logPath };
@@ -111,13 +141,14 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
 
   const { inventory, projectContext, approvedProposal, tasks } = plan;
   const completedTasks = [...plan.completedTasks];
+  const journal = new StepJournal(plan.activeStep);
   // A plan saved before this run had a database has no baseline yet: what is
   // in the folder now counts as already there.
   const sqlScripts =
     opts.sqlRunner && spec.database
       ? (plan.sqlScripts ?? { baseline: await snapshotScripts(spec.database.scriptsDir), applied: {} })
       : undefined;
-  const saveProgress = () =>
+  const saveProgress = (activeStep: ActiveStep | undefined = journal.unfinished) =>
     saveCheckpoint<FeatureCheckpoint>("feature", spec.projectPath, checkpointKey, {
       phase: "build",
       inventory,
@@ -125,6 +156,7 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
       approvedProposal,
       tasks,
       completedTasks: [...completedTasks],
+      ...(activeStep ? { activeStep } : {}),
       ...(sqlScripts ? { sqlScripts } : {}),
     });
   // Runs whatever new scripts are in the SQL folder. Called after every task,
@@ -137,7 +169,7 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
       state: sqlScripts,
       runner: opts.sqlRunner,
       onProgress,
-      save: saveProgress,
+      save: () => saveProgress(),
     });
   };
   // Saved before any task runs: a run killed mid-task must not resume with
@@ -153,17 +185,27 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
   for (const [index, task] of tasks.entries()) {
     if (completedTasks.some((done) => done.id === task.id)) continue;
 
-    onProgress(`Coding: ${task.id} (${index + 1}/${tasks.length})`);
     let summary: string;
     try {
-      summary = await runCoding({
-        spec,
-        task,
-        approvedProposal,
-        completedTasks: [...completedTasks],
-        inventory,
-        projectContext,
-        runtimePorts: await findFreePorts(),
+      // An interrupted task resumes its own saved session; when that
+      // transcript is gone it starts a new one told to continue from the files
+      // already on disk.
+      summary = await journal.run(`coding:${task.id}`, saveProgress, async ({ interrupted, resumed }) => {
+        const resumeNote = resumed
+          ? " — resuming the interrupted session"
+          : interrupted
+            ? " — continuing the interrupted attempt from the files on disk"
+            : "";
+        onProgress(`Coding: ${task.id} (${index + 1}/${tasks.length})${resumeNote}`);
+        return runCoding({
+          spec,
+          task,
+          approvedProposal,
+          completedTasks: [...completedTasks],
+          inventory,
+          projectContext,
+          interrupted: interrupted && !resumed,
+        });
       });
     } catch (error) {
       if (!(error instanceof StageError)) throw error;
@@ -173,18 +215,29 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
       };
     }
     logger?.recordCoding(1, task.id, summary);
-    completedTasks.push({ id: task.id, description: task.description, summary });
+    const files = await filesWrittenByTask(spec);
+    completedTasks.push({ id: task.id, description: task.description, summary, ...(files.length ? { files } : {}) });
     await saveProgress();
+    if (spec.projectMemory) {
+      const recorded = files.length ? files : (task.targetFiles ?? []);
+      const done = { id: task.id, summary, ...(recorded.length ? { files: recorded } : {}) };
+      await bestEffort(() => rememberTask(rootsOf(spec), specIdentity(spec.specMarkdown), done));
+    }
     await applyScripts();
   }
 
   await applyScripts();
   onProgress("E2E/QA: running");
-  const e2e = await runE2eTest(spec, approvedProposal, projectContext, await findFreePorts(), {
-    // A run without a logger (tests, embedding) still needs somewhere to put the evidence.
-    evidenceDir: logger?.evidenceDir ?? path.join(tmpdir(), `aidev-e2e-evidence-${Date.now()}`),
-    onProgress,
-  });
+  const e2e = await journal.run("e2e", saveProgress, async () =>
+    runE2eTest(spec, approvedProposal, projectContext, await findFreePorts(), {
+      // A run without a logger (tests, embedding) still needs somewhere to put the evidence.
+      evidenceDir: logger?.evidenceDir ?? path.join(tmpdir(), `aidev-e2e-evidence-${Date.now()}`),
+      onProgress,
+    }),
+  );
+  // A finished E2E is not an interrupted one: re-running after a failed verdict
+  // starts a fresh check of the code as it is then, not the old session.
+  await saveProgress();
   if (e2e.check) {
     onProgress(
       e2e.check.ran
@@ -224,33 +277,80 @@ async function resumeOrPlan(opts: PipelineOptions, checkpointKey: string): Promi
   }
 
   const saved = await loadCheckpoint<FeatureCheckpoint>("feature", spec.projectPath, checkpointKey);
-  if (saved.status === "stale") {
-    onProgress("Resume: the saved progress is for a different spec or reference set — starting fresh");
-  }
-  if (saved.status !== "found") return planFromScratch(opts, checkpointKey, null);
+  if (saved.status === "none") return planFromScratch(opts, checkpointKey, null);
+  // Each step runs once: saved progress is never redone or overwritten unless
+  // the person asks for it with --fresh (see checkpoint.ts).
+  const keep = (reason: string): RunOutcome => {
+    onProgress(`Resume: ${reason} — stopped, saved progress kept (start fresh to discard it)`);
+    return { status: "progress-kept", message: progressKeptMessage(reason, saved.savedAt, FEATURE_INPUTS) };
+  };
+  if (saved.status === "stale") return keep("it was saved for different inputs than this run");
 
   if (isBuildCheckpoint(saved.data)) {
     if (finishedCodeIsGone(saved.data, rootsOf(spec))) {
-      onProgress("Resume: none of the files the finished tasks wrote are on disk any more — starting fresh");
-      return planFromScratch(opts, checkpointKey, null);
+      return keep("none of the files the finished tasks wrote are on disk any more");
     }
     return resumeBuild(opts, saved.data, saved.savedAt);
   }
 
   if (isDesignCheckpoint(saved.data)) {
-    onProgress(
-      `Resume: continuing the design stopped at ${saved.savedAt} — ${
-        saved.data.lastProposal
+    const design = saved.data;
+    const where = design.approved
+      ? "breaking the approved design into tasks"
+      : design.draft
+        ? "reviewing the proposal already written"
+        : design.lastProposal
           ? "revising the last proposal with the reviewer's feedback"
-          : "reusing the project scan"
-      } (start fresh to redo everything)`,
-    );
-    return planFromScratch(opts, checkpointKey, saved.data);
+          : "reusing the project scan";
+    onProgress(`Resume: continuing the design stopped at ${saved.savedAt} — ${where} (start fresh to redo everything)`);
+    return planFromScratch(opts, checkpointKey, design);
   }
 
-  onProgress("Resume: the saved progress is unreadable — starting fresh");
-  return planFromScratch(opts, checkpointKey, null);
+  if (isScanCheckpoint(saved.data)) {
+    onProgress(`Resume: continuing the project scan stopped at ${saved.savedAt} (start fresh to redo everything)`);
+    return planFromScratch(opts, checkpointKey, null, saved.data.activeStep);
+  }
+
+  return keep("it is unreadable");
 }
+
+/** Enough to name what a task wrote; a task touching more is listed up to this. */
+const MAX_FILES_PER_TASK = 60;
+
+/**
+ * What a coding task wrote, read back by plain code: the project index is
+ * refreshed right after the task, and what changed since the previous refresh
+ * is that task's work. Only when the run has indexes (the CLI); empty when the
+ * refresh fails — the task summary still says what it did.
+ */
+async function filesWrittenByTask(spec: SpecInput): Promise<string[]> {
+  if (!spec.projectIndexes?.length) return [];
+  try {
+    const repos = await refreshProjectIndexes(rootsOf(spec).map((root) => root.path));
+    return repos
+      .flatMap((repo) => repo.changedLines.map((line) => `${path.basename(repo.repoRoot)}/${line}`))
+      .slice(0, MAX_FILES_PER_TASK);
+  } catch (error) {
+    console.error("Project index refresh after a task failed:", error);
+    return [];
+  }
+}
+
+/**
+ * The project map is a convenience for later runs: failing to write it must
+ * never fail the run that produced the work.
+ */
+async function bestEffort(write: () => Promise<void>): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    console.error("Project map update failed:", error);
+  }
+}
+
+/** What `featureFingerprint` is made of, in words, for `progressKeptMessage`. */
+const FEATURE_INPUTS =
+  "the spec text, the database option and engine, the reference repos, the target folders, the metadata standards and the installed skill catalog";
 
 function resumeBuild(opts: PipelineOptions, data: BuildCheckpoint, savedAt: string): BuildCheckpoint {
   const { onProgress = () => {}, logger } = opts;
@@ -278,16 +378,19 @@ function resumeBuild(opts: PipelineOptions, data: BuildCheckpoint, savedAt: stri
 }
 
 /**
- * Scans (or reuses a saved scan), runs the design/review rounds, and breaks
+ * Scans (or reuses a saved scan), runs the design/review round, and breaks
  * the approved design into tasks. `start` is a saved design checkpoint to
- * continue from, or null for a clean start.
+ * continue from, or null for a clean start; `scanStep` is the scan step a
+ * killed run left running, when it died during the scan.
  */
 async function planFromScratch(
   opts: PipelineOptions,
   checkpointKey: string,
   start: DesignCheckpoint | null,
+  scanStep?: ActiveStep,
 ): Promise<BuildCheckpoint | RunOutcome> {
   const { spec, onProgress = () => {}, logger } = opts;
+  const journal = new StepJournal(start ? start.activeStep : scanStep);
 
   let inventory: ReferenceInventory | null;
   let projectContext: ProjectContext | null;
@@ -296,71 +399,106 @@ async function planFromScratch(
     ({ inventory, projectContext } = start);
     onProgress("Reference inventory: reused from the stopped run");
   } else {
-    ({ inventory, projectContext } = await scanInputs(opts));
+    const saveScan = (activeStep: ActiveStep | undefined = journal.unfinished) =>
+      saveCheckpoint<FeatureCheckpoint>("feature", spec.projectPath, checkpointKey, {
+        phase: "scan",
+        ...(activeStep ? { activeStep } : {}),
+      });
+    // Saved before the scan, so a run killed mid-scan resumes the scan's session.
+    if (!scanStep) await saveScan();
+    ({ inventory, projectContext } = await scanInputs(opts, journal, saveScan));
   }
   logger?.recordReferenceInventory(inventory);
   logger?.recordProjectContext(projectContext);
 
-  const saveDesign = (lastProposal: string | null, lastFeedback: string | null) =>
+  // A resumed design continues from exactly where it stopped: an approved
+  // design goes straight to the breakdown, an unreviewed proposal straight to
+  // review, and a rejected one is revised with the feedback it got.
+  let lastProposal: string | null = start?.lastProposal ?? null;
+  let lastFeedback: string | null = start?.lastFeedback ?? null;
+  let draft: string | undefined = start?.draft;
+  let approvedProposal: string | null = start?.approved ?? null;
+
+  const saveDesign = (activeStep: ActiveStep | undefined = journal.unfinished) =>
     saveCheckpoint<FeatureCheckpoint>("feature", spec.projectPath, checkpointKey, {
       phase: "design",
       inventory,
       projectContext,
       lastProposal,
       lastFeedback,
+      ...(draft !== undefined ? { draft } : {}),
+      ...(approvedProposal !== null ? { approved: approvedProposal } : {}),
+      ...(activeStep ? { activeStep } : {}),
     });
   // Saved before any design work, so a run killed during the first proposal
   // does not pay for the project scan again.
-  if (!start) await saveDesign(null, null);
+  if (!start) await saveDesign();
 
   // --- Specs & Arch <-> Orchestrator review ---
-  // A resumed design starts from the last proposal and the feedback it got,
-  // with a fresh set of rounds — the proposal is revised, not rewritten.
-  let proposal: string | null = start?.lastProposal ?? null;
-  let feedback: string | undefined = start?.lastFeedback ?? undefined;
-  let approvedProposal: string | null = null;
-
-  for (let attempt = 1; attempt <= config.maxSpecAttempts; attempt++) {
-    onProgress(`Specs & Arch: attempt ${attempt}/${config.maxSpecAttempts}`);
-    proposal = await runSpecsArch(spec, proposal, feedback, inventory, projectContext);
-    logger?.recordSpecsArch(attempt, proposal);
-    const review = await reviewSpecs(spec, proposal);
-    logger?.recordReview(attempt, review);
-    onProgress(`Orchestrator review: ${review.decision}`);
-    if (review.decision === "approve") {
-      const amendments = (review.amendments ?? []).map((amendment) => amendment.trim()).filter(Boolean);
-      if (amendments.length) {
-        onProgress(`Orchestrator review: approved with ${amendments.length} amendment(s) for the coding stage`);
+  if (approvedProposal === null) {
+    for (let attempt = 1; attempt <= config.maxSpecAttempts; attempt++) {
+      onProgress(`Specs & Arch: attempt ${attempt}/${config.maxSpecAttempts}`);
+      if (draft === undefined) {
+        const prior = lastProposal;
+        const priorFeedback = lastFeedback ?? undefined;
+        draft = await journal.run("design:specs-arch", saveDesign, () =>
+          runSpecsArch(spec, prior, priorFeedback, inventory, projectContext),
+        );
+        await saveDesign();
+      } else {
+        onProgress("Specs & Arch: reused the proposal written before the interruption");
       }
-      approvedProposal = withAmendments(proposal, amendments);
-      break;
+      const proposal = draft;
+      logger?.recordSpecsArch(attempt, proposal);
+      const review = await journal.run("design:review", saveDesign, () => reviewSpecs(spec, proposal));
+      logger?.recordReview(attempt, review);
+      onProgress(`Orchestrator review: ${review.decision}`);
+      draft = undefined;
+      if (review.decision === "approve") {
+        const amendments = (review.amendments ?? []).map((amendment) => amendment.trim()).filter(Boolean);
+        if (amendments.length) {
+          onProgress(`Orchestrator review: approved with ${amendments.length} amendment(s) for the coding stage`);
+        }
+        approvedProposal = withAmendments(proposal, amendments);
+        await saveDesign();
+        break;
+      }
+      lastProposal = proposal;
+      lastFeedback = review.feedback;
+      await saveDesign();
     }
-    feedback = review.feedback;
-    await saveDesign(proposal, feedback);
+  } else {
+    onProgress("Specs & Arch: reused the approved design from the stopped run");
+    onProgress("Orchestrator review: approve (from the stopped run)");
+    logger?.recordSpecsArch(1, approvedProposal);
+    logger?.recordReview(1, { decision: "approve", feedback: "Reused from the stopped run." });
   }
 
   if (approvedProposal === null) {
     return {
       status: "escalated-specs",
       message: [
-        `Design proposal not approved after ${config.maxSpecAttempts} attempts.`,
+        `Design proposal not approved (${config.maxSpecAttempts} round(s) per run — the run does not loop on its own).`,
         "",
         "Last proposal:",
-        proposal ?? "(none)",
+        lastProposal ?? "(none)",
         "",
         "Last reviewer feedback:",
-        feedback ?? "(none)",
+        lastFeedback ?? "(none)",
         "",
-        "Progress is saved: running the same spec again keeps revising this last proposal with the",
-        `feedback above (another ${config.maxSpecAttempts} rounds). If the feedback shows the spec itself is`,
-        "unclear, edit the spec instead — that starts the design over.",
+        "Progress is saved: running the same spec again revises this last proposal with the feedback",
+        "above. If the feedback shows the spec itself is unclear, edit the spec and run with --fresh —",
+        "that starts the design over.",
       ].join("\n"),
     };
   }
 
   // --- Task breakdown ---
   onProgress("Breaking approved design into tasks");
-  const { tasks } = await breakDownTasks(spec, approvedProposal, inventory, projectContext);
+  const approved = approvedProposal;
+  const { tasks } = await journal.run("design:breakdown", saveDesign, () =>
+    breakDownTasks(spec, approved, inventory, projectContext),
+  );
   logger?.recordTaskBreakdown(tasks);
   onProgress(`${tasks.length} task(s) to implement`);
 
@@ -370,7 +508,7 @@ async function planFromScratch(
     phase: "build",
     inventory,
     projectContext,
-    approvedProposal,
+    approvedProposal: approved,
     tasks,
     completedTasks: [],
   };
@@ -380,6 +518,8 @@ async function planFromScratch(
 
 async function scanInputs(
   opts: PipelineOptions,
+  journal: StepJournal,
+  saveScan: (activeStep: ActiveStep) => Promise<void>,
 ): Promise<{ inventory: ReferenceInventory | null; projectContext: ProjectContext | null }> {
   const { spec, onProgress = () => {}, fresh = false } = opts;
   const targetFolders = (spec.targetRoots ?? [{ path: spec.projectPath }]).map((root) => root.path);
@@ -398,7 +538,7 @@ async function scanInputs(
       kind: "reference-inventory",
       key: versions && [spec.specMarkdown, versions],
       fresh,
-      run: () => inventoryReferences(spec),
+      run: () => journal.run("scan:reference-inventory", saveScan, () => inventoryReferences(spec)),
       onHit: reuseNote("Reference inventory"),
     });
     // A failed scan is a degraded run, not a failed one: the later stages
@@ -415,13 +555,32 @@ async function scanInputs(
 
   // --- Project context: one scan of the target project itself, shared by
   // every stage below instead of each one rediscovering it independently ---
+  // Conventions change only when the build does: while the build manifests are
+  // the ones the project map read them under, they are reused without a scan
+  // (see project-memory.ts). The relevant-files list is not kept — later stages
+  // look files up in the project index instead.
+  const roots = rootsOf(spec);
+  const manifestKey = spec.projectMemory ? manifestKeyOf(spec.projectIndexes, roots) : null;
+  const remembered = reusableConventions(spec.projectMemory, manifestKey);
+  if (remembered) {
+    onProgress("Project context: conventions reused from the project map — build files unchanged, no scan");
+    return {
+      inventory,
+      projectContext: {
+        conventions: remembered,
+        relevantFiles: [],
+        notes: "Conventions come from the project map. No relevant-file scan was run: find files through the project index.",
+      },
+    };
+  }
+
   onProgress("Project context: scanning the target project");
   const targetVersions = repoVersions(spec.projectIndexes, targetFolders);
   const projectContext: ProjectContext | null = await cachedStage({
     kind: "project-context",
     key: targetVersions && [spec.specMarkdown, targetVersions],
     fresh,
-    run: () => inventoryProjectContext(spec),
+    run: () => journal.run("scan:project-context", saveScan, () => inventoryProjectContext(spec)),
     onHit: reuseNote("Project context"),
   });
   onProgress(
@@ -429,6 +588,9 @@ async function scanInputs(
       ? "Project context: conventions and relevant files gathered"
       : "Project context: unavailable — stages will explore the project themselves",
   );
+  if (projectContext && manifestKey) {
+    await bestEffort(() => rememberConventions(roots, manifestKey, projectContext.conventions));
+  }
 
   return { inventory, projectContext };
 }
@@ -482,6 +644,11 @@ function isBuildCheckpoint(data: unknown): data is BuildCheckpoint {
     candidate.tasks.length > 0 &&
     Array.isArray(candidate.completedTasks)
   );
+}
+
+function isScanCheckpoint(data: unknown): data is ScanCheckpoint {
+  const candidate = data as ScanCheckpoint;
+  return candidate?.phase === "scan" && (candidate.activeStep === undefined || isActiveStep(candidate.activeStep));
 }
 
 function isDesignCheckpoint(data: unknown): data is DesignCheckpoint {

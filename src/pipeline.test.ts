@@ -12,10 +12,13 @@ const findFreePorts = vi.fn();
 const loadCheckpoint = vi.fn();
 const saveCheckpoint = vi.fn();
 const clearCheckpoint = vi.fn();
+const canResumeSession = vi.fn();
 
 vi.mock("./free-ports.js", () => ({ findFreePorts }));
+vi.mock("./sdk-helpers.js", () => ({ canResumeSession }));
 vi.mock("./checkpoint.js", () => ({
   fingerprint: (parts: unknown[]) => JSON.stringify(parts),
+  progressKeptMessage: (reason: string) => `kept: ${reason}`,
   loadCheckpoint,
   saveCheckpoint,
   clearCheckpoint,
@@ -29,6 +32,20 @@ vi.mock("./stages/reference-inventory.js", () => ({ inventoryReferences }));
 vi.mock("./stages/project-context.js", () => ({ inventoryProjectContext }));
 
 const { runPipeline } = await import("./pipeline.js");
+const { claimStepSession } = await import("./step-session.js");
+
+/** The session each mocked stage call was given, as the real query would claim it. */
+function claimingSessions(mock: ReturnType<typeof vi.fn>, value: unknown): unknown[] {
+  const seen: unknown[] = [];
+  mock.mockImplementation(async () => {
+    seen.push(claimStepSession());
+    return value;
+  });
+  return seen;
+}
+
+const buildSaves = () =>
+  saveCheckpoint.mock.calls.map(([, , , data]) => data).filter((data) => data.phase === "build");
 const { StageError } = await import("./stage-error.js");
 
 const spec: SpecInput = { specMarkdown: "do the thing", projectPath: "/tmp/project" };
@@ -43,6 +60,10 @@ beforeEach(() => {
   loadCheckpoint.mockResolvedValue({ status: "none" });
   saveCheckpoint.mockResolvedValue(undefined);
   clearCheckpoint.mockResolvedValue(undefined);
+  canResumeSession.mockResolvedValue(false);
+  // Tests below swap these for session-recording implementations; never let one leak into the next.
+  runCoding.mockReset();
+  runE2eTest.mockReset();
 });
 
 const savedPlan = {
@@ -94,20 +115,98 @@ describe("runPipeline — design review with amendments", () => {
   });
 });
 
+describe("runPipeline — project map", () => {
+  it("reuses saved conventions without a scan, and records the files each task really wrote for the next ones", async () => {
+    const { mkdtemp, mkdir, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const { loadProjectMemory, manifestKeyOf } = await import("./project-memory.js");
+    const { refreshIndexesForRun } = await import("./project-index.js");
+    const base = await mkdtemp(path.join(tmpdir(), "aidev-map-"));
+    // Never the real runs/: both the index and the map go to the temp folder.
+    process.env.AIDEV_MEMORY_DIR = path.join(base, "memory");
+    process.env.AIDEV_INDEX_DIR = path.join(base, "index");
+    try {
+      const project = path.join(base, "app");
+      await mkdir(path.join(project, "src"), { recursive: true });
+      await writeFile(path.join(project, "package.json"), "{}");
+      const root = { role: "app" as const, path: project };
+      const projectIndexes = await refreshIndexesForRun([project], () => {});
+      const manifestKey = manifestKeyOf(projectIndexes, [root]) as string;
+      const projectMemory = {
+        version: 1,
+        roots: [],
+        conventions: { text: "saved conventions", manifestKey, savedAt: "2026-10-06T00:00:00Z" },
+        features: [],
+      };
+      breakDownTasks.mockResolvedValue({
+        tasks: [
+          { id: "task-1", description: "first line\nlong details" },
+          { id: "task-2", description: "second" },
+        ],
+      });
+      reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+      runCoding.mockImplementation(async ({ task }) => {
+        if (task.id === "task-1") await writeFile(path.join(project, "src", "rooms-api.ts"), "export function listRooms() {}\n");
+        return "implemented";
+      });
+      runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+      await runPipeline({
+        spec: { ...spec, projectPath: project, targetRoots: [root], projectIndexes, projectMemory },
+      });
+
+      expect(inventoryProjectContext).not.toHaveBeenCalled();
+      expect(runSpecsArch.mock.calls[0][4].conventions).toBe("saved conventions");
+      // task-2 is told what task-1 wrote, with the names from the index.
+      const earlier = runCoding.mock.calls[1][0].completedTasks[0];
+      expect(earlier.files).toEqual(["app/src/rooms-api.ts | api-client | listRooms"]);
+      const saved = await loadProjectMemory([root]);
+      expect(saved.features[0]).toMatchObject({ status: "done" });
+      expect(saved.features[0].tasks[0].files).toEqual(earlier.files);
+    } finally {
+      delete process.env.AIDEV_MEMORY_DIR;
+      delete process.env.AIDEV_INDEX_DIR;
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("neither reads nor writes a project map when the run was not given one", async () => {
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    // AIDEV_MEMORY_DIR is unset here: any write would throw (see project-memory.ts) and fail the run.
+    const result = await runPipeline({ spec });
+
+    expect(result.status).toBe("done");
+    expect(inventoryProjectContext).toHaveBeenCalled();
+  });
+});
+
 describe("runPipeline — resuming a stopped design", () => {
-  it("saves the scan before designing and the proposal after every rejected round", async () => {
-    runSpecsArch.mockResolvedValueOnce("draft 1").mockResolvedValueOnce("draft 2").mockResolvedValueOnce("draft 3");
+  it("designs once, saves the rejected proposal and stops instead of looping", async () => {
+    runSpecsArch.mockResolvedValueOnce("draft 1");
     reviewSpecs.mockResolvedValue({ decision: "reject", feedback: "needs work" });
 
     const result = await runPipeline({ spec });
 
     expect(result.status).toBe("escalated-specs");
+    expect(runSpecsArch).toHaveBeenCalledTimes(1);
     const designSaves = saveCheckpoint.mock.calls
       .map(([, , , data]) => data)
       .filter((data) => data.phase === "design")
-      .map((data) => data.lastProposal);
-    expect(designSaves).toEqual([null, "draft 1", "draft 2", "draft 3"]);
-    expect(result.message).toContain("keeps revising this last proposal");
+      .map((data) => [data.lastProposal, data.lastFeedback, data.draft ?? null, data.activeStep?.step ?? null]);
+    // Every step is saved as running before its session starts, and its result
+    // right after: the proposal before review, then the rejection.
+    expect(designSaves).toEqual([
+      [null, null, null, null],
+      [null, null, null, "design:specs-arch"],
+      [null, null, "draft 1", null],
+      [null, null, "draft 1", "design:review"],
+      ["draft 1", "needs work", null, null],
+    ]);
+    expect(result.message).toContain("revises this last proposal");
   });
 
   it("resumes by revising the last proposal with its feedback, without re-scanning", async () => {
@@ -135,6 +234,68 @@ describe("runPipeline — resuming a stopped design", () => {
     expect(feedback).toBe("add a blank-param addendum");
     expect(projectContext.conventions).toBe("saved scan");
     expect(breakDownTasks.mock.calls[0][1]).toBe("revision 4");
+  });
+
+  it("reviews a proposal written before the interruption instead of writing it again", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-06T04:00:00Z",
+      data: { phase: "design", inventory: null, projectContext: null, lastProposal: null, lastFeedback: null, draft: "the draft" },
+    });
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec });
+
+    expect(runSpecsArch).not.toHaveBeenCalled();
+    expect(reviewSpecs.mock.calls[0][1]).toBe("the draft");
+    expect(breakDownTasks.mock.calls[0][1]).toBe("the draft");
+  });
+
+  it("goes straight to the breakdown when the design was approved before the interruption", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-06T04:00:00Z",
+      data: {
+        phase: "design",
+        inventory: null,
+        projectContext: null,
+        lastProposal: null,
+        lastFeedback: null,
+        approved: "the approved design",
+        activeStep: { step: "design:breakdown", sessionId: "breakdown-session" },
+      },
+    });
+    canResumeSession.mockResolvedValue(true);
+    const sessions = claimingSessions(breakDownTasks, { tasks: [{ id: "task-1", description: "do it" }] });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec });
+
+    expect(runSpecsArch).not.toHaveBeenCalled();
+    expect(reviewSpecs).not.toHaveBeenCalled();
+    expect(breakDownTasks.mock.calls[0][1]).toBe("the approved design");
+    expect(sessions).toEqual([{ sessionId: "breakdown-session", resume: true }]);
+  });
+
+  it("resumes the project scan's own session when the run died during the scan", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-06T04:00:00Z",
+      data: { phase: "scan", activeStep: { step: "scan:project-context", sessionId: "scan-session" } },
+    });
+    canResumeSession.mockResolvedValue(true);
+    const sessions = claimingSessions(inventoryProjectContext, null);
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec });
+
+    expect(sessions).toEqual([{ sessionId: "scan-session", resume: true }]);
+    expect(runSpecsArch).toHaveBeenCalledTimes(1);
   });
 
   it("reuses the scan but writes a first proposal when it stopped before one existed", async () => {
@@ -206,11 +367,17 @@ describe("runPipeline — resuming a stopped run", () => {
 
     await runPipeline({ spec });
 
-    const saves = saveCheckpoint.mock.calls
-      .map(([, , , data]) => data)
-      .filter((data) => data.phase === "build")
-      .map((data) => data.completedTasks.length);
-    expect(saves).toEqual([0, 1, 2]);
+    const saves = buildSaves().map((data) => [data.completedTasks.length, data.activeStep?.step ?? null]);
+    // Each step is saved as running before its session starts, and cleared once it finishes.
+    expect(saves).toEqual([
+      [0, null],
+      [0, "coding:task-1"],
+      [1, null],
+      [1, "coding:task-2"],
+      [2, null],
+      [2, "e2e"],
+      [2, null],
+    ]);
     // An E2E failure keeps the progress, so the next run goes straight to E2E.
     expect(clearCheckpoint).not.toHaveBeenCalled();
   });
@@ -248,20 +415,21 @@ describe("runPipeline — resuming a stopped run", () => {
     expect(runSpecsArch).toHaveBeenCalled();
   });
 
-  it("starts fresh and says why when the saved progress is for a different spec", async () => {
+  it("stops and keeps the saved progress when it was saved for different inputs", async () => {
     loadCheckpoint.mockResolvedValue({ status: "stale", savedAt: "2026-09-24T01:00:00Z" });
-    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
-    runCoding.mockResolvedValue("implemented");
-    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
-    const progress: string[] = [];
 
-    await runPipeline({ spec, onProgress: (message) => progress.push(message) });
+    const result = await runPipeline({ spec });
 
-    expect(runSpecsArch).toHaveBeenCalled();
-    expect(progress.some((line) => line.includes("different spec"))).toBe(true);
+    expect(result.status).toBe("progress-kept");
+    expect(result.message).toContain("different inputs");
+    expect(inventoryProjectContext).not.toHaveBeenCalled();
+    expect(runSpecsArch).not.toHaveBeenCalled();
+    expect(runCoding).not.toHaveBeenCalled();
+    expect(saveCheckpoint).not.toHaveBeenCalled();
+    expect(clearCheckpoint).not.toHaveBeenCalled();
   });
 
-  it("starts fresh when every file the finished tasks wrote has been deleted", async () => {
+  it("stops and keeps the saved progress when every file the finished tasks wrote has been deleted", async () => {
     loadCheckpoint.mockResolvedValue({
       status: "found",
       savedAt: "2026-09-24T01:00:00Z",
@@ -270,15 +438,103 @@ describe("runPipeline — resuming a stopped run", () => {
         tasks: [{ id: "task-1", description: "a", targetFiles: ["definitely/not/here.ts"] }, savedPlan.tasks[1]],
       },
     });
+    const progress: string[] = [];
+
+    const result = await runPipeline({ spec, onProgress: (message) => progress.push(message) });
+
+    expect(result.status).toBe("progress-kept");
+    expect(runSpecsArch).not.toHaveBeenCalled();
+    expect(saveCheckpoint).not.toHaveBeenCalled();
+    expect(progress.some((line) => line.includes("are on disk any more"))).toBe(true);
+  });
+
+  it("runs each task in the session id saved for it before the session started", async () => {
     reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
-    runCoding.mockResolvedValue("implemented");
+    const sessions = claimingSessions(runCoding, "implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec });
+
+    const saved = buildSaves().find((data) => data.activeStep?.step === "coding:task-1")?.activeStep;
+    expect(sessions).toEqual([{ sessionId: saved.sessionId, resume: false }]);
+  });
+
+  it("resumes the interrupted task's own session when its transcript is still on disk", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-05T08:56:27Z",
+      data: { ...savedPlan, activeStep: { step: "coding:task-2", sessionId: "0d8c97dc-9cd4-421d-932d-d6f40588305f" } },
+    });
+    canResumeSession.mockResolvedValue(true);
+    const sessions = claimingSessions(runCoding, "implemented");
     runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
     const progress: string[] = [];
 
     await runPipeline({ spec, onProgress: (message) => progress.push(message) });
 
-    expect(runSpecsArch).toHaveBeenCalled();
-    expect(progress.some((line) => line.includes("are on disk any more"))).toBe(true);
+    expect(canResumeSession).toHaveBeenCalledWith("0d8c97dc-9cd4-421d-932d-d6f40588305f");
+    expect(sessions[0]).toEqual({ sessionId: "0d8c97dc-9cd4-421d-932d-d6f40588305f", resume: true });
+    // The next task gets a session of its own, not a resumed one.
+    expect(sessions[1]).toMatchObject({ resume: false });
+    expect((sessions[1] as { sessionId: string }).sessionId).not.toBe("0d8c97dc-9cd4-421d-932d-d6f40588305f");
+    expect(runCoding.mock.calls.map(([request]) => request.interrupted)).toEqual([false, false]);
+    expect(progress.some((line) => line.includes("resuming the interrupted session"))).toBe(true);
+  });
+
+  it("starts a new session told to continue from the files on disk when the transcript is gone", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-05T08:56:27Z",
+      data: { ...savedPlan, activeStep: { step: "coding:task-2", sessionId: "gone-session" } },
+    });
+    canResumeSession.mockResolvedValue(false);
+    const sessions = claimingSessions(runCoding, "implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec });
+
+    expect(sessions[0]).toMatchObject({ resume: false });
+    expect((sessions[0] as { sessionId: string }).sessionId).not.toBe("gone-session");
+    expect(runCoding.mock.calls.map(([request]) => [request.task.id, request.interrupted])).toEqual([
+      ["task-2", true],
+      ["task-3", false],
+    ]);
+  });
+
+  it("keeps the interrupted step saved until it is picked up again", async () => {
+    const active = { step: "coding:task-2", sessionId: "s-1" };
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-05T08:56:27Z",
+      data: { ...savedPlan, activeStep: active },
+    });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    await runPipeline({ spec, sqlRunner: undefined });
+
+    // No save before task-2 may drop it: a second interruption there would lose the session.
+    const firstSave = buildSaves()[0];
+    expect(firstSave.activeStep?.step).toBe("coding:task-2");
+  });
+
+  it("resumes an E2E check that was interrupted, and starts the next one fresh once it finished", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-05T08:56:27Z",
+      data: {
+        ...savedPlan,
+        completedTasks: savedPlan.tasks.map((task) => ({ ...task, summary: "done" })),
+        activeStep: { step: "e2e", sessionId: "e2e-session" },
+      },
+    });
+    canResumeSession.mockResolvedValue(true);
+    const sessions = claimingSessions(runE2eTest, { verdict: "fail", summary: "broken" });
+
+    await runPipeline({ spec });
+
+    expect(sessions).toEqual([{ sessionId: "e2e-session", resume: true }]);
+    expect(buildSaves().at(-1).activeStep).toBeUndefined();
   });
 
   it("resumes when the finished tasks named their files with the folder in front, or somewhere else", async () => {
@@ -319,7 +575,7 @@ describe("runPipeline", () => {
     const result = await runPipeline({ spec });
 
     expect(result.status).toBe("escalated-specs");
-    expect(reviewSpecs).toHaveBeenCalledTimes(3);
+    expect(reviewSpecs).toHaveBeenCalledTimes(1);
     expect(breakDownTasks).not.toHaveBeenCalled();
     expect(runCoding).not.toHaveBeenCalled();
   });
@@ -405,16 +661,16 @@ describe("runPipeline", () => {
     expect(result.message).not.toContain("unexpected error");
   });
 
-  it("hands every coding task and the E2E stage a fresh set of free ports", async () => {
+  it("hands the E2E stage a fresh set of free ports, and none to coding, which does not start the app", async () => {
     reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
     runCoding.mockResolvedValue("implemented");
     runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
 
     await runPipeline({ spec });
 
-    expect(runCoding.mock.calls[0][0].runtimePorts).toEqual([50001, 50002, 50003]);
+    expect(runCoding.mock.calls[0][0].runtimePorts).toBeUndefined();
     expect(runE2eTest.mock.calls[0][3]).toEqual([50001, 50002, 50003]);
-    expect(findFreePorts).toHaveBeenCalledTimes(2); // one coding task + E2E
+    expect(findFreePorts).toHaveBeenCalledTimes(1);
   });
 
   it("gives every coding task the approved design", async () => {

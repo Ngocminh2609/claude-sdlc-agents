@@ -1,3 +1,4 @@
+import type { ProjectMemory } from "./project-memory.js";
 import type { DatabaseContext } from "./database-scripts.js";
 import type { IndexRef } from "./project-index.js";
 import type { MetadataStandards } from "./metadata-standards.js";
@@ -29,6 +30,11 @@ export interface SpecInput {
   metadataStandards?: MetadataStandards | null;
   /** Installed FIS skills available to this run; null or absent means none were found. */
   skillCatalog?: SkillCatalog | null;
+  /**
+   * The target's project map (`project-memory.ts`), loaded by the CLI. Absent
+   * means the run neither reads nor writes one — tests and embedders.
+   */
+  projectMemory?: ProjectMemory | null;
 }
 
 /** One file in a reference repo that the work should copy from or follow. */
@@ -257,6 +263,12 @@ export interface CompletedTask {
   id: string;
   description: string;
   summary: string;
+  /**
+   * What the task actually wrote, as project-index lines (`path | kind | tags`),
+   * read back by plain code after the task — not the task's own claim. Later
+   * tasks get the names from here instead of opening the files.
+   */
+  files?: string[];
 }
 
 export interface AcceptanceCriterionCheck {

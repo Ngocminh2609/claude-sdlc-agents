@@ -45,6 +45,7 @@ export type RunStatus =
   | "escalated-e2e"
   | "incomplete"
   | "errored"
+  | "progress-kept"
   | "stopped";
 
 export type DbMode = "none" | "connection" | "schema-file";
@@ -584,6 +585,7 @@ function asRunStatus(status: string): RunStatus {
     "escalated-e2e",
     "incomplete",
     "errored",
+    "progress-kept",
   ];
   return known.includes(status as RunStatus) ? (status as RunStatus) : "errored";
 }

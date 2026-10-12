@@ -17,7 +17,11 @@ import { fileURLToPath } from "node:url";
  * never in the target project. A fingerprint of the inputs that the saved
  * plan depends on (the spec text, the reference repos, ...) is stored with it:
  * change any of them and the saved progress no longer describes this run, so
- * it is reported as stale and the run starts over.
+ * it is reported as stale. A stale, unreadable or wiped-out checkpoint stops
+ * the run (status `progress-kept`) instead of starting over: only `--fresh`
+ * discards saved progress. Starting over on its own once re-planned and
+ * re-coded two finished tasks of a real run because an input outside the spec
+ * changed, and the next save overwrote the progress it threw away.
  *
  * Never holds a `--db-connection` value — callers leave it out of both the
  * data and the fingerprint.
@@ -93,6 +97,22 @@ export async function saveCheckpoint<T>(
   const temp = `${target}.tmp`;
   await writeFile(temp, JSON.stringify(stored, null, 2), "utf-8");
   await rename(temp, target);
+}
+
+/**
+ * The message a run stops with when saved progress exists but cannot be
+ * resumed. `reason` says what is wrong with it; `inputs` lists what this
+ * pipeline's fingerprint is made of, so the person can undo the change instead
+ * of throwing the progress away.
+ */
+export function progressKeptMessage(reason: string, savedAt: string, inputs: string): string {
+  return [
+    `Saved progress from ${savedAt} was found, but ${reason}.`,
+    "",
+    "The run stopped without doing anything, so no usage was spent and the saved progress is untouched.",
+    `Either undo the change and run again to continue where it stopped (the progress depends on: ${inputs}),`,
+    "or start fresh (--fresh) to discard it and redo everything from the beginning.",
+  ].join("\n");
 }
 
 export async function clearCheckpoint(kind: CheckpointKind, projectPath: string): Promise<void> {

@@ -88,10 +88,28 @@ export interface IndexedRepo {
   indexDir: string;
   head: string | null;
   structureHash: string;
+  /**
+   * Changes only when the set of build manifests and CI files does — a module
+   * with its own pom.xml or package.json added or removed, a CI file appearing —
+   * not when one is edited (a new dependency) or a feature adds source folders.
+   * What the project map keys its saved conventions on (see `project-memory.ts`):
+   * conventions describe how the project is built and laid out, which a new
+   * dependency does not change, and re-scanning on every package.json edit
+   * re-spent the scan on nearly every run.
+   */
+  manifestHash: string;
   /** head + a hash of the uncommitted files — changes whenever the code does. */
   contentVersion: string;
   fileCount: number;
   changedFiles: number;
+  /**
+   * The files that changed since the previous refresh, as index lines
+   * (`path | kind | tags`, or `path | deleted`). Refreshed right after a
+   * coding task, this is exactly what that task wrote — the pipeline records
+   * it in the project map and hands it to the next tasks, so they know the
+   * names without opening the files. Empty on a first build.
+   */
+  changedLines: string[];
   rebuilt: boolean;
 }
 
@@ -116,11 +134,12 @@ export async function refreshIndexesForRun(
       onProgress(`Project index: ${path.basename(repo.repoRoot)} — ${state}`);
     }
     onProgress(`Project index: ready in ${((Date.now() - started) / 1000).toFixed(1)}s`);
-    return repos.map(({ repoRoot, indexFile, indexDir, structureHash, contentVersion }) => ({
+    return repos.map(({ repoRoot, indexFile, indexDir, structureHash, manifestHash, contentVersion }) => ({
       repoRoot,
       indexFile,
       indexDir,
       structureHash,
+      manifestHash,
       contentVersion,
     }));
   } catch (error) {
@@ -183,6 +202,7 @@ async function refreshRepo(repoRoot: string): Promise<IndexedRepo> {
   let files: Record<string, IndexEntry>;
   let changed = 0;
   let rebuilt = false;
+  const changedLines: string[] = [];
 
   // Which paths might differ from what is indexed. Null means "we cannot tell
   // cheaply — look at every file" (first run, a folder outside git, or a HEAD
@@ -210,6 +230,7 @@ async function refreshRepo(repoRoot: string): Promise<IndexedRepo> {
       if (!listedSet.has(file)) {
         delete files[file];
         changed++;
+        changedLines.push(`${file} | deleted`);
       }
     }
     const toCheck = candidates ? [...candidates].filter((file) => listedSet.has(file)) : listed;
@@ -225,10 +246,11 @@ async function refreshRepo(repoRoot: string): Promise<IndexedRepo> {
       if (entry) files[file] = entry;
       else delete files[file];
       changed++;
+      changedLines.push(entry ? renderEntry(file, entry) : `${file} | deleted`);
     }
   }
 
-  const structureHash = await computeStructureHash(repoRoot, Object.keys(files));
+  const { structureHash, manifestHash } = await computeStructureHash(repoRoot, Object.keys(files));
   const index: IndexFile = {
     version: INDEX_VERSION,
     repoRoot,
@@ -240,6 +262,10 @@ async function refreshRepo(repoRoot: string): Promise<IndexedRepo> {
   };
 
   if (changed || !previous || previous.head !== head || !existsSync(textPath)) {
+    // A unit test must never write the real index: it sits next to every checkpoint in runs/.
+    if (process.env.VITEST && !process.env.AIDEV_INDEX_DIR) {
+      throw new Error("project-index: set AIDEV_INDEX_DIR in the test before building an index.");
+    }
     await mkdir(indexDir, { recursive: true });
     await writeFile(jsonPath, JSON.stringify(index), "utf-8");
     await writeFile(textPath, renderText(index), "utf-8");
@@ -255,9 +281,11 @@ async function refreshRepo(repoRoot: string): Promise<IndexedRepo> {
     indexDir,
     head,
     structureHash,
+    manifestHash,
     contentVersion,
     fileCount: Object.keys(files).length,
     changedFiles: changed,
+    changedLines: rebuilt ? [] : changedLines.sort(),
     rebuilt,
   };
 }
@@ -394,12 +422,14 @@ function renderText(index: IndexFile): string {
     "# Directories (depth ≤ 5, file counts):",
     ...[...dirs.entries()].slice(0, 400).map(([dir, count]) => `#   ${dir}/ (${count})`),
     "",
-    ...paths.map((file) => {
-      const entry = index.files[file];
-      return `${file} | ${entry.kind}${entry.tags.length ? ` | ${entry.tags.join("; ")}` : ""}`;
-    }),
+    ...paths.map((file) => renderEntry(file, index.files[file])),
   ];
   return `${lines.join("\n")}\n`;
+}
+
+/** One file's line in the text index: `path | kind | tags`. */
+function renderEntry(file: string, entry: IndexEntry): string {
+  return `${file} | ${entry.kind}${entry.tags.length ? ` | ${entry.tags.join("; ")}` : ""}`;
 }
 
 /**
@@ -424,7 +454,11 @@ export function indexPromptSection(repos: IndexRef[] | undefined): string[] {
 }
 
 /** What a stage and a cache need to know about one indexed repo. */
-export type IndexRef = Pick<IndexedRepo, "repoRoot" | "indexFile" | "indexDir" | "structureHash" | "contentVersion">;
+export type IndexRef = Pick<
+  IndexedRepo,
+  "repoRoot" | "indexFile" | "indexDir" | "structureHash" | "contentVersion"
+> &
+  Partial<Pick<IndexedRepo, "manifestHash">>;
 
 /** The index covering a folder: the repo it is in, if that repo was indexed. */
 export function indexFor(repos: IndexRef[] | undefined, folder: string): IndexRef | undefined {
@@ -533,7 +567,10 @@ function walkList(root: string): string[] {
   return files.sort();
 }
 
-async function computeStructureHash(repoRoot: string, files: string[]): Promise<string> {
+async function computeStructureHash(
+  repoRoot: string,
+  files: string[],
+): Promise<{ structureHash: string; manifestHash: string }> {
   const dirs = new Set<string>();
   const manifests: string[] = [];
   for (const file of files) {
@@ -549,7 +586,10 @@ async function computeStructureHash(repoRoot: string, files: string[]): Promise<
       manifestHashes.push(`${manifest}:?`);
     }
   }
-  return hash([...[...dirs].sort(), ...manifestHashes].join("\n"));
+  return {
+    structureHash: hash([...[...dirs].sort(), ...manifestHashes].join("\n")),
+    manifestHash: hash(manifests.sort().join("\n")),
+  };
 }
 
 async function readIndex(jsonPath: string, repoRoot: string): Promise<IndexFile | null> {

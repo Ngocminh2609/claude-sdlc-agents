@@ -4,12 +4,14 @@ import { databasePromptSection } from "../database-scripts.js";
 import { config } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
+import { FEATURE_TEST_POLICY } from "../prompts/feature-test-policy.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { StageError } from "../stage-error.js";
 import { extraDirectories, referenceDirectories, referencePromptSection } from "../reference-repos.js";
 import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
+import { projectMemoryPromptSection } from "../project-memory.js";
 import type { ProjectContext, ReferenceInventory, SpecInput } from "../types.js";
 
 const SYSTEM_PROMPT = `You are the Specs & Arch agent in an automated SDLC pipeline.
@@ -24,6 +26,8 @@ then write a concise design proposal:
   endpoints or features), call that out explicitly so it can be broken into
   tasks later.
 Do not write or edit any code — this stage only produces the proposal text.
+
+${FEATURE_TEST_POLICY}
 
 The rules below govern the code this design will lead to. Plan for them now, so the
 coding stage does not have to retrofit them:
@@ -73,6 +77,7 @@ export async function runSpecsArch(
     ...referencePromptSection(spec.referencePaths, inventory),
     ...indexPromptSection(spec.projectIndexes),
     ...projectContextPromptSection(projectContext),
+    ...projectMemoryPromptSection(spec.projectMemory),
     ...metadataStandardsPromptSection(spec.metadataStandards, "design"),
     ...skillCatalogPromptSection(spec.skillCatalog),
   ];

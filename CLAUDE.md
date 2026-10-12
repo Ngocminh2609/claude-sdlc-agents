@@ -19,8 +19,9 @@
   adding it to that prompt is how two sessions end up naming one endpoint
   two different ways.
 - Feature mode's Coding stage does not write persisted unit test files (user
-  decision, 2026-09-28) — it verifies its own task by exercising the main flow
-  directly (run the app, hit the endpoint, invoke the function) and relies on
+  decision, 2026-09-28) and, since 2026-10-06 (user decision, to cut tokens),
+  does not start the app either — it verifies its task by build + formatter +
+  linter only, and relies on
   E2E/QA, right after it, to independently prove the whole feature against the
   spec's acceptance criteria through a real browser. This is deliberately
   scoped to feature mode only: clone mode's Clone Tests stage (mocked
@@ -29,6 +30,20 @@
   "Two honest limits") and would otherwise have no functional check beyond
   "does it compile". Do not remove Clone Tests on the strength of this
   decision; that is a separate call the user has not made.
+- That rule lives once in `src/prompts/feature-test-policy.ts` and goes to
+  Specs & Arch, task breakdown and Coding alike. Telling only Coding was not
+  enough: on a real run the design and every task still asked for unit test
+  classes, Coding followed the task, and tests were ~44% of the code written.
+  Coding's `guardNewTestFiles` refuses creating a new test file; editing an
+  existing one stays allowed so an intentional behaviour change is not stuck.
+- Every stage session is isolated by `isolatedOptions` in `src/sdk-helpers.ts`
+  (`settingSources: []`, `strictMcpConfig`, `tools` derived from
+  `allowedTools` + gated Write/Edit + TaskStop with Bash). Without it each
+  session loaded the operator's whole `~/.claude` — hooks, personal CLAUDE.md,
+  user MCP servers, skill/agent listings, every built-in tool schema — measured
+  at 32.8K tokens of context against 7.7K isolated, re-read on every turn. Do
+  not drop it to "inherit the user's setup"; a stage that really needs a tool
+  declares it.
 - Clone mode (`src/clone-pipeline.ts`) is a second pipeline, not a flag on the
   first. Keep it that way: a port has no design to approve and a feature has no
   file mapping to verify, and merging them would give both a set of stages that
@@ -116,7 +131,67 @@
 - The design reviewer approves a sound design with `amendments` (exact small
   fixes, appended to the approved design) rather than rejecting it; reject is
   for a design that needs rethinking. Don't tighten this back to approve-only:
-  review rounds are capped, and strictness burned all three on one real run.
+  strictness once burned all three review rounds on one real run.
+- Every step runs once per run (user decision, 2026-10-06): one design round
+  (`maxSpecAttempts: 1`; a reject stops the run with its feedback saved, and
+  the next run revises that proposal), and saved progress is never redone on
+  the pipeline's own judgement. A stale, unreadable or wiped-out checkpoint
+  stops the run with status `progress-kept`; only `--fresh` discards it. It
+  happened: an input outside the spec changed between two runs of the same
+  spec, the second silently re-planned and re-coded two finished tasks, and its
+  first save overwrote the progress.
+- Progress survives the process being killed (machine shut down, UI server
+  stopped): only `--fresh` / "Chạy lại từ đầu" discards it. Every agent step
+  of both pipelines — scan, design, review, breakdown, each Coding task and
+  E2E; clone plan:locate/conventions/mapping, each port group and every
+  verify build/tests/fix step — runs through `StepJournal`
+  (`src/step-session.ts`): its session id is saved in the checkpoint as
+  `activeStep` before the session starts, and the SDK writes the transcript
+  as it goes, so the next run resumes that very conversation (`resumePrompt`,
+  fresh ports carried over) instead of starting the step over. The id reaches
+  the query through AsyncLocalStorage (`claimStepSession` in
+  `runQueryLoop`), so stages stay unaware of it; only a step's first query is
+  tied to it (a structured-output retry gets its own). When the transcript is
+  gone, a Coding task starts a new session told to continue from the files on
+  disk. Finished steps are never re-run: their results are in the checkpoint
+  (feature: `draft`/`approved`/`completedTasks`; clone: `completedGroups`
+  and `verify.results`, which is dropped once a verify pass ends so a re-run
+  after an `incomplete` outcome checks the code afresh — same for a finished
+  E2E). Any save made before the interrupted step is reached must keep
+  `journal.unfinished`, or a second interruption loses the session to resume.
+  The CLI's run loggers are built with `saveAsItGoes`, so a killed run still
+  leaves its log as `in-progress` in the history. Unit tests must clean up
+  only the run folder they wrote (`logger.write()` returns it) — never
+  `runs/` itself, which holds every checkpoint and the history.
+- The project map (`src/project-memory.ts`, `runs/.project-memory/`, one JSON +
+  a readable `.md` per set of target folders) keeps what outlives a run: the
+  project conventions, keyed on `manifestHash` from the project index — the
+  SET of build manifest/CI file paths, not their content (a new dependency in
+  package.json re-spent the scan on nearly every run) and not the content
+  version (every run writes code) — and the features earlier runs built, task
+  by task. The Project Context agent scan runs only when the map has no
+  conventions for the current manifest set; otherwise the saved ones are
+  reused (relevant files are then looked up in the index). Specs-arch, task
+  breakdown and Coding get the feature list. After each coding task the
+  pipeline refreshes the project index (plain code) and records what the task
+  really wrote (`changedLines`: `path | kind | tags`) — in the map and in
+  `CompletedTask.files`, which later tasks get instead of opening the files.
+  Earlier tasks are named by their first line only in a Coding prompt: their
+  full descriptions were several thousand characters each, re-sent every turn. Works with or
+  without git. Only a run whose `spec.projectMemory` was loaded (the CLI)
+  reads or writes it, and a write from vitest without `AIDEV_MEMORY_DIR`
+  throws. A failed map write never fails the run (`bestEffort`).
+- `refreshRepo` (project index) and the project map both refuse to write from
+  vitest unless `AIDEV_INDEX_DIR` / `AIDEV_MEMORY_DIR` point at a temp folder:
+  `runs/` holds every checkpoint and the run history, and a test once deleted it.
+- Coding gets the project conventions but not the planning-stage relevant-file
+  list (it was ~20K characters re-sent on every turn of every task), and its
+  prompt carries a token budget: batch independent tool calls in one response,
+  read files only with Read and once (Edit requires a Read anyway, so a Bash
+  `cat` paid for the same file twice — measured on a real run), look symbols up
+  in the project index instead of exploring. Pre-loading the files a task
+  edits into the prompt was tried and rejected: the agent Reads them again
+  before Edit regardless, so the content would be paid for twice.
 - `aidev spec` (`src/stages/spec-draft.ts`, UI mode `"spec"`) drafts a spec
   from a plain-language request and stops at the file. It is read-only
   (`Read`/`Glob`/`Grep`) and must never chain into the feature pipeline by
@@ -156,8 +231,8 @@
   other root goes into `additionalDirectories` for each stage that reads or
   writes the target. Anything that assumes `projectPath` is the whole project
   (coverage, caches, checkpoints, build checks) must go through the roots.
-- Stages that may start the target app (Coding, E2E, Clone Port, Clone
-  Build) get free ports from
+- Stages that may start the target app (E2E, Clone Port, Clone Build — not
+  feature Coding, which no longer runs the app) get free ports from
   `findFreePorts` in the pipeline and the shared `runtimePortsPromptSection`
   rule. Never hardcode or assume a default port in a stage prompt.
 - Metadata standards (`src/metadata-standards.ts`) are opt-in per target via

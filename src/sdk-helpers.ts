@@ -1,6 +1,25 @@
-import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { getSessionInfo, query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { config } from "./config.js";
 import { recordUsage, usageOfResult } from "./token-usage.js";
+import { claimStepSession } from "./step-session.js";
+import { RUNTIME_PORTS_HEADER } from "./prompts/runtime-ports.js";
+
+/**
+ * Whether a stage session started by an earlier run can be resumed: its
+ * transcript is on disk under the current working directory's project folder.
+ *
+ * The SDK writes the transcript as the session goes, so a session whose
+ * process was killed (the machine shut down, the UI server stopped, a usage
+ * limit) is still there and resumes with its whole conversation — verified by
+ * killing a session mid-tool-call and resuming it.
+ */
+export async function canResumeSession(sessionId: string): Promise<boolean> {
+  try {
+    return (await getSessionInfo(sessionId, { dir: process.cwd() })) !== undefined;
+  } catch {
+    return false;
+  }
+}
 
 export interface TextRunResult {
   ok: boolean;
@@ -38,6 +57,79 @@ function isFlaggedError(message: SDKMessage): boolean {
   return message.type === "result" && message.is_error === true;
 }
 
+/** Built-in tools a stage reaches only through its `canUseTool` gate, never through `allowedTools`. */
+const GATED_WRITE_TOOLS = ["Write", "Edit"];
+
+/**
+ * Stops a server the agent started with `run_in_background`. Without it the
+ * agent falls back to hunting PIDs from Bash, which on Windows can miss the
+ * real server (a java/node child of the shell) and leave it holding a port.
+ */
+const BACKGROUND_STOP_TOOL = "TaskStop";
+
+/**
+ * Cuts a stage's session down to what the stage itself declares.
+ *
+ * Left to SDK defaults, every session loads the operator's whole `~/.claude`:
+ * their hooks, personal CLAUDE.md and rules, every user-level MCP server, the
+ * skill and agent listings, and the schema of every built-in tool. On a real
+ * feature run that was 30K+ tokens before the stage prompt, re-read on each of
+ * ~200 Coding turns; a probe of the same query measured 32.8K tokens of context
+ * by default against 7.7K with these options. None of it was meant for the
+ * pipeline: stages get their skill catalog and conventions through their own
+ * prompt sections.
+ *
+ * `tools` is the stage's `allowedTools` (pattern suffixes stripped), plus
+ * Write/Edit when the stage gates writes through `canUseTool`, plus TaskStop
+ * when it has Bash. A stage that sets `tools` or `settingSources` itself keeps
+ * its own value.
+ */
+export function isolatedOptions(options: Options): Options {
+  const declared = (options.allowedTools ?? []).map((tool) => tool.replace(/\(.*$/, ""));
+  const gated = options.canUseTool ? GATED_WRITE_TOOLS : [];
+  const stop = declared.includes("Bash") ? [BACKGROUND_STOP_TOOL] : [];
+  return {
+    settingSources: [],
+    strictMcpConfig: true,
+    tools: [...new Set([...declared, ...gated, ...stop])],
+    ...options,
+  };
+}
+
+/**
+ * Sent in place of a stage's prompt when its interrupted session is resumed:
+ * the original prompt is already in that session's history, so only the new
+ * situation needs saying. Ports are the one input that must be fresh — the old
+ * ones may be taken now — so the new prompt's port block is carried over.
+ */
+export function resumePrompt(originalPrompt: string): string {
+  const lines = originalPrompt.split("\n");
+  const start = lines.indexOf(RUNTIME_PORTS_HEADER);
+  const end = start === -1 ? -1 : lines.indexOf("", start);
+  const ports = start === -1 ? [] : ["", ...lines.slice(start, end === -1 ? undefined : end)];
+  return [
+    "--- Resumed after an interruption ---",
+    "This session was interrupted before you finished (the machine or the pipeline was shut down, or",
+    "a usage limit was hit). Everything above is still your own work and context. Any server or",
+    "background process you had started is no longer running. Check the current state of anything",
+    "you were changing, then continue the same job from where you stopped — do not start it over —",
+    "and finish with exactly the output you were asked for.",
+    ...ports,
+  ].join("\n");
+}
+
+/**
+ * Ties a query to its pipeline step's saved session (see `step-session.ts`):
+ * a new step's session starts under the id already saved in the checkpoint; an
+ * interrupted step's session is resumed with `resumePrompt`.
+ */
+function withStepSession(prompt: string, options: Options): { prompt: string; options: Options } {
+  const session = claimStepSession();
+  if (!session) return { prompt, options };
+  if (session.resume) return { prompt: resumePrompt(prompt), options: { ...options, resume: session.sessionId } };
+  return { prompt, options: { ...options, sessionId: session.sessionId } };
+}
+
 /**
  * Runs the message loop shared by both query shapes below: watches for the
  * SDK's own error signal on every message (see `isFlaggedError`), not just on
@@ -66,7 +158,8 @@ async function runQueryLoop<T>(
   }
 
   try {
-    for await (const message of query({ prompt, options })) {
+    const step = withStepSession(prompt, options);
+    for await (const message of query({ prompt: step.prompt, options: isolatedOptions(step.options) })) {
       if (message.type === "assistant" && message.error) {
         lastAssistantError = message.error;
       }

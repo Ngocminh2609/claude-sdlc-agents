@@ -25,11 +25,14 @@ const loadCheckpoint = vi.fn();
 const saveCheckpoint = vi.fn();
 const clearCheckpoint = vi.fn();
 const findFreePorts = vi.fn();
+const canResumeSession = vi.fn();
 
 vi.mock("./free-ports.js", () => ({ findFreePorts }));
+vi.mock("./sdk-helpers.js", () => ({ canResumeSession }));
 
 vi.mock("./checkpoint.js", () => ({
   fingerprint: (parts: unknown[]) => JSON.stringify(parts),
+  progressKeptMessage: (reason: string) => `kept: ${reason}`,
   loadCheckpoint,
   saveCheckpoint,
   clearCheckpoint,
@@ -59,6 +62,10 @@ vi.mock("./stages/clone-port.js", async (importOriginal) => ({
 vi.mock("./stages/clone-tests.js", () => ({ runCloneTests }));
 
 const { runClonePipeline } = await import("./clone-pipeline.js");
+const { claimStepSession } = await import("./step-session.js");
+
+const cloneSaves = () =>
+  saveCheckpoint.mock.calls.map(([, , , data]) => data).filter((data) => Array.isArray(data.completedGroups));
 
 const clone: CloneInput = {
   what: "Danh mục nghề nghiệp",
@@ -92,6 +99,7 @@ beforeEach(() => {
   checkWiring.mockReturnValue({ unresolvedImports: [], unmatchedCalls: [], callsChecked: 0, endpointsKnown: 0 });
   runCloneTests.mockResolvedValue(passingTests);
   fixCloneFailures.mockResolvedValue("fixed");
+  canResumeSession.mockResolvedValue(false);
 });
 
 describe("runClonePipeline", () => {
@@ -397,8 +405,107 @@ describe("runClonePipeline", () => {
   it("saves progress after the mapping and after every group, and clears it when done", async () => {
     await runClonePipeline({ clone });
 
-    expect(saveCheckpoint.mock.calls.map(([, , , data]) => data.completedGroups.length)).toEqual([0, 1, 2]);
+    // Planning is saved first, then every step as running before its session
+    // starts and with its result once it ends.
+    expect(saveCheckpoint.mock.calls[0][3]).toEqual({ phase: "plan" });
+    expect(cloneSaves().map((data) => [data.completedGroups.length, data.activeStep?.step ?? null])).toEqual([
+      [0, null],
+      [0, "port:SQL"],
+      [1, null],
+      [1, "port:BE:category"],
+      [2, null],
+      [2, "verify:build:1"],
+      [2, null],
+      [2, "verify:tests:1"],
+      [2, null],
+    ]);
     expect(clearCheckpoint).toHaveBeenCalledWith("clone", clone.projectPath);
+  });
+
+  it("resumes the interrupted port group's own session", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-06T04:00:00Z",
+      data: {
+        inventory: { files: [{ path: "be/Ctl.java", role: "controller" }], notes: "" },
+        conventions: null,
+        mapping,
+        completedGroups: [{ group: "SQL", summary: "done" }],
+        activeStep: { step: "port:BE:category", sessionId: "port-session" },
+      },
+    });
+    canResumeSession.mockResolvedValue(true);
+    const sessions: unknown[] = [];
+    portCloneGroup.mockImplementation(async () => {
+      sessions.push(claimStepSession());
+      return { summary: "ported", deviations: [] };
+    });
+
+    await runClonePipeline({ clone });
+
+    expect(portCloneGroup.mock.calls.map(([request]) => request.group)).toEqual(["BE:category"]);
+    expect(sessions).toEqual([{ sessionId: "port-session", resume: true }]);
+  });
+
+  it("replays the verify steps a killed run had finished instead of running them again", async () => {
+    const failedBuild = { ok: false, summary: "compile error", errors: ["Ctl.java:1"] };
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-06T04:00:00Z",
+      data: {
+        inventory: { files: [{ path: "be/Ctl.java", role: "controller" }], notes: "" },
+        conventions: null,
+        mapping,
+        completedGroups: [
+          { group: "SQL", summary: "done" },
+          { group: "BE:category", summary: "done" },
+        ],
+        verify: { results: { "verify:build:1": failedBuild, "verify:tests:1": passingTests } },
+        activeStep: { step: "verify:fix:1", sessionId: "fix-session" },
+      },
+    });
+    canResumeSession.mockResolvedValue(true);
+    const sessions: unknown[] = [];
+    fixCloneFailures.mockImplementation(async () => {
+      sessions.push(claimStepSession());
+      return "fixed";
+    });
+
+    await runClonePipeline({ clone });
+
+    expect(portCloneGroup).not.toHaveBeenCalled();
+    // build:1 and tests:1 came from the checkpoint; only build:2 runs for real after the fix.
+    expect(verifyCloneBuild).toHaveBeenCalledTimes(1);
+    expect(sessions).toEqual([{ sessionId: "fix-session", resume: true }]);
+  });
+
+  it("drops the finished verify pass from the checkpoint, so the next run checks the code afresh", async () => {
+    checkCoverage.mockReturnValue({ present: [], missing: ["BE/Ctl.java"] });
+
+    const result = await runClonePipeline({ clone });
+
+    expect(result.status).toBe("incomplete");
+    const last = cloneSaves().at(-1);
+    expect(last.verify).toBeUndefined();
+    expect(last.activeStep).toBeUndefined();
+  });
+
+  it("resumes the planning step a killed run was in", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-06T04:00:00Z",
+      data: { phase: "plan", activeStep: { step: "plan:mapping", sessionId: "mapping-session" } },
+    });
+    canResumeSession.mockResolvedValue(true);
+    const sessions: unknown[] = [];
+    mapCloneTargets.mockImplementation(async () => {
+      sessions.push(claimStepSession());
+      return mapping;
+    });
+
+    await runClonePipeline({ clone });
+
+    expect(sessions).toEqual([{ sessionId: "mapping-session", resume: true }]);
   });
 
   it("keeps the progress when the port is incomplete", async () => {
@@ -418,6 +525,19 @@ describe("runClonePipeline", () => {
     expect(verifyCloneBuild.mock.calls[0][2]).toEqual([50001, 50002, 50003]);
     expect(runCloneTests.mock.calls[0][0].runtimePorts).toEqual([50001, 50002, 50003]);
     expect(findFreePorts).toHaveBeenCalledTimes(4); // two groups + the build + the tests
+  });
+
+  it("stops and keeps the saved progress when it was saved for a different clone request", async () => {
+    loadCheckpoint.mockResolvedValue({ status: "stale", savedAt: "2026-09-29T08:10:48Z" });
+
+    const result = await runClonePipeline({ clone });
+
+    expect(result.status).toBe("progress-kept");
+    expect(inventoryReferences).not.toHaveBeenCalled();
+    expect(mapCloneTargets).not.toHaveBeenCalled();
+    expect(portCloneGroup).not.toHaveBeenCalled();
+    expect(saveCheckpoint).not.toHaveBeenCalled();
+    expect(clearCheckpoint).not.toHaveBeenCalled();
   });
 
   it("ignores saved progress when asked to start fresh", async () => {

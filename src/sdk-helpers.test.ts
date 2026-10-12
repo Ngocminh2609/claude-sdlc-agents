@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const query = vi.fn();
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query }));
 
-const { runTextQuery, runStructuredQuery } = await import("./sdk-helpers.js");
+const { runTextQuery, runStructuredQuery, isolatedOptions, resumePrompt } = await import("./sdk-helpers.js");
 
 // Only the newer tests below assert call counts, but a leftover implementation
 // or queued mockImplementationOnce from an earlier test would otherwise still
@@ -189,5 +189,88 @@ describe("runStructuredQuery", () => {
 
     expect(result.ok).toBe(false);
     expect(result.data).toBeUndefined();
+  });
+});
+
+describe("isolatedOptions", () => {
+  it("does not load the operator's ~/.claude settings or MCP servers into a stage", async () => {
+    query.mockReturnValue(messages({ type: "result", subtype: "success", result: "done" }));
+
+    await runTextQuery("prompt", { allowedTools: ["Read"] });
+
+    const [{ options }] = query.mock.calls[0];
+    expect(options.settingSources).toEqual([]);
+    expect(options.strictMcpConfig).toBe(true);
+  });
+
+  it("limits tools to the declared set, plus gated writes and TaskStop where they apply", () => {
+    const canUseTool = async () => ({ behavior: "allow" as const, updatedInput: {} });
+
+    expect(isolatedOptions({ allowedTools: ["Read", "Glob", "Grep"] }).tools).toEqual(["Read", "Glob", "Grep"]);
+    expect(isolatedOptions({ allowedTools: ["Read", "Bash(npm *)"], canUseTool }).tools).toEqual([
+      "Read",
+      "Bash",
+      "Write",
+      "Edit",
+      "TaskStop",
+    ]);
+  });
+
+  it("keeps a stage's own tools and settingSources", () => {
+    const options = isolatedOptions({ allowedTools: ["Read"], tools: ["Read", "WebFetch"], settingSources: ["project"] });
+
+    expect(options.tools).toEqual(["Read", "WebFetch"]);
+    expect(options.settingSources).toEqual(["project"]);
+  });
+});
+
+describe("step sessions", () => {
+  it("starts a step's first query under the session id saved for it", async () => {
+    const { StepJournal } = await import("./step-session.js");
+    query.mockReturnValue(messages({ type: "result", subtype: "success", result: "done" }));
+    const saved: unknown[] = [];
+
+    await new StepJournal(undefined).run("design:review", async (active) => void saved.push(active), () =>
+      runTextQuery("the prompt", {}),
+    );
+
+    const [{ prompt, options }] = query.mock.calls[0];
+    expect(prompt).toBe("the prompt");
+    expect(options.sessionId).toBe((saved[0] as { sessionId: string }).sessionId);
+    expect(options.resume).toBeUndefined();
+  });
+
+  it("gives a second query in the same step a session of its own", async () => {
+    const { StepJournal } = await import("./step-session.js");
+    query.mockImplementation(() => messages({ type: "result", subtype: "success", result: "done" }));
+
+    await new StepJournal(undefined).run("e2e", async () => {}, async () => {
+      await runTextQuery("first", {});
+      await runTextQuery("second", {});
+    });
+
+    expect(query.mock.calls[0][0].options.sessionId).toBeDefined();
+    expect(query.mock.calls[1][0].options.sessionId).toBeUndefined();
+  });
+
+  it("leaves queries outside any step untouched", async () => {
+    query.mockReturnValue(messages({ type: "result", subtype: "success", result: "done" }));
+
+    await runTextQuery("plain", {});
+
+    const [{ prompt, options }] = query.mock.calls[0];
+    expect(prompt).toBe("plain");
+    expect(options.sessionId).toBeUndefined();
+    expect(options.resume).toBeUndefined();
+  });
+
+  it("builds a resume prompt that carries the fresh port block over", () => {
+    const prompt = resumePrompt(
+      ["--- Spec ---", "x", "", "--- Free ports for running the app ---", "These TCP ports: 50001.", "- rule"].join("\n"),
+    );
+
+    expect(prompt).toContain("Resumed after an interruption");
+    expect(prompt).not.toContain("--- Spec ---");
+    expect(prompt).toContain("These TCP ports: 50001.");
   });
 });

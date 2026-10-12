@@ -118,14 +118,15 @@ describe("runCoding", () => {
     expect(write.behavior).toBe("allow");
   });
 
-  it("includes the free ports for any server the task starts", async () => {
-    await runCoding(request({ runtimePorts: [50001, 50002] }));
+  it("verifies by build and lint only, without starting the app", async () => {
+    await runCoding(request());
 
-    const [prompt] = runTextQuery.mock.calls[0];
-    expect(prompt).toContain("50001, 50002");
+    const [prompt, options] = runTextQuery.mock.calls[0];
+    expect(options.systemPrompt).toContain("Do not run the app to try it");
+    expect(prompt).not.toContain("Free ports for running the app");
   });
 
-  it("includes the shared project context in the prompt when given", async () => {
+  it("includes the project conventions but not the planning-stage file list", async () => {
     await runCoding(
       request({
         projectContext: {
@@ -138,7 +139,8 @@ describe("runCoding", () => {
 
     const [prompt] = runTextQuery.mock.calls[0];
     expect(prompt).toContain("kebab-case files");
-    expect(prompt).toContain("src/widget-base.ts");
+    // That list cost ~20K characters on every turn of every task; files are found through the index.
+    expect(prompt).not.toContain("src/widget-base.ts");
   });
 });
 
@@ -201,5 +203,60 @@ describe("runCoding with reference repositories", () => {
     const [, options] = runTextQuery.mock.calls[0];
 
     expect((await options.canUseTool("WebFetch", {}, {})).behavior).toBe("deny");
+  });
+
+  it("canUseTool refuses creating a new test file", async () => {
+    await runCoding(request());
+    const [, options] = runTextQuery.mock.calls[0];
+
+    for (const file of ["src/test/java/com/x/AuthServiceTest.java", "src/pages/LoginPage.test.tsx"]) {
+      const result = await options.canUseTool("Write", { file_path: path.join(sample, file) }, {});
+      expect(result.behavior).toBe("deny");
+    }
+  });
+
+  it("canUseTool still allows changing a test file that already exists", async () => {
+    await runCoding(request());
+    const [, options] = runTextQuery.mock.calls[0];
+    const existing = path.resolve("src/stages/coding.test.ts");
+
+    expect((await options.canUseTool("Write", { file_path: existing }, {})).behavior).toBe("allow");
+    expect((await options.canUseTool("Edit", { file_path: existing }, {})).behavior).toBe("allow");
+  });
+
+  it("tells an interrupted task to continue from the files on disk, and only that task", async () => {
+    await runCoding(request({ interrupted: true }));
+    await runCoding(request());
+
+    expect(runTextQuery.mock.calls[0][0]).toContain("This task was started before and interrupted");
+    expect(runTextQuery.mock.calls[1][0]).not.toContain("interrupted");
+  });
+
+  it("names earlier tasks by their first line and lists the files they really wrote", async () => {
+    await runCoding(
+      request({
+        completedTasks: [
+          {
+            id: "T1",
+            description: "Rooms API\nA very long description that must not be re-sent on every turn.",
+            summary: "Added the rooms API.",
+            files: ["BE/src/RoomController.java | controller | GET /api/rooms"],
+          },
+        ],
+      }),
+    );
+
+    const [prompt] = runTextQuery.mock.calls[0];
+    expect(prompt).toContain("- T1 (Rooms API): Added the rooms API.");
+    expect(prompt).toContain("    BE/src/RoomController.java | controller | GET /api/rooms");
+    expect(prompt).not.toContain("A very long description");
+  });
+
+  it("puts the feature verification rule in the Coding prompt", async () => {
+    await runCoding(request());
+    const [, options] = runTextQuery.mock.calls[0];
+    const { FEATURE_TEST_POLICY } = await import("../prompts/feature-test-policy.js");
+
+    expect(options.systemPrompt).toContain(FEATURE_TEST_POLICY);
   });
 });

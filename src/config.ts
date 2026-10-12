@@ -1,5 +1,8 @@
 export const config = {
-  maxSpecAttempts: 3,
+  // One design round per run (user decision, 2026-10-06): every step runs once.
+  // A rejected design stops the run with the reviewer's feedback saved; running
+  // again revises that proposal instead of the pipeline looping on its own.
+  maxSpecAttempts: 1,
   model: process.env.CLAUDE_MODEL ?? "claude-sonnet-5",
   playwrightTestCommand: "npx playwright test",
   // The three planning stages get Read/Glob/Grep and throw on exhaustion,

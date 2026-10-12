@@ -4,11 +4,14 @@
  * Shared rather than written into each stage, because both stages start the
  * same servers and must follow the same rule: never assume a default port.
  */
+/** Heading of the port block — `resumePrompt` finds it to hand a resumed session fresh ports. */
+export const RUNTIME_PORTS_HEADER = "--- Free ports for running the app ---";
+
 export function runtimePortsPromptSection(ports: number[]): string[] {
   if (!ports.length) return [];
   return [
     "",
-    "--- Free ports for running the app ---",
+    RUNTIME_PORTS_HEADER,
     `These TCP ports were checked free on this machine just before your session: ${ports.join(", ")}.`,
     "This machine runs other projects, so a default port (8080, 8081, 3000, 5173, ...) may already be",
     "taken by an unrelated process. Whenever you start a server (backend, frontend dev server, a",

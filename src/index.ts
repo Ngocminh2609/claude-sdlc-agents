@@ -16,7 +16,7 @@ import { runSpecDraft, type SpecDraftInput } from "./stages/spec-draft.js";
 import { connectDatabase, describeDatabase, parseConnection, type SqlRunner } from "./database.js";
 import type { DatabaseContext } from "./database-scripts.js";
 import { StageError } from "./stage-error.js";
-import { assertRootsExist, buildRoots, type ProjectRoot } from "./target-roots.js";
+import { assertRootsExist, buildRoots, rootsOf, type ProjectRoot } from "./target-roots.js";
 import { missingBuildManifestWarning } from "./clone-build-manifest-check.js";
 import { runClonePipeline } from "./clone-pipeline.js";
 import { encodeEvent, eventStreamEnabled, type PipelineEvent } from "./events.js";
@@ -28,6 +28,7 @@ import {
   metadataStandardsFor,
 } from "./metadata-standards.js";
 import { runPipeline } from "./pipeline.js";
+import { loadProjectMemory } from "./project-memory.js";
 import { describeSkillCatalog, loadSkillCatalog, relevantSkillCatalog } from "./skills-catalog.js";
 import { CloneRunLogger, RunLogger } from "./run-log.js";
 import type { CloneInput, SpecInput } from "./types.js";
@@ -116,7 +117,7 @@ async function runFeature(argv: string[]): Promise<void> {
   }
 
   try {
-    const logger = new RunLogger(spec, args.specPath);
+    const logger = new RunLogger(spec, args.specPath, { saveAsItGoes: true });
     for (const line of describeMetadataStandardsOverride(args.noMetadataStandards)) onProgress(line);
     onProgress(describeMetadataStandards(spec.metadataStandards));
     onProgress(describeSkillCatalog(spec.skillCatalog));
@@ -124,6 +125,8 @@ async function runFeature(argv: string[]): Promise<void> {
       [...(spec.targetRoots ?? []).map((root) => root.path), ...(spec.referencePaths ?? [])],
       onProgress,
     );
+
+    spec.projectMemory = await loadProjectMemory(rootsOf(spec));
 
     process.chdir(spec.projectPath);
 
@@ -195,7 +198,7 @@ async function runClone(argv: string[]): Promise<void> {
     metadataStandards: metadataStandardsFor(targetRoots, args.noMetadataStandards),
     skillCatalog: relevantSkillCatalog(loadSkillCatalog(targetRoots), args.what, config.maxSkills),
   };
-  const logger = new CloneRunLogger(clone);
+  const logger = new CloneRunLogger(clone, { saveAsItGoes: true });
   for (const line of describeMetadataStandardsOverride(args.noMetadataStandards)) onProgress(line);
   onProgress(describeMetadataStandards(clone.metadataStandards));
   onProgress(describeSkillCatalog(clone.skillCatalog));

@@ -7,7 +7,8 @@ import { runCloneTests } from "./stages/clone-tests.js";
 import { inventoryReferences } from "./stages/reference-inventory.js";
 import { readTargetConventions } from "./stages/target-conventions.js";
 import { StageError } from "./stage-error.js";
-import { clearCheckpoint, fingerprint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import { clearCheckpoint, fingerprint, loadCheckpoint, progressKeptMessage, saveCheckpoint } from "./checkpoint.js";
+import { isActiveStep, StepJournal, type ActiveStep } from "./step-session.js";
 import { config } from "./config.js";
 import { indexFor, searchIndexes } from "./project-index.js";
 import { cachedStage, repoVersions } from "./stage-cache.js";
@@ -47,7 +48,7 @@ import type {
  */
 
 export interface ClonePipelineResult {
-  status: "done" | "incomplete" | "errored";
+  status: "done" | "incomplete" | "errored" | "progress-kept";
   message: string;
   logPath?: string;
 }
@@ -84,18 +85,39 @@ export async function runClonePipeline(opts: ClonePipelineOptions): Promise<Clon
 
 /**
  * What a stopped clone run leaves for the next one: the decided mapping and
- * the groups already written. Saved after the mapping and after every group.
+ * the groups already written. Saved after the mapping, before and after every
+ * group, and around every build/test/fix step.
  */
 export interface CloneCheckpoint {
   inventory: ReferenceInventory;
   conventions: TargetConventions | null;
   mapping: CloneMapping;
   completedGroups: { group: string; summary: string; deviations?: CloneDeviation[] }[];
+  /** The port or verify step whose agent session was running when this was saved. */
+  activeStep?: ActiveStep;
+  /**
+   * Build, test and fix results of the verify pass that was in progress, keyed
+   * `verify:<kind>:<n>` in the order the pass runs them. A run killed mid-pass
+   * replays these instead of running them again. Dropped once the pass ends,
+   * so re-running after an `incomplete` outcome (and a hand fix) verifies the
+   * code as it is then.
+   */
+  verify?: { results: Record<string, unknown> };
+}
+
+/** Saved before locate starts, so a run killed while planning resumes the step it was in. */
+interface ClonePlanCheckpoint {
+  phase: "plan";
+  activeStep?: ActiveStep;
 }
 
 type CloneOutcome = Omit<ClonePipelineResult, "logPath">;
 
 const CLONE_PLAN_VERSION = "clone-plan-v2";
+
+/** What the clone checkpoint fingerprint is made of, in words, for `progressKeptMessage`. */
+const CLONE_INPUTS =
+  "the --what keyword, the reference repos and their folders, the target folders, the metadata standards, the installed skill catalog and aidev's clone plan version";
 
 async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> {
   const { clone, onProgress = () => {}, logger, skipBuild = false, skipTests = false } = opts;
@@ -119,6 +141,17 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
   const { inventory, conventions, mapping } = plan;
   const target = forLaterStages(clone, inventory);
   const completedGroups = [...plan.completedGroups];
+  const journal = new StepJournal(plan.activeStep);
+  const verify = plan.verify ?? { results: {} };
+  const saveClone = (activeStep: ActiveStep | undefined = journal.unfinished) =>
+    saveCheckpoint<CloneCheckpoint>("clone", clone.projectPath, checkpointKey, {
+      inventory,
+      conventions,
+      mapping,
+      completedGroups: [...completedGroups],
+      ...(activeStep ? { activeStep } : {}),
+      ...(Object.keys(verify.results).length ? { verify } : {}),
+    });
   const uncertain = mapping.entries.filter((entry) => entry.uncertain).length;
   if (missingSchemaScript(mapping)) {
     onProgress("Clone mapping: warning — entities are ported but no database script is mapped");
@@ -136,23 +169,21 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
     // from the code the server groups just wrote — not the reference's routes.
     const serverApi = layer === "fe" ? describeServerApi(portedServerApi(mapping, roots)) : undefined;
     if (serverApi) onProgress(`Clone port: ${group} is wired to ${serverApi.length} server route(s) read from the ported code`);
-    const { summary, deviations } = await portCloneGroup({
-      clone: target,
-      mapping,
-      conventions,
-      group,
-      completedGroups: [...completedGroups],
-      runtimePorts: await findFreePorts(),
-      serverApi,
+    const { summary, deviations } = await journal.run(`port:${group}`, saveClone, async ({ resumed }) => {
+      if (resumed) onProgress(`Clone port: ${group} — resuming the interrupted session`);
+      return portCloneGroup({
+        clone: target,
+        mapping,
+        conventions,
+        group,
+        completedGroups: [...completedGroups],
+        runtimePorts: await findFreePorts(),
+        serverApi,
+      });
     });
     logger?.recordClonePort(group, summary);
     completedGroups.push({ group, summary, deviations });
-    await saveCheckpoint<CloneCheckpoint>("clone", clone.projectPath, checkpointKey, {
-      inventory,
-      conventions,
-      mapping,
-      completedGroups: [...completedGroups],
-    });
+    await saveClone();
   }
 
   // --- 5. Coverage: settled by the filesystem, not by an opinion ---
@@ -174,9 +205,24 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
 
   // --- 7. Build, 8. Unit tests, then fix rounds until both pass ---
   const serverApi = describeServerApi(portedServerApi(mapping, roots));
+  // Each verify step runs once per pass: the n-th build, test or fix step of a
+  // pass that a killed run had already finished is replayed from the
+  // checkpoint; the one it was in resumes its own session.
+  const stepCounts: Record<string, number> = {};
+  const once = async <T>(kind: string, run: () => Promise<T>): Promise<T> => {
+    stepCounts[kind] = (stepCounts[kind] ?? 0) + 1;
+    const step = `verify:${kind}:${stepCounts[kind]}`;
+    if (step in verify.results) return verify.results[step] as T;
+    const value = await journal.run(step, saveClone, run);
+    verify.results[step] = value;
+    await saveClone();
+    return value;
+  };
   const runBuild = async (): Promise<CloneBuildVerdict> => {
     onProgress("Clone build: compiling the target project");
-    const verdict = await verifyCloneBuild(mapping, conventions, await findFreePorts(), roots);
+    const verdict = await once("build", async () =>
+      verifyCloneBuild(mapping, conventions, await findFreePorts(), roots),
+    );
     logger?.recordCloneBuild(verdict);
     onProgress(`Clone build: ${verdict.ok ? "pass" : "fail"}`);
     return verdict;
@@ -188,15 +234,17 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
     onProgress(
       rerun ? "Clone tests: re-running the unit tests" : "Clone tests: writing and running unit tests for the CRUD flow",
     );
-    const verdict = await runCloneTests({
-      clone: target,
-      mapping,
-      conventions,
-      roots,
-      serverApi,
-      runtimePorts: await findFreePorts(),
-      rerun,
-    });
+    const verdict = await once("tests", async () =>
+      runCloneTests({
+        clone: target,
+        mapping,
+        conventions,
+        roots,
+        serverApi,
+        runtimePorts: await findFreePorts(),
+        rerun,
+      }),
+    );
     logger?.recordCloneTests(verdict);
     onProgress(`Clone tests: ${describeTests(verdict)}`);
     return verdict;
@@ -215,7 +263,9 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
     const failures = failuresOf(build, tests);
     if (!failures.length) break;
     onProgress(`Clone fix: round ${round}/${config.maxCloneFixRounds} — ${failures.length} failure(s) to fix`);
-    const summary = await fixCloneFailures({ clone: target, mapping, conventions, failures, serverApi, round });
+    const summary = await once("fix", () =>
+      fixCloneFailures({ clone: target, mapping, conventions, failures, serverApi, round }),
+    );
     fixes.push(summary);
     logger?.recordCloneFix(round, summary);
     if (build) build = await runBuild();
@@ -228,7 +278,13 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
   const outcome = summarise(clone, mapping, coverage, wiring, build, tests, fixes, uncertain, deviations);
   // A finished port has nothing to resume; an incomplete one keeps its
   // progress, so re-running after a hand fix goes straight to coverage + build.
-  if (outcome.status === "done") await clearCheckpoint("clone", clone.projectPath);
+  if (outcome.status === "done") {
+    await clearCheckpoint("clone", clone.projectPath);
+  } else {
+    // The pass is over: the next run verifies the code as it is then.
+    verify.results = {};
+    await saveClone();
+  }
   return outcome;
 }
 
@@ -248,19 +304,22 @@ async function resumeOrPlanClone(
     return planClone(opts, checkpointKey);
   }
 
-  const saved = await loadCheckpoint<CloneCheckpoint>("clone", clone.projectPath, checkpointKey);
-  if (saved.status === "stale") {
-    onProgress("Resume: the saved progress is for a different clone request — starting fresh");
+  const saved = await loadCheckpoint<CloneCheckpoint | ClonePlanCheckpoint>("clone", clone.projectPath, checkpointKey);
+  if (saved.status === "none") return planClone(opts, checkpointKey);
+  // Each step runs once: saved progress is never redone or overwritten unless
+  // the person asks for it with --fresh (see checkpoint.ts).
+  const keep = (reason: string): CloneOutcome => {
+    onProgress(`Resume: ${reason} — stopped, saved progress kept (start fresh to discard it)`);
+    return { status: "progress-kept", message: progressKeptMessage(reason, saved.savedAt, CLONE_INPUTS) };
+  };
+  if (saved.status === "stale") return keep("it was saved for a different clone request");
+  if (isClonePlanCheckpoint(saved.data)) {
+    onProgress(`Resume: continuing the clone planning stopped at ${saved.savedAt} (start fresh to redo everything)`);
+    return planClone(opts, checkpointKey, saved.data.activeStep);
   }
-  if (saved.status !== "found") return planClone(opts, checkpointKey);
-
-  if (!isCloneCheckpoint(saved.data)) {
-    onProgress("Resume: the saved progress is unreadable — starting fresh");
-    return planClone(opts, checkpointKey);
-  }
+  if (!isCloneCheckpoint(saved.data)) return keep("it is unreadable");
   if (portedFilesAreGone(saved.data, rootsOf(clone))) {
-    onProgress("Resume: none of the files the finished groups wrote are on disk any more — starting fresh");
-    return planClone(opts, checkpointKey);
+    return keep("none of the files the finished groups wrote are on disk any more");
   }
 
   const data = saved.data;
@@ -281,9 +340,21 @@ async function resumeOrPlanClone(
   return data;
 }
 
-async function planClone(opts: ClonePipelineOptions, checkpointKey: string): Promise<CloneCheckpoint | CloneOutcome> {
+async function planClone(
+  opts: ClonePipelineOptions,
+  checkpointKey: string,
+  pending?: ActiveStep,
+): Promise<CloneCheckpoint | CloneOutcome> {
   const { clone, onProgress = () => {}, logger, fresh = false } = opts;
   const roots = rootsOf(clone);
+  const journal = new StepJournal(pending);
+  const savePlan = (activeStep: ActiveStep | undefined = journal.unfinished) =>
+    saveCheckpoint<ClonePlanCheckpoint>("clone", clone.projectPath, checkpointKey, {
+      phase: "plan",
+      ...(activeStep ? { activeStep } : {}),
+    });
+  // Saved before locate, so a run killed while planning resumes the step it was in.
+  if (!pending) await savePlan();
 
   // --- 1. Locate: what in the reference belongs to this feature ---
   onProgress("Clone locate: searching the reference repositories");
@@ -302,12 +373,14 @@ async function planClone(opts: ClonePipelineOptions, checkpointKey: string): Pro
     key: referenceVersions && [CLONE_PLAN_VERSION, clone.what, clone.referencePaths, referenceVersions],
     fresh,
     run: () =>
-      inventoryReferences({
-        specMarkdown,
-        projectPath: clone.projectPath,
-        referencePaths: clone.referencePaths,
-        projectIndexes: clone.projectIndexes,
-      }),
+      journal.run("plan:locate", savePlan, () =>
+        inventoryReferences({
+          specMarkdown,
+          projectPath: clone.projectPath,
+          referencePaths: clone.referencePaths,
+          projectIndexes: clone.projectIndexes,
+        }),
+      ),
     onHit: (savedAt) =>
       onProgress(`Clone locate: reused from ${savedAt} — same keyword, reference repositories unchanged since`),
   });
@@ -343,7 +416,7 @@ async function planClone(opts: ClonePipelineOptions, checkpointKey: string): Pro
   if (conventions) {
     onProgress("Clone conventions: reused from a previous run (target project structure unchanged)");
   } else {
-    conventions = await readTargetConventions(target);
+    conventions = await journal.run("plan:conventions", savePlan, () => readTargetConventions(target));
     if (conventions) await storeTargetConventions(roots, conventions, clone.projectIndexes);
     onProgress(
       conventions
@@ -355,7 +428,10 @@ async function planClone(opts: ClonePipelineOptions, checkpointKey: string): Pro
 
   // --- 3. Mapping: where each file goes ---
   onProgress("Clone mapping: deciding where each file goes");
-  const mapping: CloneMapping | null = await mapCloneTargets(target, inventory, conventions);
+  const knownConventions = conventions;
+  const mapping: CloneMapping | null = await journal.run("plan:mapping", savePlan, () =>
+    mapCloneTargets(target, inventory, knownConventions),
+  );
   logger?.recordCloneMapping(mapping);
 
   if (!mapping) {
@@ -380,6 +456,11 @@ async function planClone(opts: ClonePipelineOptions, checkpointKey: string): Pro
   const plan: CloneCheckpoint = { inventory, conventions, mapping, completedGroups: [] };
   await saveCheckpoint("clone", clone.projectPath, checkpointKey, plan);
   return plan;
+}
+
+function isClonePlanCheckpoint(data: unknown): data is ClonePlanCheckpoint {
+  const candidate = data as ClonePlanCheckpoint;
+  return candidate?.phase === "plan" && (candidate.activeStep === undefined || isActiveStep(candidate.activeStep));
 }
 
 function isCloneCheckpoint(data: unknown): data is CloneCheckpoint {

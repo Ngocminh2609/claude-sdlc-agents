@@ -358,6 +358,7 @@ textarea {
 .status-pill[data-status="errored"],
 .status-pill[data-status="escalated-specs"],
 .status-pill[data-status="escalated-e2e"],
+.status-pill[data-status="progress-kept"],
 .status-pill[data-status="stopped"] {
   color: var(--err);
   border-color: #5a2a28;
@@ -511,6 +512,7 @@ textarea {
 .result[data-status="escalated-specs"],
 .result[data-status="escalated-e2e"],
 .result[data-status="errored"],
+.result[data-status="progress-kept"],
 .result[data-status="stopped"] {
   border-left-color: var(--err);
 }
@@ -530,6 +532,7 @@ textarea {
 .result[data-status="escalated-specs"] .result-title,
 .result[data-status="escalated-e2e"] .result-title,
 .result[data-status="errored"] .result-title,
+.result[data-status="progress-kept"] .result-title,
 .result[data-status="stopped"] .result-title {
   color: var(--err);
 }
@@ -1020,7 +1023,8 @@ textarea {
   border-color: #24502f;
 }
 
-.badge[data-status="incomplete"] {
+.badge[data-status="incomplete"],
+.badge[data-status="progress-kept"] {
   color: var(--warn);
   border-color: #5b4a1c;
 }
