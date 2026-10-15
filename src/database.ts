@@ -88,7 +88,14 @@ export function parseConnection(raw: string): DatabaseTarget {
   if (!dialect) throw unrecognised();
 
   const options: Record<string, string> = {};
-  url.searchParams.forEach((value, key) => (options[key.toLowerCase()] = value));
+  // Read as written, not form-decoded: URLSearchParams turns "+" into a space, which
+  // broke a real password containing "+" pasted as jdbc:…?password=….
+  for (const pair of url.search.replace(/^\?/, "").split("&")) {
+    if (!pair) continue;
+    const at = pair.indexOf("=");
+    const key = at < 0 ? pair : pair.slice(0, at);
+    options[decodeLoose(key).toLowerCase()] = at < 0 ? "" : decodeLoose(pair.slice(at + 1));
+  }
   const target: DatabaseTarget = {
     dialect,
     host: decodeURIComponent(url.hostname),
@@ -128,6 +135,15 @@ function keyValues(text: string): Record<string, string> {
     if (at > 0) result[pair.slice(0, at).trim().toLowerCase()] = pair.slice(at + 1).trim();
   }
   return result;
+}
+
+/** Percent-decoded, or as written when the text holds a bare "%" that is not an escape. */
+function decodeLoose(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
 }
 
 /** Engine, host and database — never the user's password. Safe for prompts, logs and the UI. */

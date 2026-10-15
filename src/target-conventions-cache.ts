@@ -40,7 +40,7 @@ const CACHE_PATH = path.join(TOOL_ROOT, "runs", ".target-conventions-cache.json"
  * an unchanged git HEAD would otherwise keep serving that incomplete answer
  * forever.
  */
-const CONVENTIONS_VERSION = 3;
+const CONVENTIONS_VERSION = 4;
 
 interface CacheEntry {
   gitHead: string;

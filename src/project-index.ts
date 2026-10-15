@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -31,6 +31,19 @@ import { clientCallsInSource, routesInSource } from "./clone-wiring.js";
  * or mtime moved. A folder that is not in a git repo is indexed by a plain walk
  * and re-stat'ed every time. The index is a map, not the territory: stages are
  * told to open a file before relying on it.
+ *
+ * Scope: a target folder inside a git repo is indexed on its own, with git
+ * limited to that folder — BE, FE and SQL under one parent repo are three
+ * indexes, not one index of the whole parent (on a real project that parent
+ * index held 18,899 files of an un-ignored node_modules next to ~300 of code).
+ *
+ * Size: a first build is written in segments of `SEGMENT_FILES`, each saved as
+ * it completes, so a project too large to index in one go is not lost to a
+ * stopped run: the next refresh carries on from the files already indexed.
+ *
+ * One index per folder: a rebuild deletes the old index first, and a run's
+ * refresh deletes any other index whose folder overlaps one of the run's
+ * (`pruneOverlappingIndexes`) — the parent-repo index the above replaced.
  */
 
 const execFileAsync = promisify(execFile);
@@ -38,7 +51,11 @@ const TOOL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 /** Where indexes live; overridable so tests do not write into the real runs/. */
 const indexRoot = () => process.env.AIDEV_INDEX_DIR ?? path.join(TOOL_ROOT, "runs", ".project-index");
 /** Bumped when what an entry holds changes, so old indexes are rebuilt. */
-const INDEX_VERSION = 2;
+const INDEX_VERSION = 4;
+/** Files indexed between two saves of a first build. */
+export const SEGMENT_FILES = 2000;
+/** Next to index.json: the indexed folder, readable without parsing the whole index. */
+const ROOT_FILE = "root.txt";
 
 const MAX_EXTRACT_BYTES = 512 * 1024;
 const TEXT_EXTENSIONS = new Set([
@@ -78,7 +95,16 @@ interface IndexFile {
   /** Changes when a module, directory or build manifest changes — not on every edit. */
   structureHash: string;
   refreshedAt: string;
+  /** A first build that stopped between segments; the next refresh finishes it. */
+  partial?: boolean;
   files: Record<string, IndexEntry>;
+}
+
+/** A first build's progress, reported after each saved segment. */
+export interface SegmentProgress {
+  repoRoot: string;
+  done: number;
+  total: number;
 }
 
 export interface IndexedRepo {
@@ -124,7 +150,12 @@ export async function refreshIndexesForRun(
 ): Promise<IndexRef[]> {
   try {
     const started = Date.now();
-    const repos = await refreshProjectIndexes(folders);
+    const repos = await refreshProjectIndexes(folders, ({ repoRoot, done, total }) =>
+      onProgress(`Project index: ${path.basename(repoRoot)} — building, ${done}/${total} files indexed and saved`),
+    );
+    for (const removed of await pruneOverlappingIndexes(repos.map((repo) => repo.repoRoot))) {
+      onProgress(`Project index: removed the old index of ${removed} — it overlaps this run's folders`);
+    }
     for (const repo of repos) {
       const state = repo.rebuilt
         ? `built (${repo.fileCount} files)`
@@ -150,23 +181,76 @@ export async function refreshIndexesForRun(
 }
 
 /** Refreshes (or builds) the index of every repo in the given folders; one result per repo. */
-export async function refreshProjectIndexes(folders: string[]): Promise<IndexedRepo[]> {
+export async function refreshProjectIndexes(
+  folders: string[],
+  onSegment?: (progress: SegmentProgress) => void,
+): Promise<IndexedRepo[]> {
   const repos = new Set<string>();
   for (const folder of folders) for (const repo of await reposIn(folder)) repos.add(repo);
   const results: IndexedRepo[] = [];
-  for (const repo of repos) results.push(await refreshRepo(repo));
+  for (const repo of repos) results.push(await refreshRepo(repo, onSegment));
   return results;
 }
 
 /**
- * The repos a folder stands for: the git repo it is in, or — for a parent
- * folder holding several repos, like a BE and an FE side by side — each repo
- * one or two levels down. A folder with neither is indexed on its own.
+ * Deletes every index other than `keep` whose folder is, contains or sits
+ * inside one of them: the same code indexed a second time under another root.
+ * Returns the folders whose index was removed.
+ */
+export async function pruneOverlappingIndexes(keep: string[]): Promise<string[]> {
+  const norm = (folder: string) => {
+    const resolved = path.resolve(folder);
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const kept = keep.map(norm);
+  const overlaps = (a: string, b: string) => a === b || a.startsWith(`${b}${path.sep}`) || b.startsWith(`${a}${path.sep}`);
+  let entries: string[];
+  try {
+    entries = readdirSync(indexRoot());
+  } catch {
+    return [];
+  }
+  const removed: string[] = [];
+  for (const entry of entries) {
+    const dir = path.join(indexRoot(), entry);
+    const root = await indexedRootOf(dir);
+    if (!root || kept.includes(norm(root)) || !kept.some((folder) => overlaps(norm(root), folder))) continue;
+    assertIndexWritable();
+    await rm(dir, { recursive: true, force: true });
+    removed.push(root);
+  }
+  return removed;
+}
+
+/** The folder an index directory holds, from `root.txt` (or, for an older index, its index.json). */
+async function indexedRootOf(dir: string): Promise<string | null> {
+  try {
+    return (await readFile(path.join(dir, ROOT_FILE), "utf-8")).trim() || null;
+  } catch {
+    try {
+      return (JSON.parse(await readFile(path.join(dir, "index.json"), "utf-8")) as IndexFile).repoRoot ?? null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** A unit test must never write the real index: it sits next to every checkpoint in runs/. */
+function assertIndexWritable(): void {
+  if (process.env.VITEST && !process.env.AIDEV_INDEX_DIR) {
+    throw new Error("project-index: set AIDEV_INDEX_DIR in the test before building an index.");
+  }
+}
+
+/**
+ * What a folder is indexed as: itself when it is inside a git repo (git is
+ * limited to it), or — for a parent folder outside git holding several repos,
+ * like a BE and an FE side by side — each repo one or two levels down. A
+ * folder with neither is indexed on its own.
  */
 async function reposIn(folder: string): Promise<string[]> {
   const resolved = path.resolve(folder);
-  const top = await gitTopLevel(resolved);
-  if (top) return [top];
+  if (await gitTopLevel(resolved)) return [resolved];
 
   const found: string[] = [];
   const scan = (dir: string, depth: number) => {
@@ -187,7 +271,7 @@ async function reposIn(folder: string): Promise<string[]> {
   return found.length ? found : [resolved];
 }
 
-async function refreshRepo(repoRoot: string): Promise<IndexedRepo> {
+async function refreshRepo(repoRoot: string, onSegment?: (progress: SegmentProgress) => void): Promise<IndexedRepo> {
   const indexDir = path.join(indexRoot(), `${slug(path.basename(repoRoot))}-${hash(repoRoot.toLowerCase()).slice(0, 8)}`);
   const jsonPath = path.join(indexDir, "index.json");
   const textPath = path.join(indexDir, "index.txt");
@@ -208,18 +292,47 @@ async function refreshRepo(repoRoot: string): Promise<IndexedRepo> {
   // cheaply — look at every file" (first run, a folder outside git, or a HEAD
   // the cache cannot be diffed against).
   let candidates: Set<string> | null = null;
-  if (previous && isGit && previous.head && head) {
+  if (previous && !previous.partial && isGit && previous.head && head) {
     const committed =
-      previous.head === head ? [] : await git(repoRoot, ["diff", "--name-only", "-z", previous.head, head]).then(splitZ, () => null);
+      previous.head === head
+        ? []
+        : await git(repoRoot, ["diff", "--name-only", "-z", "--relative", previous.head, head]).then(splitZ, () => null);
     if (committed) candidates = new Set([...committed, ...dirtyNow, ...previous.dirty]);
   }
 
-  if (!previous) {
+  const save = async (index: IndexFile) => {
+    assertIndexWritable();
+    await mkdir(indexDir, { recursive: true });
+    await writeFile(path.join(indexDir, ROOT_FILE), repoRoot, "utf-8");
+    await writeFile(jsonPath, JSON.stringify(index), "utf-8");
+  };
+
+  if (!previous || previous.partial) {
+    // A new index replaces the old one completely — an unreadable or outdated
+    // index leaves nothing behind. A partial one is this same build, resumed.
     rebuilt = true;
-    files = {};
-    for (const file of listed) {
-      const entry = await indexFile(repoRoot, file);
-      if (entry) files[file] = entry;
+    if (!previous) {
+      assertIndexWritable();
+      await rm(indexDir, { recursive: true, force: true });
+    }
+    const listedSet = new Set(listed);
+    files = Object.fromEntries(Object.entries(previous?.files ?? {}).filter(([file]) => listedSet.has(file)));
+    const todo = listed.filter((file) => {
+      const known = files[file];
+      const stat = known && statOf(path.join(repoRoot, file));
+      return !known || !stat || known.size !== stat.size || known.mtimeMs !== stat.mtimeMs;
+    });
+    for (let start = 0; start < todo.length; start += SEGMENT_FILES) {
+      for (const file of todo.slice(start, start + SEGMENT_FILES)) {
+        const entry = await indexFile(repoRoot, file);
+        if (entry) files[file] = entry;
+        else delete files[file];
+      }
+      const done = Math.min(start + SEGMENT_FILES, todo.length);
+      if (done < todo.length) {
+        await save({ version: INDEX_VERSION, repoRoot, head, dirty: dirtyNow, structureHash: "", refreshedAt: new Date().toISOString(), partial: true, files });
+        onSegment?.({ repoRoot, done, total: todo.length });
+      }
     }
     changed = Object.keys(files).length;
   } else {
@@ -261,13 +374,8 @@ async function refreshRepo(repoRoot: string): Promise<IndexedRepo> {
     files,
   };
 
-  if (changed || !previous || previous.head !== head || !existsSync(textPath)) {
-    // A unit test must never write the real index: it sits next to every checkpoint in runs/.
-    if (process.env.VITEST && !process.env.AIDEV_INDEX_DIR) {
-      throw new Error("project-index: set AIDEV_INDEX_DIR in the test before building an index.");
-    }
-    await mkdir(indexDir, { recursive: true });
-    await writeFile(jsonPath, JSON.stringify(index), "utf-8");
+  if (rebuilt || changed || previous?.head !== head || !existsSync(textPath)) {
+    await save(index);
     await writeFile(textPath, renderText(index), "utf-8");
   }
 
@@ -508,6 +616,56 @@ export async function searchIndexes(repos: IndexRef[], terms: string[], limit = 
   return hits;
 }
 
+/**
+ * Where a task's code goes, read from the indexes by plain code: each expected
+ * file's index line (or "new file" when no index has it), then index lines
+ * naming the code identifiers the task description mentions — `quoted`,
+ * CamelCase or dotted/slashed names, not plain words, which match half a
+ * project.
+ */
+export async function taskLocations(
+  repos: IndexRef[],
+  targetFiles: string[],
+  description: string,
+  limit = 40,
+): Promise<string[]> {
+  const lines: { repo: string; path: string; line: string }[] = [];
+  for (const repo of repos) {
+    let text: string;
+    try {
+      text = await readFile(repo.indexFile, "utf-8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      if (!line || line.startsWith("#")) continue;
+      lines.push({ repo: path.basename(repo.repoRoot), path: line.split(" | ")[0], line });
+    }
+  }
+  const out: string[] = [];
+  const add = (entry: string) => {
+    if (out.length < limit && !out.includes(entry)) out.push(entry);
+  };
+  for (const target of targetFiles) {
+    const wanted = target.replace(/\\/g, "/").replace(/^\.\//, "");
+    // A target may be named from the project folder or from inside an indexed one.
+    const hit = lines.find((entry) => `${entry.repo}/${entry.path}`.endsWith(wanted) || wanted.endsWith(`/${entry.path}`) || wanted === entry.path);
+    add(hit ? `${hit.repo}/${hit.line}` : `${wanted} | new file (not in the index)`);
+  }
+  const identifiers = new Set<string>();
+  for (const match of description.matchAll(/`([^`\n]{3,80})`/g)) identifiers.add(match[1].trim());
+  for (const match of description.matchAll(/\b[A-Za-z_][\w]*(?:[./][\w-]+)+\b|\b[a-z]+(?:[A-Z][a-z0-9]+)+\b|\b(?:[A-Z][a-z0-9]+){2,}\b/g)) {
+    identifiers.add(match[0]);
+  }
+  const needles = [...identifiers].map(fold).filter((needle) => needle.length >= 4);
+  for (const entry of lines) {
+    if (out.length >= limit) break;
+    const folded = fold(entry.line);
+    if (needles.some((needle) => folded.includes(needle))) add(`${entry.repo}/${entry.line}`);
+  }
+  return out;
+}
+
 function fold(text: string): string {
   return text
     .normalize("NFD")
@@ -532,23 +690,46 @@ async function gitTopLevel(folder: string): Promise<string | null> {
   }
 }
 
+// git runs in the indexed folder: ls-files lists only that folder, relative to
+// it, and diff is made to do the same with --relative.
+
+/**
+ * Never indexed, even when committed: dependency code is not where a task's
+ * code goes. On a real project 20,858 files of node_modules were in git.
+ */
+const DEPENDENCY_DIRS = new Set(["node_modules"]);
+
 async function gitList(repoRoot: string): Promise<string[]> {
-  return splitZ(await git(repoRoot, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]))
+  const tracked = splitZ(await git(repoRoot, ["ls-files", "-z", "--cached"])).filter(
+    (file) => !file.split("/").some((part) => DEPENDENCY_DIRS.has(part)),
+  );
+  return [...new Set([...tracked, ...(await gitUntracked(repoRoot))])]
     .filter((file) => !SKIP_EXTENSIONS.has(extensionOf(file)))
     .filter((file) => existsSync(path.join(repoRoot, file)));
 }
 
+/**
+ * Untracked, not-ignored files, minus dependency and build output folders a
+ * project forgot to ignore — node_modules, target, dist… are never code to
+ * index, tracked files under such a name still are.
+ */
+async function gitUntracked(repoRoot: string): Promise<string[]> {
+  const untracked = await git(repoRoot, ["ls-files", "-z", "--others", "--exclude-standard"]).then(splitZ, () => []);
+  return untracked.filter((file) => !file.split("/").some((part) => WALK_SKIP.has(part)));
+}
+
 /** Tracked files modified since HEAD (staged or not) plus untracked, not-ignored files. */
 async function gitDirty(repoRoot: string): Promise<string[]> {
-  const modified = await git(repoRoot, ["diff", "--name-only", "-z", "HEAD"]).then(splitZ, () => []);
-  const untracked = await git(repoRoot, ["ls-files", "-z", "--others", "--exclude-standard"]).then(splitZ, () => []);
-  return [...new Set([...modified, ...untracked])].sort();
+  const modified = (await git(repoRoot, ["diff", "--name-only", "-z", "--relative", "HEAD"]).then(splitZ, () => [])).filter(
+    (file) => !file.split("/").some((part) => DEPENDENCY_DIRS.has(part)),
+  );
+  return [...new Set([...modified, ...(await gitUntracked(repoRoot))])].sort();
 }
 
 function walkList(root: string): string[] {
   const files: string[] = [];
   const stack = [root];
-  while (stack.length && files.length < 50000) {
+  while (stack.length) {
     const dir = stack.pop() as string;
     let entries;
     try {

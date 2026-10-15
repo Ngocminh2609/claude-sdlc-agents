@@ -7,6 +7,9 @@ import { runCloneTests } from "./stages/clone-tests.js";
 import { inventoryReferences } from "./stages/reference-inventory.js";
 import { readTargetConventions } from "./stages/target-conventions.js";
 import { StageError } from "./stage-error.js";
+import { RunBudgetError } from "./run-budget.js";
+import { reportStep } from "./step-activity.js";
+import { describeGateFailure, runVerifyGate, usableVerifyCommands } from "./verify-gate.js";
 import { clearCheckpoint, fingerprint, loadCheckpoint, progressKeptMessage, saveCheckpoint } from "./checkpoint.js";
 import { isActiveStep, StepJournal, type ActiveStep } from "./step-session.js";
 import { config } from "./config.js";
@@ -48,7 +51,7 @@ import type {
  */
 
 export interface ClonePipelineResult {
-  status: "done" | "incomplete" | "errored" | "progress-kept";
+  status: "done" | "incomplete" | "errored" | "progress-kept" | "budget-stopped";
   message: string;
   logPath?: string;
 }
@@ -72,6 +75,11 @@ export async function runClonePipeline(opts: ClonePipelineOptions): Promise<Clon
     const logPath = await opts.logger?.write();
     return { ...result, logPath };
   } catch (error) {
+    if (error instanceof RunBudgetError) {
+      opts.logger?.finish("budget-stopped", error.message);
+      const logPath = await opts.logger?.write();
+      return { status: "budget-stopped", message: error.message, logPath };
+    }
     console.error("Clone pipeline crashed:", error);
     const message =
       error instanceof StageError
@@ -159,6 +167,7 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
 
   // --- 4. Port, group by group: database scripts, then server, then client ---
   const groups = portGroups(mapping);
+  reportStep({ phase: "plan", group: "port", items: groups.map((group) => ({ id: group, label: group })) });
 
   for (const [index, group] of groups.entries()) {
     if (completedGroups.some((done) => done.group === group)) continue;
@@ -218,11 +227,31 @@ async function runCloneInner(opts: ClonePipelineOptions): Promise<CloneOutcome> 
     await saveClone();
     return value;
   };
+  // The target's own build commands run first, as plain code: when they all
+  // pass there is nothing for the Clone Build agent to judge, and its session
+  // is not spent. A failure still goes to the agent, which tells errors the
+  // port caused from ones the project already had.
+  const buildCommands = usableVerifyCommands(conventions?.verifyCommands, roots);
+  for (const { command, reason } of buildCommands.refused) {
+    onProgress(`Clone build: not running "${command}" — ${reason}`);
+  }
   const runBuild = async (): Promise<CloneBuildVerdict> => {
     onProgress("Clone build: compiling the target project");
-    const verdict = await once("build", async () =>
-      verifyCloneBuild(mapping, conventions, await findFreePorts(), roots),
-    );
+    const verdict = await once("build", async (): Promise<CloneBuildVerdict> => {
+      if (buildCommands.usable.length) {
+        const check = await runVerifyGate(buildCommands.usable, config.verifyGate);
+        if (check.ok) {
+          const commands = buildCommands.usable.map((entry) => entry.command);
+          return {
+            ok: true,
+            command: commands.join(" ; "),
+            summary: `The target's own build commands passed (run by the pipeline, exit code 0): ${commands.join(", ")}.`,
+          };
+        }
+        if (check.failure) onProgress(`Clone build: ${describeGateFailure(check.failure).split("\n")[0]} — the build agent sorts out the errors`);
+      }
+      return verifyCloneBuild(mapping, conventions, await findFreePorts(), roots);
+    });
     logger?.recordCloneBuild(verdict);
     onProgress(`Clone build: ${verdict.ok ? "pass" : "fail"}`);
     return verdict;
@@ -369,6 +398,7 @@ async function planClone(
   const referenceVersions = repoVersions(clone.projectIndexes, clone.referencePaths);
   const inventory = await cachedStage({
     kind: "clone-locate",
+    project: clone.projectPath,
     // Same keyword against unchanged reference repos → same answer.
     key: referenceVersions && [CLONE_PLAN_VERSION, clone.what, clone.referencePaths, referenceVersions],
     fresh,

@@ -224,6 +224,14 @@ describe("runCoding with reference repositories", () => {
     expect((await options.canUseTool("Edit", { file_path: existing }, {})).behavior).toBe("allow");
   });
 
+  it("puts a failed build check in front of the task's next session", async () => {
+    await runCoding(request({ buildCheckFailure: "`npm run lint` exited with code 1.\nsrc/a.ts:3 error" }));
+
+    const prompt = runTextQuery.mock.calls[0][0] as string;
+    expect(prompt).toContain("--- The pipeline's build check failed after this task ---");
+    expect(prompt).toContain("src/a.ts:3 error");
+  });
+
   it("tells an interrupted task to continue from the files on disk, and only that task", async () => {
     await runCoding(request({ interrupted: true }));
     await runCoding(request());

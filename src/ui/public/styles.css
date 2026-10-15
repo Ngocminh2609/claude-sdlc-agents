@@ -169,12 +169,6 @@ main {
   flex-direction: column;
 }
 
-.card-editor {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
 /* --- Form ---------------------------------------------------------------- */
 
 .field {
@@ -202,6 +196,7 @@ main {
 
 input[type="text"],
 input[type="password"],
+input[type="number"],
 select,
 textarea {
   background: var(--panel-2);
@@ -359,6 +354,8 @@ textarea {
 .status-pill[data-status="escalated-specs"],
 .status-pill[data-status="escalated-e2e"],
 .status-pill[data-status="progress-kept"],
+.status-pill[data-status="budget-stopped"],
+.status-pill[data-status="needs-answers"],
 .status-pill[data-status="stopped"] {
   color: var(--err);
   border-color: #5a2a28;
@@ -513,6 +510,8 @@ textarea {
 .result[data-status="escalated-e2e"],
 .result[data-status="errored"],
 .result[data-status="progress-kept"],
+.result[data-status="budget-stopped"],
+.result[data-status="needs-answers"],
 .result[data-status="stopped"] {
   border-left-color: var(--err);
 }
@@ -728,7 +727,8 @@ textarea {
   margin: 0 0 14px;
 }
 
-/* Plain-language request for the spec draft: prose, so not the editor's mono font or height. */
+/* Plain-language text (the spec-draft request, answers to business questions): prose,
+   so full width, not the editor's mono font or height. */
 .request-input {
   display: block;
   box-sizing: border-box;
@@ -1024,7 +1024,8 @@ textarea {
 }
 
 .badge[data-status="incomplete"],
-.badge[data-status="progress-kept"] {
+.badge[data-status="progress-kept"],
+.badge[data-status="needs-answers"] {
   color: var(--warn);
   border-color: #5b4a1c;
 }
@@ -1199,4 +1200,178 @@ textarea {
 
 .hint a {
   color: var(--accent);
+}
+
+/* --- Progress mind map (mindmap.js) --- */
+
+.view-toggle {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0 10px;
+}
+
+.view-toggle .chip {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.view-toggle .chip.active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: rgba(110, 168, 254, 0.1);
+}
+
+.mindmap {
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 4px;
+}
+
+.mindmap-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 18px;
+}
+
+.mindmap-legend {
+  margin-top: 8px;
+}
+
+.mm {
+  display: block;
+  font-family: inherit;
+}
+
+.mm-link {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.mm-link[data-status="done"] {
+  stroke: #2f6b3c;
+}
+
+.mm-link[data-status="active"] {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  animation: mm-flow 0.9s linear infinite;
+}
+
+.mm-link[data-status="failed"] {
+  stroke: #7a3430;
+}
+
+.mm-box {
+  fill: var(--panel-2);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.mm-node[data-kind="root"] .mm-box {
+  fill: var(--panel);
+}
+
+.mm-node[data-status="done"] .mm-box {
+  stroke: #2f6b3c;
+}
+
+.mm-node[data-status="failed"] .mm-box {
+  stroke: var(--err);
+  fill: rgba(240, 86, 74, 0.08);
+}
+
+.mm-node[data-status="active"] .mm-box {
+  stroke: var(--accent);
+  stroke-width: 2;
+  fill: rgba(110, 168, 254, 0.12);
+  animation: mm-pulse 1.6s ease-in-out infinite;
+}
+
+.mm-title {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mm-node[data-status="pending"] .mm-title {
+  fill: var(--muted);
+  font-weight: 500;
+}
+
+.mm-badges {
+  fill: var(--warn);
+  font-size: 11px;
+}
+
+.mm-sub {
+  fill: var(--muted);
+  font-size: 10.5px;
+}
+
+.mm-track {
+  fill: var(--border-soft);
+}
+
+.mm-bar {
+  fill: var(--muted);
+}
+
+.mm-node[data-status="done"] .mm-bar {
+  fill: var(--ok);
+}
+
+.mm-node[data-status="active"] .mm-bar {
+  fill: var(--accent);
+}
+
+.mm-node[data-status="failed"] .mm-bar {
+  fill: var(--err);
+}
+
+.mm-bar-indeterminate {
+  opacity: 0.35;
+  animation: mm-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes mm-pulse {
+  0%,
+  100% {
+    stroke-opacity: 1;
+  }
+  50% {
+    stroke-opacity: 0.35;
+  }
+}
+
+@keyframes mm-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+@keyframes mm-blink {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-node[data-status="active"] .mm-box,
+  .mm-link[data-status="active"],
+  .mm-bar-indeterminate {
+    animation: none;
+  }
 }

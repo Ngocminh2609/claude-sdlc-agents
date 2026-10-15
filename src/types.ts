@@ -1,3 +1,4 @@
+import type { VerifyCommand } from "./verify-gate.js";
 import type { ProjectMemory } from "./project-memory.js";
 import type { DatabaseContext } from "./database-scripts.js";
 import type { IndexRef } from "./project-index.js";
@@ -71,6 +72,12 @@ export interface ProjectContext {
   /** Existing files/helpers this specific spec's work should read or reuse. */
   relevantFiles: ReferenceFile[];
   notes: string;
+  /**
+   * The project's own compile / type-check / lint commands, check-only, with
+   * the target folder each runs in — what the pipeline runs after every Coding
+   * task (`verify-gate.ts`). Absent on a scan saved before the check existed.
+   */
+  verifyCommands?: VerifyCommand[];
 }
 
 /**
@@ -104,6 +111,12 @@ export interface CloneInput {
 /** How the target project is organised, as read from the target itself. */
 export interface TargetConventions {
   summary: string;
+  /**
+   * The target's own compile / type-check / lint commands, check-only, with
+   * the target folder each runs in. Clone Build runs them as plain code first
+   * and calls its agent only when one fails (`verify-gate.ts`).
+   */
+  verifyCommands?: VerifyCommand[];
 }
 
 export interface CloneMappingEntry {

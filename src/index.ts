@@ -28,6 +28,8 @@ import {
   metadataStandardsFor,
 } from "./metadata-standards.js";
 import { runPipeline } from "./pipeline.js";
+import { setRunBudget } from "./run-budget.js";
+import { onStepActivity } from "./step-activity.js";
 import { loadProjectMemory } from "./project-memory.js";
 import { describeSkillCatalog, loadSkillCatalog, relevantSkillCatalog } from "./skills-catalog.js";
 import { CloneRunLogger, RunLogger } from "./run-log.js";
@@ -85,6 +87,23 @@ const onProgress = (message: string): void => {
 // The UI attributes each increase to the stage active when it arrives.
 if (streamEvents) onUsage((total) => emit({ type: "usage", total }));
 
+// Steps feed the UI's mind map. At a terminal only the loop guard's
+// interventions are worth a line — every turn would drown the log.
+onStepActivity((report) => {
+  if (streamEvents) emit({ type: "step", ...report });
+  else if (report.phase === "turn" && report.note) {
+    console.log(`[loop-guard] ${report.step}: ${report.note} (turn ${report.turns}/${report.maxTurns})`);
+  }
+});
+
+/** Applies `--max-run-usd` and tells the UI the cap, once, before anything is spent. */
+function applyRunBudget(maxRunUsd: number | undefined): void {
+  setRunBudget(maxRunUsd);
+  if (maxRunUsd === undefined) return;
+  if (streamEvents) emit({ type: "budget", capUsd: maxRunUsd });
+  else console.log(`[pipeline] Run budget: stops before the next step once ~${maxRunUsd.toFixed(2)} is spent`);
+}
+
 function report(status: string, message: string, logPath?: string): void {
   if (streamEvents) {
     emit({ type: "finished", status, message, ...(logPath ? { logPath } : {}) });
@@ -100,6 +119,7 @@ function report(status: string, message: string, logPath?: string): void {
 async function runFeature(argv: string[]): Promise<void> {
   const args = parseArgs(argv);
   const spec = await loadSpec(args);
+  applyRunBudget(args.maxRunUsd);
 
   // Checked first, before anything is spent: a wrong password should cost a
   // second, not a design round.
@@ -130,7 +150,7 @@ async function runFeature(argv: string[]): Promise<void> {
 
     process.chdir(spec.projectPath);
 
-    const result = await runPipeline({ spec, logger, onProgress, fresh: args.fresh, sqlRunner });
+    const result = await runPipeline({ spec, logger, onProgress, fresh: args.fresh, sqlRunner, answers: args.answers });
     report(result.status, result.message, result.logPath);
   } finally {
     await sqlRunner?.close().catch(() => {});
@@ -165,7 +185,9 @@ async function openDatabase(
     // A Spring-style URL (credentials kept in separate properties) reached the driver as
     // "client password must be a string" on a real run, which said nothing about the cause.
     const hint = target.password
-      ? ""
+      ? /password authentication failed/i.test(reason)
+        ? ` — the server refused the password for user "${target.user ?? "?"}". Check it against the one the database was created with; in a URL, @ # / ? : % must be URL-encoded.`
+        : ""
       : " — no password was found in the connection string. Put it in, e.g. postgresql://user:password@host:5432/db or jdbc:postgresql://host:5432/db?user=…&password=… (URL-encode @ # / ? : % in the password).";
     throw new StageError(`Database: could not connect to ${description}: ${masked}${hint}`);
   }
@@ -173,6 +195,7 @@ async function openDatabase(
 
 async function runClone(argv: string[]): Promise<void> {
   const args = parseCloneArgs(argv);
+  applyRunBudget(args.maxRunUsd);
   const targetRoots = targetRootsFrom(args.target);
   const targetPaths = targetRoots.map((root) => root.path);
 

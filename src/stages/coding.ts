@@ -3,13 +3,14 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { isTestFile } from "../test-files.js";
 import { databasePromptSection } from "../database-scripts.js";
-import { config, networkExfilBashBlocklist } from "../config.js";
+import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
 import { FEATURE_TEST_POLICY } from "../prompts/feature-test-policy.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { StageError } from "../stage-error.js";
+import { BUILD_CHECK_FAILED_HEADER } from "../verify-gate.js";
 import { extraDirectories, isInsideReference, referencePromptSection } from "../reference-repos.js";
 import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
@@ -39,6 +40,11 @@ session is roughly (number of turns) x (context size). Work in few, full turns:
 - Do not explore. The design, your task and the earlier tasks' summaries name
   the files you need. To find where a symbol, route or table lives, Grep the
   project index (one call) instead of listing folders or searching the tree.
+- Stay strictly on your task. Read and change only what it needs: no refactors,
+  renames, reformatting or "while I'm here" fixes in code the task does not
+  touch, and no reading of modules it does not concern.
+- Decide technical questions yourself from the code, the index and the design;
+  there is no one to ask mid-task.
 - Command output stays in your context for the rest of the session: use quiet
   flags (mvn -q, npm --silent, gradle -q), pipe long output through
   "tail -n 60" or grep for the errors, and run the full build once you are done
@@ -82,6 +88,13 @@ export interface CodingRequest {
    * and that session could not be resumed (see `step-session.ts`).
    */
   interrupted?: boolean;
+  /**
+   * The pipeline's own build check failed after this task's previous session
+   * (`verify-gate.ts`): the command, its exit code and its last output lines.
+   */
+  buildCheckFailure?: string;
+  /** Index lines for where this task's code goes, looked up by the pipeline right before the task. */
+  locations?: string[];
 }
 
 /**
@@ -149,6 +162,8 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     inventory,
     projectContext,
     interrupted = false,
+    buildCheckFailure,
+    locations,
   } = request;
 
   // The SDK operates on the current process working directory, so the caller
@@ -166,7 +181,7 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     canUseTool: guardNewTestFiles(guardReferenceRepos(spec.referencePaths, spec.skillCatalog?.readOnlyDirs)),
     systemPrompt: SYSTEM_PROMPT,
     model: config.model,
-    maxTurns: config.maxTurns.coding,
+    ...limitsOf("coding"),
   };
 
   // Reference repos and the skills catalog are readable only (canUseTool
@@ -198,7 +213,15 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     task.description,
   ];
 
-  if (task.targetFiles?.length) {
+  if (locations?.length) {
+    parts.push(
+      "",
+      "--- Where this task's code goes (from the project index, re-checked against git just before this task) ---",
+      "Expected files first, then index lines naming what the task mentions. Start here instead of searching;",
+      "open a file before relying on it.",
+      ...locations.map((line) => `- ${line}`),
+    );
+  } else if (task.targetFiles?.length) {
     parts.push("", `Expected files: ${task.targetFiles.join(", ")}`);
   }
 
@@ -227,6 +250,19 @@ export async function runCoding(request: CodingRequest): Promise<string> {
       "at what is there (the expected files above, and the files the task's description names), then",
       "continue from it: keep what is correct, finish what is missing, fix what is broken. Do not",
       "rewrite from scratch a file that is already correct.",
+    );
+  }
+
+  if (buildCheckFailure) {
+    // No blank line inside the block: a resumed session gets it carried over
+    // up to the first blank line (see resumePrompt in sdk-helpers.ts).
+    parts.push(
+      "",
+      BUILD_CHECK_FAILED_HEADER,
+      "Your earlier work on this task ended, then the pipeline ran the project's own check and it failed.",
+      "Make that exact command pass — fix the cause in the code, never by weakening or skipping the check —",
+      "then finish with your summary as before.",
+      buildCheckFailure,
     );
   }
 

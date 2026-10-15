@@ -83,3 +83,27 @@ describe("runSpecsArch", () => {
     await expect(runSpecsArch(spec, null, undefined)).rejects.toThrow(/specs-arch stage failed/);
   });
 });
+
+describe("businessQuestionsOf", () => {
+  it("reads the questions under the heading, up to the next heading", async () => {
+    const { businessQuestionsOf } = await import("./specs-arch.js");
+    const proposal = [
+      "## Approach",
+      "- touch A",
+      "",
+      "## Business questions",
+      "- Who approves a refund?",
+      "* Max discount?",
+      "",
+      "## Notes",
+      "- not a question",
+    ].join("\n");
+    expect(businessQuestionsOf(proposal)).toEqual(["Who approves a refund?", "Max discount?"]);
+  });
+
+  it("finds none without the heading, or when it only says none", async () => {
+    const { businessQuestionsOf } = await import("./specs-arch.js");
+    expect(businessQuestionsOf(["## Approach", "- touch A"].join("\n"))).toEqual([]);
+    expect(businessQuestionsOf(["## Business questions", "- None"].join("\n"))).toEqual([]);
+  });
+});

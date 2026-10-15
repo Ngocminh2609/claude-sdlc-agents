@@ -1,7 +1,7 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { databasePromptSection } from "../database-scripts.js";
-import { config } from "../config.js";
+import { config, limitsOf } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
 import { FEATURE_TEST_POLICY } from "../prompts/feature-test-policy.js";
@@ -13,6 +13,26 @@ import { rootsOf, targetRootsPromptSection } from "../target-roots.js";
 import { projectContextPromptSection } from "./project-context.js";
 import { projectMemoryPromptSection } from "../project-memory.js";
 import type { ProjectContext, ReferenceInventory, SpecInput } from "../types.js";
+
+/** Heading of the proposal section that stops the run for a person's answers. */
+export const BUSINESS_QUESTIONS_HEADING = "## Business questions";
+
+/**
+ * The questions a proposal ends with, or none. Only "- " lines directly under
+ * the heading count, up to the next heading; "none"-style lines are ignored.
+ */
+export function businessQuestionsOf(proposal: string): string[] {
+  const lines = proposal.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim().toLowerCase() === BUSINESS_QUESTIONS_HEADING.toLowerCase());
+  if (start < 0) return [];
+  const questions: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,6}\s/.test(line.trim())) break;
+    const item = /^\s*[-*]\s+(.+)$/.exec(line)?.[1]?.trim();
+    if (item && !/^(none|n\/a|không có)\.?$/i.test(item)) questions.push(item);
+  }
+  return questions;
+}
 
 const SYSTEM_PROMPT = `You are the Specs & Arch agent in an automated SDLC pipeline.
 Read the spec document and the existing project (current working directory),
@@ -26,6 +46,18 @@ then write a concise design proposal:
   endpoints or features), call that out explicitly so it can be broken into
   tasks later.
 Do not write or edit any code — this stage only produces the proposal text.
+
+Scope: design exactly what the spec asks — no adjacent improvements, refactors
+or extra features.
+
+Decide every technical matter yourself — layout, names, libraries, API shapes,
+where code goes — from the spec, the code and the project index; never ask about
+those. Ask only about a BUSINESS decision the spec leaves open that changes what
+gets built (who may do something, a rule, limit, price or status flow, what a
+screen must show) and that neither the spec nor the code answers. Then do not
+guess: end the proposal with a section headed exactly "${BUSINESS_QUESTIONS_HEADING}",
+one "- " line per question. The run stops there until a person answers. Leave
+the section out when there is nothing to ask — that is the usual case.
 
 ${FEATURE_TEST_POLICY}
 
@@ -61,9 +93,7 @@ export async function runSpecsArch(
     allowedTools: ["Read", "Glob", "Grep"],
     model: config.model,
     // A second tree to read needs more room than a single project does.
-    maxTurns: referenceDirs.length
-      ? config.maxTurns.specsArchWithReference
-      : config.maxTurns.specsArch,
+    ...limitsOf(referenceDirs.length ? "specsArchWithReference" : "specsArch"),
   };
 
   if (extraDirs.length) options.additionalDirectories = extraDirs;

@@ -3,7 +3,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { extractTags, indexFor, refreshProjectIndexes, searchIndexes } from "./project-index.js";
+import { readdirSync } from "node:fs";
+import {
+  extractTags,
+  indexFor,
+  pruneOverlappingIndexes,
+  refreshProjectIndexes,
+  searchIndexes,
+  SEGMENT_FILES,
+  taskLocations,
+} from "./project-index.js";
 import { cachedStage, repoVersions } from "./stage-cache.js";
 
 let base: string;
@@ -140,16 +149,106 @@ describe("stage cache over the index", () => {
     const key = () => [repoVersions(first, [repo])];
     expect(indexFor(first, path.join(repo, "src"))).toBeDefined();
 
-    expect(await cachedStage({ kind: "t", key: key(), run })).toEqual({ answer: 1 });
-    expect(await cachedStage({ kind: "t", key: key(), run })).toEqual({ answer: 1 });
-    expect(await cachedStage({ kind: "t", key: key(), fresh: true, run })).toEqual({ answer: 2 });
+    expect(await cachedStage({ kind: "t", project: repo, key: key(), run })).toEqual({ answer: 1 });
+    expect(await cachedStage({ kind: "t", project: repo, key: key(), run })).toEqual({ answer: 1 });
+    expect(await cachedStage({ kind: "t", project: repo, key: key(), fresh: true, run })).toEqual({ answer: 2 });
 
     await put("src/main/java/vn/x/New.java", "class New {}");
     const changed = await refreshProjectIndexes([repo]);
-    expect(await cachedStage({ kind: "t", key: [repoVersions(changed, [repo])], run })).toEqual({ answer: 3 });
+    expect(await cachedStage({ kind: "t", project: repo, key: [repoVersions(changed, [repo])], run })).toEqual({ answer: 3 });
+  });
+
+  it("keeps one cache file per stage kind per project, replaced by a new answer", async () => {
+    let calls = 0;
+    const run = async () => ({ answer: ++calls });
+    await cachedStage({ kind: "t", project: repo, key: ["v1"], run });
+    await cachedStage({ kind: "t", project: repo, key: ["v2"], run });
+    await cachedStage({ kind: "t", project: path.join(base, "other"), key: ["v1"], run });
+
+    expect(readdirSync(process.env.AIDEV_STAGE_CACHE_DIR as string)).toHaveLength(2);
+    expect(await cachedStage({ kind: "t", project: repo, key: ["v1"], run })).toEqual({ answer: 4 });
   });
 
   it("never caches what was read from a folder with no index", async () => {
     expect(repoVersions([], [repo])).toBeNull();
+  });
+});
+
+describe("one index per folder", () => {
+  it("indexes a folder inside a git repo on its own, without dependency or build output folders", async () => {
+    await put("fe/src/App.tsx", "export function App() {}");
+    // node_modules committed by mistake, a build folder simply not ignored.
+    await put("fe/node_modules/lib/index.js", "export const lib = 1;");
+    git("add", ".");
+    git("commit", "-q", "-m", "deps");
+    await put("fe/dist/bundle.js", "export const bundle = 1;");
+    const [fe] = await refreshProjectIndexes([path.join(repo, "fe")]);
+
+    expect(path.resolve(fe.repoRoot)).toBe(path.resolve(repo, "fe"));
+    const text = await readFile(fe.indexFile, "utf-8");
+    expect(text).toMatch(/^src\/App\.tsx \| /m);
+    expect(text).not.toMatch(/node_modules|bundle\.js/);
+    expect(text).not.toMatch(/StatsIndicatorController/);
+  });
+
+  it("sees only its own folder's changes in git", async () => {
+    await put("fe/src/App.tsx", "export function App() {}");
+    git("add", ".");
+    git("commit", "-q", "-m", "fe");
+    await refreshProjectIndexes([path.join(repo, "fe")]);
+    await put("src/main/java/vn/x/Other.java", "class Other {}");
+    const [fe] = await refreshProjectIndexes([path.join(repo, "fe")]);
+    expect(fe.changedFiles).toBe(0);
+  });
+
+  it("deletes another index that covers the same code, and keeps unrelated ones", async () => {
+    await put("fe/src/App.tsx", "export function App() {}");
+    const other = path.join(base, "other");
+    await mkdir(other, { recursive: true });
+    await writeFile(path.join(other, "a.ts"), "export const a = 1;");
+    await refreshProjectIndexes([repo, other]);
+    expect(readdirSync(process.env.AIDEV_INDEX_DIR as string)).toHaveLength(2);
+
+    await refreshProjectIndexes([path.join(repo, "fe")]);
+    const removed = await pruneOverlappingIndexes([path.join(repo, "fe")]);
+
+    expect(removed.map((root) => path.resolve(root))).toEqual([path.resolve(repo)]);
+    expect(readdirSync(process.env.AIDEV_INDEX_DIR as string)).toHaveLength(2);
+  });
+});
+
+describe("first build in segments", () => {
+  it("saves each segment and finishes a stopped build from where it was", async () => {
+    for (let i = 0; i < SEGMENT_FILES + 5; i++) await put(`gen/F${i}.ts`, `export const f${i} = ${i};`);
+    const reported: number[] = [];
+    const [built] = await refreshProjectIndexes([repo], ({ done }) => reported.push(done));
+    expect(reported).toEqual([SEGMENT_FILES]);
+    expect(built.fileCount).toBe(SEGMENT_FILES + 5 + 3);
+
+    // A build stopped after its first segment: the saved partial index is finished, not redone.
+    const json = path.join(path.dirname(built.indexFile), "index.json");
+    const saved = JSON.parse(await readFile(json, "utf-8"));
+    const kept = Object.fromEntries(Object.entries(saved.files).slice(0, 10));
+    await writeFile(json, JSON.stringify({ ...saved, partial: true, files: kept }), "utf-8");
+    const resumed: number[] = [];
+    const [finished] = await refreshProjectIndexes([repo], ({ done }) => resumed.push(done));
+    // 1,998 files left fit in one segment; redoing all 2,008 would have reported a saved segment.
+    expect(resumed).toEqual([]);
+    expect(finished.fileCount).toBe(SEGMENT_FILES + 5 + 3);
+    expect(JSON.parse(await readFile(json, "utf-8")).partial).toBeUndefined();
+  }, 60_000);
+});
+
+describe("taskLocations", () => {
+  it("gives each expected file's index line, marks new ones, and adds lines for named identifiers", async () => {
+    const repos = await refreshProjectIndexes([repo]);
+    const lines = await taskLocations(
+      repos,
+      ["BE/src/main/java/vn/x/StatsIndicatorController.java", "BE/src/main/java/vn/x/RevenueController.java"],
+      "Add a revenue endpoint next to `stat_indicator` reads; keep the existing service untouched.",
+    );
+    expect(lines[0]).toMatch(/^BE\/src\/main\/java\/vn\/x\/StatsIndicatorController\.java \| controller/);
+    expect(lines[1]).toBe("BE/src/main/java/vn/x/RevenueController.java | new file (not in the index)");
+    expect(lines.some((line) => /stats-schema\.sql \| sql/.test(line))).toBe(true);
   });
 });

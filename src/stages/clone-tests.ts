@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, networkExfilBashBlocklist } from "../config.js";
+import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { isInsideReference } from "../reference-repos.js";
@@ -125,7 +125,7 @@ export async function runCloneTests(request: CloneTestRequest): Promise<CloneTes
     ],
     canUseTool: rerun ? denyAllWrites : guardTestWrites(clone.referencePaths),
     model: config.model,
-    maxTurns: rerun ? config.maxTurns.cloneTestsRerun : config.maxTurns.cloneTests,
+    ...limitsOf(rerun ? "cloneTestsRerun" : "cloneTests"),
   };
   const secondary = secondaryRootDirs(roots);
   if (secondary.length) options.additionalDirectories = secondary;

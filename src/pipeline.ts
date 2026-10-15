@@ -2,7 +2,7 @@ import { existsSync, readdirSync, type Dirent } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { config } from "./config.js";
-import { runSpecsArch } from "./stages/specs-arch.js";
+import { businessQuestionsOf, runSpecsArch } from "./stages/specs-arch.js";
 import { reviewSpecs } from "./stages/orchestrator-review.js";
 import { inventoryReferences } from "./stages/reference-inventory.js";
 import { cachedStage, repoVersions } from "./stage-cache.js";
@@ -10,7 +10,7 @@ import { inventoryProjectContext } from "./stages/project-context.js";
 import { breakDownTasks } from "./stages/task-breakdown.js";
 import { runCoding } from "./stages/coding.js";
 import { isActiveStep, StepJournal, type ActiveStep } from "./step-session.js";
-import { refreshProjectIndexes } from "./project-index.js";
+import { refreshProjectIndexes, taskLocations } from "./project-index.js";
 import {
   manifestKeyOf,
   rememberConventions,
@@ -25,6 +25,15 @@ import { findFreePorts } from "./free-ports.js";
 import { metadataStandardsFingerprint } from "./metadata-standards.js";
 import { skillCatalogFingerprint } from "./skills-catalog.js";
 import { StageError } from "./stage-error.js";
+import { RunBudgetError } from "./run-budget.js";
+import { reportStep } from "./step-activity.js";
+import {
+  describeGateFailure,
+  runVerifyGate,
+  usableVerifyCommands,
+  type GateResult,
+  type VerifyCommand,
+} from "./verify-gate.js";
 import { rootsOf, type ProjectRoot } from "./target-roots.js";
 import { applyNewScripts, snapshotScripts, type SqlScriptState } from "./database-scripts.js";
 import type { SqlRunner } from "./database.js";
@@ -39,7 +48,7 @@ import type {
 } from "./types.js";
 
 export interface PipelineResult {
-  status: "done" | "escalated-specs" | "escalated-e2e" | "errored" | "progress-kept";
+  status: "done" | "escalated-specs" | "escalated-e2e" | "errored" | "progress-kept" | "budget-stopped" | "needs-answers";
   message: string;
   logPath?: string;
 }
@@ -57,6 +66,12 @@ export interface PipelineOptions {
    * connection string itself never enters the pipeline.
    */
   sqlRunner?: SqlRunner;
+  /**
+   * The person's answers to the business questions a stopped run asked (see
+   * `businessQuestionsOf`). Not part of the fingerprint: answering resumes
+   * the saved design instead of discarding it.
+   */
+  answers?: string;
 }
 
 /**
@@ -104,6 +119,14 @@ export interface BuildCheckpoint {
   activeStep?: ActiveStep;
   /** Which SQL scripts were already there, and which this run applied (database runs only). */
   sqlScripts?: SqlScriptState;
+  /**
+   * Whether the build check passed before the first task this plan coded. A
+   * project that already failed it gets no per-task check: new errors could
+   * not be told from old ones.
+   */
+  verifyBaseline?: "pass" | "fail";
+  /** The build check that failed after a task; that task's next session is shown it. */
+  gateFailure?: { taskId: string; report: string };
 }
 
 /** Everything a stopped run leaves for the next one (see `checkpoint.ts`). */
@@ -121,6 +144,11 @@ export async function runPipeline(opts: PipelineOptions): Promise<PipelineResult
     const logPath = await opts.logger?.write();
     return { ...result, logPath };
   } catch (error) {
+    if (error instanceof RunBudgetError) {
+      opts.logger?.finish("budget-stopped", error.message);
+      const logPath = await opts.logger?.write();
+      return { status: "budget-stopped", message: error.message, logPath };
+    }
     console.error("Pipeline crashed:", error);
     const message =
       error instanceof StageError
@@ -142,6 +170,8 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
   const { inventory, projectContext, approvedProposal, tasks } = plan;
   const completedTasks = [...plan.completedTasks];
   const journal = new StepJournal(plan.activeStep);
+  let verifyBaseline = plan.verifyBaseline;
+  let gateFailure = plan.gateFailure;
   // A plan saved before this run had a database has no baseline yet: what is
   // in the folder now counts as already there.
   const sqlScripts =
@@ -158,6 +188,8 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
       completedTasks: [...completedTasks],
       ...(activeStep ? { activeStep } : {}),
       ...(sqlScripts ? { sqlScripts } : {}),
+      ...(verifyBaseline ? { verifyBaseline } : {}),
+      ...(gateFailure ? { gateFailure } : {}),
     });
   // Runs whatever new scripts are in the SQL folder. Called after every task,
   // so the next task and E2E find the tables in place, and once more before
@@ -176,6 +208,40 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
   // that task's half-written scripts counted as the baseline.
   if (sqlScripts && !plan.sqlScripts) await saveProgress();
 
+  reportStep({
+    phase: "plan",
+    group: "coding",
+    items: tasks.map((task) => ({ id: task.id, label: headlineOf(task.description) })),
+  });
+
+  // --- The build check run after each task (verify-gate.ts) ---
+  // Plain code, judged by exit code. First a baseline on the code as it is
+  // before the next task, so a project that already fails is reported once
+  // instead of failing every task.
+  const gateCommands = await (async (): Promise<VerifyCommand[]> => {
+    if (!config.verifyGate.enabled) return [];
+    const { usable, refused } = usableVerifyCommands(projectContext?.verifyCommands, rootsOf(spec));
+    for (const { command, reason } of refused) onProgress(`Build check: not running "${command}" — ${reason}`);
+    if (!usable.length) {
+      onProgress("Build check: skipped — no compile/lint command is known for this project");
+      return [];
+    }
+    if (!verifyBaseline) {
+      onProgress(`Build check: baseline — ${usable.length} command(s) on the code before the next task`);
+      const baseline = await runGateStep("gate:baseline", usable);
+      verifyBaseline = baseline.ok ? "pass" : "fail";
+      await saveProgress();
+    }
+    if (verifyBaseline === "fail") {
+      onProgress(
+        "Build check: off for this run — the project already failed it before the next task, so new errors could not be told from old ones",
+      );
+      return [];
+    }
+    onProgress(`Build check: on — ${usable.map((entry) => entry.command).join(", ")}`);
+    return usable;
+  })();
+
   // --- Coding, once per task, then E2E/QA once ---
   // One pass only, by design. The earlier loop re-coded every task from the
   // first one after an E2E failure — on a real 8-task run that re-spent the
@@ -186,17 +252,23 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
     if (completedTasks.some((done) => done.id === task.id)) continue;
 
     let summary: string;
+    let taskSession: ActiveStep | undefined;
     try {
       // An interrupted task resumes its own saved session; when that
       // transcript is gone it starts a new one told to continue from the files
       // already on disk.
-      summary = await journal.run(`coding:${task.id}`, saveProgress, async ({ interrupted, resumed }) => {
+      const persist = (active: ActiveStep) => {
+        taskSession = active;
+        return saveProgress(active);
+      };
+      summary = await journal.run(`coding:${task.id}`, persist, async ({ interrupted, resumed }) => {
         const resumeNote = resumed
           ? " — resuming the interrupted session"
           : interrupted
             ? " — continuing the interrupted attempt from the files on disk"
             : "";
         onProgress(`Coding: ${task.id} (${index + 1}/${tasks.length})${resumeNote}`);
+        const locations = await locateTask(spec, task, onProgress);
         return runCoding({
           spec,
           task,
@@ -205,16 +277,38 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
           inventory,
           projectContext,
           interrupted: interrupted && !resumed,
+          ...(locations.length ? { locations } : {}),
+          ...(gateFailure?.taskId === task.id ? { buildCheckFailure: gateFailure.report } : {}),
         });
       });
     } catch (error) {
-      if (!(error instanceof StageError)) throw error;
+      // The run budget is not this task's failure: it stops the whole run (see runPipeline).
+      if (!(error instanceof StageError) || error instanceof RunBudgetError) throw error;
       return {
         status: "errored",
         message: codingStoppedMessage(error, task.id, index, tasks.map((t) => t.id), completedTasks),
       };
     }
     logger?.recordCoding(1, task.id, summary);
+    if (gateCommands.length) {
+      onProgress(`Build check: ${task.id} — running ${gateCommands.length} command(s)`);
+      const result = await runGateStep(`gate:${task.id}`, gateCommands);
+      if (!result.ok && result.failure) {
+        const report = describeGateFailure(result.failure);
+        gateFailure = { taskId: task.id, report };
+        // The task's own session stays the active step: the next run resumes
+        // it, with this failure in front of it, instead of moving on.
+        await saveProgress(taskSession);
+        onProgress(`Build check: fail — ${task.id}`);
+        logger?.recordCoding(1, task.id, `Build check failed after this task:\n${report}`);
+        return {
+          status: "errored",
+          message: gateFailedMessage(task.id, index, tasks.map((t) => t.id), completedTasks, report),
+        };
+      }
+      onProgress(`Build check: pass — ${task.id}`);
+      gateFailure = undefined;
+    }
     const files = await filesWrittenByTask(spec);
     completedTasks.push({ id: task.id, description: task.description, summary, ...(files.length ? { files } : {}) });
     await saveProgress();
@@ -314,6 +408,28 @@ async function resumeOrPlan(opts: PipelineOptions, checkpointKey: string): Promi
   return keep("it is unreadable");
 }
 
+function needsAnswersMessage(questions: string[]): string {
+  return [
+    "The design needs business decisions that the spec and the code do not settle:",
+    ...questions.map((question, index) => `${index + 1}. ${question}`),
+    "",
+    "Answer them and run again with the same spec — in the UI in the field \"Trả lời câu hỏi nghiệp vụ\",",
+    'on the CLI with --answers "<text>". The design so far is saved: the answers revise it, nothing starts over.',
+  ].join("\n");
+}
+
+function answersFeedback(questions: string[], answers: string): string {
+  return [
+    "You asked these business questions:",
+    ...questions.map((question, index) => `${index + 1}. ${question}`),
+    "",
+    "The person answered:",
+    answers,
+    "",
+    "Revise the proposal with these answers. Do not ask them again; ask only what they leave open.",
+  ].join("\n");
+}
+
 /** Enough to name what a task wrote; a task touching more is listed up to this. */
 const MAX_FILES_PER_TASK = 60;
 
@@ -332,6 +448,31 @@ async function filesWrittenByTask(spec: SpecInput): Promise<string[]> {
       .slice(0, MAX_FILES_PER_TASK);
   } catch (error) {
     console.error("Project index refresh after a task failed:", error);
+    return [];
+  }
+}
+
+/**
+ * Before a task: asks git what changed since the index was last refreshed,
+ * re-indexes exactly that, then reads from the index where the task's code
+ * goes. Edits made outside the run since the last task are picked up here,
+ * and the refresh after the task then holds only that task's own files.
+ * Best effort, like every index step: an empty list leaves the agent to Grep
+ * the index itself.
+ */
+async function locateTask(spec: SpecInput, task: TaskItem, onProgress: (message: string) => void): Promise<string[]> {
+  if (!spec.projectIndexes?.length) return [];
+  try {
+    const repos = await refreshProjectIndexes(rootsOf(spec).map((root) => root.path));
+    const changed = repos.reduce((sum, repo) => sum + repo.changedFiles, 0);
+    onProgress(
+      changed
+        ? `Project index: ${task.id} — git shows ${changed} changed file(s) since the last check, re-indexed`
+        : `Project index: ${task.id} — no changes in git since the last check`,
+    );
+    return await taskLocations(repos, task.targetFiles ?? [], task.description);
+  } catch (error) {
+    console.error("Project index check before a task failed:", error);
     return [];
   }
 }
@@ -435,6 +576,8 @@ async function planFromScratch(
   if (!start) await saveDesign();
 
   // --- Specs & Arch <-> Orchestrator review ---
+  // Answers revise the proposal once per run; a revision that still asks stops again.
+  let answersApplied = false;
   if (approvedProposal === null) {
     for (let attempt = 1; attempt <= config.maxSpecAttempts; attempt++) {
       onProgress(`Specs & Arch: attempt ${attempt}/${config.maxSpecAttempts}`);
@@ -450,6 +593,25 @@ async function planFromScratch(
       }
       const proposal = draft;
       logger?.recordSpecsArch(attempt, proposal);
+      const questions = businessQuestionsOf(proposal);
+      if (questions.length) {
+        const answers = opts.answers?.trim();
+        if (!answers || answersApplied) {
+          // The proposal stays saved as the draft: answered, it is revised, not redone.
+          await saveDesign();
+          onProgress(`Specs & Arch: stopped — ${questions.length} business question(s) need your answer`);
+          return { status: "needs-answers", message: needsAnswersMessage(questions) };
+        }
+        answersApplied = true;
+        onProgress(`Specs & Arch: revising the proposal with your answers to ${questions.length} business question(s)`);
+        lastProposal = proposal;
+        lastFeedback = answersFeedback(questions, answers);
+        draft = undefined;
+        await saveDesign();
+        // Answering is not a rejected round: it does not use up an attempt.
+        attempt--;
+        continue;
+      }
       const review = await journal.run("design:review", saveDesign, () => reviewSpecs(spec, proposal));
       logger?.recordReview(attempt, review);
       onProgress(`Orchestrator review: ${review.decision}`);
@@ -536,6 +698,7 @@ async function scanInputs(
     const versions = repoVersions(spec.projectIndexes, spec.referencePaths);
     inventory = await cachedStage({
       kind: "reference-inventory",
+    project: spec.projectPath,
       key: versions && [spec.specMarkdown, versions],
       fresh,
       run: () => journal.run("scan:reference-inventory", saveScan, () => inventoryReferences(spec)),
@@ -567,9 +730,10 @@ async function scanInputs(
     return {
       inventory,
       projectContext: {
-        conventions: remembered,
+        conventions: remembered.text,
         relevantFiles: [],
         notes: "Conventions come from the project map. No relevant-file scan was run: find files through the project index.",
+        verifyCommands: remembered.verifyCommands,
       },
     };
   }
@@ -578,6 +742,7 @@ async function scanInputs(
   const targetVersions = repoVersions(spec.projectIndexes, targetFolders);
   const projectContext: ProjectContext | null = await cachedStage({
     kind: "project-context",
+    project: spec.projectPath,
     key: targetVersions && [spec.specMarkdown, targetVersions],
     fresh,
     run: () => journal.run("scan:project-context", saveScan, () => inventoryProjectContext(spec)),
@@ -589,7 +754,9 @@ async function scanInputs(
       : "Project context: unavailable — stages will explore the project themselves",
   );
   if (projectContext && manifestKey) {
-    await bestEffort(() => rememberConventions(roots, manifestKey, projectContext.conventions));
+    await bestEffort(() =>
+      rememberConventions(roots, manifestKey, projectContext.conventions, projectContext.verifyCommands),
+    );
   }
 
   return { inventory, projectContext };
@@ -711,6 +878,39 @@ function containsFileNamed(dir: string, name: string): boolean {
     }
   }
   return false;
+}
+
+/** Runs the build check as a step the UI can draw: start, then an end that says whether it passed. */
+async function runGateStep(step: string, commands: VerifyCommand[]): Promise<GateResult> {
+  reportStep({ step, phase: "start" });
+  const result = await runVerifyGate(commands, config.verifyGate);
+  reportStep({ step, phase: "end", ok: result.ok });
+  return result;
+}
+
+function gateFailedMessage(
+  taskId: string,
+  index: number,
+  allTaskIds: string[],
+  completed: CompletedTask[],
+  report: string,
+): string {
+  return [
+    `Build check failed after task ${taskId} (${index + 1}/${allTaskIds.length}). The pipeline ran the project's own check and it did not pass:`,
+    "",
+    report,
+    "",
+    `Finished before it: ${completed.map((t) => t.id).join(", ") || "(none)"} — that code is on disk, not reverted.`,
+    `Not started: ${allTaskIds.slice(index + 1).join(", ") || "(none)"}.`,
+    "",
+    `Nothing was retried. Fix it by hand and run again, or just run again: the next run resumes task ${taskId}'s own session with this failure in front of it, and moves on only once the check passes.`,
+  ].join("\n");
+}
+
+/** A task description's first line, for the UI's mind map. */
+function headlineOf(description: string): string {
+  const first = description.trim().split("\n")[0] ?? "";
+  return first.length <= 120 ? first : `${first.slice(0, 120)}…`;
 }
 
 function codingStoppedMessage(

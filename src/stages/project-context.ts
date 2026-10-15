@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config } from "../config.js";
+import { config, limitsOf } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { ProjectContext, SpecInput } from "../types.js";
@@ -29,7 +29,8 @@ import type { ProjectContext, SpecInput } from "../types.js";
 const SYSTEM_PROMPT = `You are the Project Context agent in an automated SDLC pipeline.
 Read the target project in the current working directory and produce two things
 that later stages (design, task breakdown, coding, and the "how to start this
-project" part of QA) will use instead of re-exploring the project themselves:
+project" part of QA) will use instead of re-exploring the project themselves —
+and the commands the pipeline uses to check each coding task:
 
 1. conventions — how the project is organised: top-level layout, module/package
    structure, naming and casing conventions actually used (quote real examples),
@@ -47,6 +48,16 @@ project" part of QA) will use instead of re-exploring the project themselves:
    configuration the new work must integrate with. This is about what THIS
    spec touches, not a general project tour — be exhaustive for what's
    relevant, and leave out what the spec doesn't touch.
+3. verifyCommands — the commands that check the code compiles and is clean,
+   as the project's CI (or, without CI, its build files) runs them: compile,
+   type-check, lint. One entry per command, with "folder" set to exactly one of
+   the target folder paths listed above (the folder the command runs in) and
+   "command" a single command line. The pipeline runs them itself after every
+   coding task and judges them by exit code, so: check-only (no --fix, no
+   formatter that writes files), no install/deploy/publish, no tests, no app
+   start, and no "&&", pipes or redirects. Use the project's wrapper when it has
+   one (./mvnw, gradlew). An empty list is the honest answer when there is no
+   such command.
 
 Do not propose a design and do not write or edit anything — this stage only
 reports facts about the project as it exists today.`;
@@ -67,8 +78,19 @@ const PROJECT_CONTEXT_SCHEMA = {
       },
     },
     notes: { type: "string" },
+    verifyCommands: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          folder: { type: "string" },
+          command: { type: "string" },
+        },
+        required: ["folder", "command"],
+      },
+    },
   },
-  required: ["conventions", "relevantFiles", "notes"],
+  required: ["conventions", "relevantFiles", "notes", "verifyCommands"],
 };
 
 export async function inventoryProjectContext(spec: SpecInput): Promise<ProjectContext | null> {
@@ -76,7 +98,7 @@ export async function inventoryProjectContext(spec: SpecInput): Promise<ProjectC
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
     model: config.model,
-    maxTurns: config.maxTurns.projectContext,
+    ...limitsOf("projectContext"),
   };
 
   // Separate BE/FE folders: both are the project, so both are scanned. The

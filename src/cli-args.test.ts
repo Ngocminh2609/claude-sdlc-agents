@@ -237,3 +237,18 @@ describe("resolveReferencePaths", () => {
     );
   });
 });
+
+describe("--max-run-usd", () => {
+  it("is read by the feature and clone commands, and left out when not given", () => {
+    expect(parseArgs(["--spec", "s.md", "--project", "p", "--max-run-usd", "12.5"]).maxRunUsd).toBe(12.5);
+    expect(parseArgs(["--spec", "s.md", "--project", "p"])).not.toHaveProperty("maxRunUsd");
+    expect(parseCloneArgs(["clone", "--what", "x", "--from", "r", "--project", "p", "--max-run-usd", "3"]).maxRunUsd).toBe(3);
+  });
+
+  it("refuses anything that is not a positive amount", () => {
+    for (const value of ["0", "-1", "abc"]) {
+      expect(() => parseArgs(["--spec", "s.md", "--project", "p", "--max-run-usd", value])).toThrow(/Usage/);
+    }
+    expect(() => parseArgs(["--spec", "s.md", "--project", "p", "--max-run-usd"])).toThrow(/Usage/);
+  });
+});

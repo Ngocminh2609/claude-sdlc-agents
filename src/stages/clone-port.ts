@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, networkExfilBashBlocklist } from "../config.js";
+import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
@@ -169,7 +169,7 @@ export async function portCloneGroup(request: ClonePortRequest): Promise<ClonePo
     additionalDirectories: withSkillDirs(extraDirectories(clone.referencePaths, roots), clone.skillCatalog),
     systemPrompt: SYSTEM_PROMPT,
     model: config.model,
-    maxTurns: config.maxTurns.clonePort,
+    ...limitsOf("clonePort"),
   };
   withIndexAccess(options, clone.projectIndexes);
 
@@ -299,7 +299,7 @@ export async function fixCloneFailures(request: CloneFixRequest): Promise<string
     additionalDirectories: withSkillDirs(extraDirectories(clone.referencePaths, roots), clone.skillCatalog),
     systemPrompt: FIX_PROMPT,
     model: config.model,
-    maxTurns: config.maxTurns.cloneFix,
+    ...limitsOf("cloneFix"),
   };
   withIndexAccess(options, clone.projectIndexes);
 

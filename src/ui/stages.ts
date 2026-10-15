@@ -72,9 +72,31 @@ export function stageOfProgress(message: string): StageId | null {
   if (message.startsWith("Orchestrator review:")) return "review";
   if (message.startsWith("Breaking approved design")) return "tasks";
   if (/task\(s\) to implement$/.test(message)) return "tasks";
-  if (message.startsWith("Coding:")) return "coding";
+  if (message.startsWith("Coding:") || message.startsWith("Build check:")) return "coding";
   if (message.startsWith("E2E/QA")) return "e2e";
 
+  return null;
+}
+
+/**
+ * The stage a pipeline step belongs to, for the mind map. Step names are the
+ * ones `StepJournal` and the build check report (`step-activity.ts`); like
+ * `stageOfProgress`, an unknown one is left out of the map, never guessed.
+ */
+export function stageOfStep(step: string): StageId | null {
+  if (step.startsWith("scan:")) return "inventory";
+  if (step === "design:specs-arch") return "specs-arch";
+  if (step === "design:review") return "review";
+  if (step === "design:breakdown") return "tasks";
+  if (step.startsWith("coding:") || step.startsWith("gate:")) return "coding";
+  if (step === "e2e") return "e2e";
+  if (step === "plan:locate") return "locate";
+  if (step === "plan:conventions") return "conventions";
+  if (step === "plan:mapping") return "mapping";
+  if (step.startsWith("port:")) return "port";
+  if (step.startsWith("verify:build:")) return "build";
+  // A fix round belongs to the test stage, as in stageOfProgress.
+  if (step.startsWith("verify:tests:") || step.startsWith("verify:fix:")) return "tests";
   return null;
 }
 
@@ -95,6 +117,7 @@ export function isSetbackProgress(message: string): boolean {
   return (
     message === "Orchestrator review: reject" ||
     message === "E2E/QA verdict: fail" ||
+    message.startsWith("Build check: fail") ||
     message === "Clone build: fail" ||
     message.startsWith("Clone tests: fail") ||
     message.startsWith("Clone fix: round") ||

@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config } from "../config.js";
+import { config, limitsOf } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { extraDirectories, referenceDirectories } from "../reference-repos.js";
 import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
@@ -139,7 +139,7 @@ export async function mapCloneTargets(
     // skills catalog's global directory, so a routed skill is actually readable.
     additionalDirectories: withSkillDirs(extraDirectories(clone.referencePaths, roots), clone.skillCatalog),
     model: config.model,
-    maxTurns: config.maxTurns.cloneMapping,
+    ...limitsOf("cloneMapping"),
   };
   withIndexAccess(options, clone.projectIndexes);
 

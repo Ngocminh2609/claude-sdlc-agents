@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, networkExfilBashBlocklist } from "../config.js";
+import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
 import { databasePromptSection } from "../database-scripts.js";
 import { projectContextPromptSection } from "./project-context.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
@@ -126,7 +126,7 @@ export async function runE2eTest(
     disallowedTools: [...networkExfilBashBlocklist],
     canUseTool: restrictWritesToE2eFiles,
     model: config.model,
-    maxTurns: config.maxTurns.e2e,
+    ...limitsOf("e2e"),
   };
 
   // Separate BE/FE folders: both servers have to be started, so both folders

@@ -75,6 +75,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return sendStatic(res, "index.html");
     case "GET /app.js":
       return sendStatic(res, "app.js");
+    case "GET /mindmap.js":
+      return sendStatic(res, "mindmap.js");
     case "GET /styles.css":
       return sendStatic(res, "styles.css");
 
@@ -109,12 +111,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
     case "GET /api/browse":
       return browsePath(res, url);
-
-    case "GET /api/spec":
-      return readSpec(res, url);
-
-    case "POST /api/spec":
-      return writeSpec(req, res);
 
     case "GET /api/runs":
       return sendJson(res, 200, { runs: await listRuns() });
@@ -166,6 +162,10 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
       skipTests: body.skipTests === true,
       fresh: body.fresh === true,
       noMetadataStandards: body.noMetadataStandards === true,
+      ...(typeof body.answers === "string" && body.answers.trim() ? { answers: body.answers } : {}),
+      ...(typeof body.maxRunUsd === "number" && Number.isFinite(body.maxRunUsd) && body.maxRunUsd > 0
+        ? { maxRunUsd: body.maxRunUsd }
+        : {}),
       projectPath: optionalString(body.projectPath),
       projectBePath: optionalString(body.projectBePath),
       projectFePath: optionalString(body.projectFePath),
@@ -227,33 +227,6 @@ async function browsePath(res: ServerResponse, url: URL): Promise<void> {
   } catch (error) {
     if (error instanceof BrowseError) return sendJson(res, 400, { error: error.message });
     throw error;
-  }
-}
-
-async function readSpec(res: ServerResponse, url: URL): Promise<void> {
-  const target = url.searchParams.get("path") ?? "";
-  if (!target.trim()) return sendJson(res, 400, { error: "No path given." });
-  try {
-    const resolved = path.resolve(target);
-    sendJson(res, 200, { path: resolved, content: await readFile(resolved, "utf-8") });
-  } catch (error) {
-    sendJson(res, 400, { error: `Cannot read ${target}: ${describe(error)}` });
-  }
-}
-
-async function writeSpec(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req);
-  const target = String(body.path ?? "").trim();
-  const content = String(body.content ?? "");
-  if (!target) return sendJson(res, 400, { error: "No path given." });
-
-  try {
-    const resolved = path.resolve(target);
-    await mkdir(path.dirname(resolved), { recursive: true });
-    await writeFile(resolved, content, "utf-8");
-    sendJson(res, 200, { path: resolved });
-  } catch (error) {
-    sendJson(res, 400, { error: `Cannot write ${target}: ${describe(error)}` });
   }
 }
 

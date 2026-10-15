@@ -3,6 +3,8 @@ import { config } from "./config.js";
 import { recordUsage, usageOfResult } from "./token-usage.js";
 import { claimStepSession } from "./step-session.js";
 import { RUNTIME_PORTS_HEADER } from "./prompts/runtime-ports.js";
+import { GUARD_NOTICE, loopGuardHooks, loopLimitsFor } from "./loop-guard.js";
+import { BUILD_CHECK_FAILED_HEADER } from "./verify-gate.js";
 
 /**
  * Whether a stage session started by an earlier run can be resumed: its
@@ -61,6 +63,30 @@ function isFlaggedError(message: SDKMessage): boolean {
 const GATED_WRITE_TOOLS = ["Write", "Edit"];
 
 /**
+ * The SDK warns, on every query, that bare `allowedTools` entries (Read, Glob,
+ * Grep, Bash) skip `canUseTool`. Here that is the design, not a mistake: those
+ * tools are auto-approved on purpose (Bash still meets `disallowedTools` and
+ * the loop guard's PreToolUse hook), and `canUseTool` gates only Write/Edit,
+ * which no stage lists in `allowedTools`. Every other warning still prints.
+ */
+export const SHADOWED_CAN_USE_TOOL_WARNING = "CLAUDE_SDK_CAN_USE_TOOL_SHADOWED";
+let warningFilterInstalled = false;
+
+export function silenceShadowedCanUseToolWarning(): void {
+  if (warningFilterInstalled) return;
+  warningFilterInstalled = true;
+  const emit = process.emitWarning.bind(process) as (...args: unknown[]) => void;
+  process.emitWarning = ((warning: unknown, ...rest: unknown[]) => {
+    const [options, code] = rest;
+    const warningCode = typeof options === "object" && options !== null ? (options as { code?: unknown }).code : code;
+    if (warningCode === SHADOWED_CAN_USE_TOOL_WARNING) return;
+    emit(warning, ...rest);
+  }) as typeof process.emitWarning;
+}
+
+silenceShadowedCanUseToolWarning();
+
+/**
  * Stops a server the agent started with `run_in_background`. Without it the
  * agent falls back to hunting PIDs from Bash, which on Windows can miss the
  * real server (a java/node child of the shell) and leave it holding a port.
@@ -83,30 +109,46 @@ const BACKGROUND_STOP_TOOL = "TaskStop";
  * Write/Edit when the stage gates writes through `canUseTool`, plus TaskStop
  * when it has Bash. A stage that sets `tools` or `settingSources` itself keeps
  * its own value.
+ *
+ * A stage with a `maxTurns` also gets the loop guard (`loop-guard.ts`): repeat
+ * detection, the wrap-up nudge before the turn cap, and long Bash output cut
+ * down — one fresh guard per session. A stage's own `hooks` replace it.
  */
 export function isolatedOptions(options: Options): Options {
   const declared = (options.allowedTools ?? []).map((tool) => tool.replace(/\(.*$/, ""));
   const gated = options.canUseTool ? GATED_WRITE_TOOLS : [];
   const stop = declared.includes("Bash") ? [BACKGROUND_STOP_TOOL] : [];
+  const guarded = Boolean(options.maxTurns) && !options.hooks;
+  const guard = guarded ? { hooks: loopGuardHooks(loopLimitsFor(options.maxTurns as number, config.loopGuard)) } : {};
+  // The agent must know the guard's messages are the pipeline's (see GUARD_NOTICE).
+  const notice =
+    guarded && typeof options.systemPrompt === "string" ? { systemPrompt: `${options.systemPrompt}\n\n${GUARD_NOTICE}` } : {};
   return {
     settingSources: [],
     strictMcpConfig: true,
     tools: [...new Set([...declared, ...gated, ...stop])],
+    ...guard,
     ...options,
+    ...notice,
   };
 }
 
 /**
  * Sent in place of a stage's prompt when its interrupted session is resumed:
  * the original prompt is already in that session's history, so only the new
- * situation needs saying. Ports are the one input that must be fresh — the old
- * ones may be taken now — so the new prompt's port block is carried over.
+ * situation needs saying. Two blocks of the new prompt are carried over, each
+ * up to its first blank line: the ports, the one input that must be fresh (the
+ * old ones may be taken now), and a failed build check — news that came after
+ * the session last ran.
  */
 export function resumePrompt(originalPrompt: string): string {
   const lines = originalPrompt.split("\n");
-  const start = lines.indexOf(RUNTIME_PORTS_HEADER);
-  const end = start === -1 ? -1 : lines.indexOf("", start);
-  const ports = start === -1 ? [] : ["", ...lines.slice(start, end === -1 ? undefined : end)];
+  const carried = [RUNTIME_PORTS_HEADER, BUILD_CHECK_FAILED_HEADER].flatMap((header) => {
+    const start = lines.indexOf(header);
+    if (start === -1) return [];
+    const end = lines.indexOf("", start);
+    return ["", ...lines.slice(start, end === -1 ? undefined : end)];
+  });
   return [
     "--- Resumed after an interruption ---",
     "This session was interrupted before you finished (the machine or the pipeline was shut down, or",
@@ -114,7 +156,7 @@ export function resumePrompt(originalPrompt: string): string {
     "background process you had started is no longer running. Check the current state of anything",
     "you were changing, then continue the same job from where you stopped — do not start it over —",
     "and finish with exactly the output you were asked for.",
-    ...ports,
+    ...carried,
   ].join("\n");
 }
 

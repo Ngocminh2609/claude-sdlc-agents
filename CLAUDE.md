@@ -91,7 +91,17 @@
   is HEAD plus uncommitted state. Never key a cache on something looser than the
   content it was read from. The one deliberate exception is target conventions,
   keyed on `structureHash` because they describe layout. Bump `INDEX_VERSION`
-  when what an entry holds changes.
+  when what an entry holds changes. An index is per folder (git scoped to it
+  with `--relative`), first builds are saved per `SEGMENT_FILES` and resumed
+  from `partial`, and `pruneOverlappingIndexes` (run start only — never from
+  the per-task refresh, which sees only the target folders) deletes indexes
+  overlapping the run's folders. Stage caches are one file per kind per project
+  holding the key's hash. Before each coding task `locateTask` refreshes the
+  index and passes `taskLocations` lines to the prompt.
+- Specs & Arch may end a proposal with `## Business questions` (business only —
+  the prompt tells it to decide technical matters itself). The pipeline stops
+  `needs-answers` before review with the draft saved; `--answers` revises it
+  once per run without using an attempt. Keep answers out of the fingerprint.
 - Bump `CONVENTIONS_VERSION` in `src/target-conventions-cache.ts` whenever the
   Target Conventions prompt asks for something new; otherwise an unchanged git
   HEAD keeps serving the old, incomplete answer.
@@ -275,6 +285,28 @@
   because it happened for real, not as a defensive guess. Every stage funnels
   through `runTextQuery`/`runStructuredQuery`, so fix this class of failure
   there once, never per stage.
+- Loop engineering lives in four plain-code pieces, none of which retries:
+  the loop guard (`src/loop-guard.ts`: repeat warn/refuse, wrap-up nudge at
+  `softCapRatio` of `maxTurns`, Bash output cut to head + tail) attached by
+  `isolatedOptions` to every stage with a `maxTurns`; a per-step
+  `maxBudgetUsd` (`limitsOf` in `config.ts` — a new stage takes its turn and
+  spend caps from there, and a missing budget key fails to compile); the run
+  budget (`--max-run-usd`, `src/run-budget.ts`, checked in `StepJournal.run`
+  before anything is saved for the step, ends the run `budget-stopped` with
+  progress kept); and the feature build check (`src/verify-gate.ts`). The
+  check's commands come from a model (Project Context / Target Conventions
+  `verifyCommands`), so `refusalOf` decides in plain code whether one may run
+  — never widen it to chaining, redirection, installs or writers, and never pass
+  the pipeline's credentials to it. A failed check stops the run and keeps the
+  task's session as `activeStep` with `gateFailure` in the checkpoint; adding a
+  fix-and-recheck loop there is the cost decision the "nothing after the design
+  review is retried" rule reserves for a person. `updatedToolOutput` for Bash
+  must keep Bash's object shape — a string was verified to be ignored. Keep `GUARD_NOTICE` on guarded stages: without it a real agent ignored the guard's messages as unverified text.
+- The UI's mind map is computed in `src/ui/mind-map.ts` from `step` events
+  (`src/step-activity.ts`: start/turn/end per `StepJournal` step and
+  `gate:<task>`, plus `plan` for tasks and port groups). A running agent
+  step's percentage is turns used of its cap, capped at 95 and flagged
+  `estimate` — never present it as work done, and only a step's end makes 100.
 - `runStructuredQuery` retries exactly one subtype on its own —
   `error_max_structured_output_retries`, capped at `config.maxStructuredOutputRetries`
   — and nothing else, on purpose. Do not widen this to a general is_error retry:

@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config } from "../config.js";
+import { config, limitsOf } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { referenceDirectories } from "../reference-repos.js";
 import type { ReferenceInventory, SpecInput } from "../types.js";
@@ -80,7 +80,7 @@ export async function inventoryReferences(spec: SpecInput): Promise<ReferenceInv
       allowedTools: ["Read", "Glob", "Grep"],
       additionalDirectories: directories,
       model: config.model,
-      maxTurns: config.maxTurns.referenceInventory,
+      ...limitsOf("referenceInventory"),
     },
     spec.projectIndexes,
   );

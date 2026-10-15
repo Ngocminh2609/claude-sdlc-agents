@@ -44,12 +44,20 @@ describe("project memory", () => {
   it("reuses conventions only while the build manifests are the ones they were read under", async () => {
     const key = manifestKeyOf([index(roots[0], "m1"), index(roots[1], "m2")], roots);
     expect(key).not.toBeNull();
-    await rememberConventions(roots, key as string, "Spring Boot modules under com.app.*");
+    const verifyCommands = [{ folder: roots[0].path, command: "mvn -q compile" }];
+    await rememberConventions(roots, key as string, "Spring Boot modules under com.app.*", verifyCommands);
 
     const memory = await loadProjectMemory(roots);
-    expect(reusableConventions(memory, key)).toBe("Spring Boot modules under com.app.*");
+    expect(reusableConventions(memory, key)).toEqual({ text: "Spring Boot modules under com.app.*", verifyCommands });
     const changed = manifestKeyOf([index(roots[0], "m1-new"), index(roots[1], "m2")], roots);
     expect(reusableConventions(memory, changed)).toBeNull();
+  });
+
+  it("does not reuse conventions saved before the build check had commands to keep", async () => {
+    const key = manifestKeyOf([index(roots[0], "m1"), index(roots[1], "m2")], roots) as string;
+    await rememberConventions(roots, key, "Spring Boot modules under com.app.*");
+
+    expect(reusableConventions(await loadProjectMemory(roots), key)).toBeNull();
   });
 
   it("has no key, so reuses nothing, when a target folder is not indexed", () => {

@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { indexFor, type IndexRef } from "./project-index.js";
+import type { VerifyCommand } from "./verify-gate.js";
 import type { ProjectRoot } from "./target-roots.js";
 
 /**
@@ -54,7 +55,7 @@ export interface ProjectMemory {
   version: number;
   /** `role:path` of every target folder this map describes. */
   roots: string[];
-  conventions?: { text: string; manifestKey: string; savedAt: string };
+  conventions?: { text: string; manifestKey: string; savedAt: string; verifyCommands?: VerifyCommand[] };
   features: FeatureRecord[];
 }
 
@@ -82,10 +83,18 @@ export function manifestKeyOf(indexes: IndexRef[] | undefined, roots: ProjectRoo
   return keys.length ? keys.sort().join("|") : null;
 }
 
-/** Saved conventions, when the build manifests are the ones they were read under. */
-export function reusableConventions(memory: ProjectMemory | null | undefined, manifestKey: string | null): string | null {
-  if (!memory?.conventions || !manifestKey) return null;
-  return memory.conventions.manifestKey === manifestKey ? memory.conventions.text : null;
+/**
+ * Saved conventions and build-check commands, when the build manifests are the
+ * ones they were read under. Conventions saved before the build check existed
+ * have no commands and are not reused: one scan fills them in.
+ */
+export function reusableConventions(
+  memory: ProjectMemory | null | undefined,
+  manifestKey: string | null,
+): { text: string; verifyCommands: VerifyCommand[] } | null {
+  const saved = memory?.conventions;
+  if (!saved || !manifestKey || saved.manifestKey !== manifestKey || !Array.isArray(saved.verifyCommands)) return null;
+  return { text: saved.text, verifyCommands: saved.verifyCommands };
 }
 
 export async function loadProjectMemory(roots: ProjectRoot[]): Promise<ProjectMemory> {
@@ -98,9 +107,21 @@ export async function loadProjectMemory(roots: ProjectRoot[]): Promise<ProjectMe
   return { version: MEMORY_VERSION, roots: rootKeys(roots), features: [] };
 }
 
-export async function rememberConventions(roots: ProjectRoot[], manifestKey: string, text: string): Promise<void> {
+export async function rememberConventions(
+  roots: ProjectRoot[],
+  manifestKey: string,
+  text: string,
+  // Left out when the scan had none to give (a scan cached before the build
+  // check existed), so the next run scans again rather than reusing "no commands".
+  verifyCommands?: VerifyCommand[],
+): Promise<void> {
   await update(roots, (memory) => {
-    memory.conventions = { text, manifestKey, savedAt: new Date().toISOString() };
+    memory.conventions = {
+      text,
+      manifestKey,
+      savedAt: new Date().toISOString(),
+      ...(verifyCommands ? { verifyCommands } : {}),
+    };
   });
 }
 

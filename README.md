@@ -107,6 +107,10 @@ Optional DB flags (pass at most one):
   a new feature). Needs `--project-sql`. See [Database scripts](#database-scripts).
 - `--db-schema ./schema.sql` — a schema/description file to design from. Nothing is run against a database.
 
+Optional spend cap (feature and clone):
+- `--max-run-usd <n>` — stop before the next agent step once the run has spent about `n` USD.
+  See [Loop guards, budgets and the build check](#loop-guards-budgets-and-the-build-check).
+
 ## Database scripts
 
 With `--db-connection` and `--project-sql`, nobody has to copy the generated DDL into a SQL client:
@@ -170,7 +174,7 @@ refused before the agent runs, unless you pass `--overwrite`.
 
 In the UI, *Làm task mới* has five steps: 1. target folders (BE, FE, SQL, optional reference),
 2. draft a spec (folder to save it in, the request, **Sinh spec**), 3. the spec file, which step 2
-fills in when its draft finishes (**Xem / sửa spec** opens it for review), 4. database, 5. check and run.
+fills in when its draft finishes (open it in your editor to review it), 4. database, 5. check and run.
 The file name comes from the request (`<date>-<first words>.md`).
 
 ## Cloning from a sample project
@@ -284,15 +288,26 @@ aidev ui --port 5000 --no-open
 On Windows, double-clicking `aidev-ui.cmd` in this repo does the same thing. The
 console window it opens *is* the server — close it to stop the UI.
 
-**Project index.** Plain code, no model, builds an index of every git repo in the
-target and reference folders, stored in `runs/.project-index/`. A parent folder
-such as `CSDL-VIMO/` counts as the repos inside it. Each file gets one line: its
+**Project index.** Plain code, no model, builds an index of each target and
+reference folder, stored in `runs/.project-index/`. A folder inside a git repo
+is indexed on its own (git limited to it), so BE, FE and SQL under one parent
+repo are three indexes. A parent folder outside git, such as `CSDL-VIMO/`,
+counts as the repos inside it. `node_modules` is never indexed (even when
+committed), nor are untracked build folders (`target`, `dist`, `build`…).
+A first build is saved every 2,000 files, so a large project stopped mid-build
+carries on from there next run. One index per folder: a rebuild deletes the old
+one, and a run deletes any other index overlapping its folders (e.g. an old
+index of the whole parent repo). Each file gets one line: its
 path, a kind (controller, service, entity, dto, page, api-client, locale, sql…) and
 tags (package/class, `@Table`, `@Tag`, mapped routes, API URLs called, route paths,
 exports, `CREATE TABLE` names, Vietnamese UI strings). Every run refreshes it
 first. The refresh diffs the cached git HEAD against the current one, adds the
 uncommitted and untracked files, and re-reads only files whose size or mtime
-moved. That takes a few seconds, not a rescan. Agents are told to Grep the index
+moved. That takes a few seconds, not a rescan. The same check runs again before
+every coding task: what git shows changed since the last check is re-indexed,
+then the task's expected files and the identifiers its description names are
+looked up in the index and put in the coding prompt ("new file" for one not yet
+there). Agents are told to Grep the index
 and open only the files they need, instead of walking repos with Glob/Grep. Clone
 locate also gets the index lines matching the keyword directly in its prompt. On
 top of it:
@@ -303,7 +318,18 @@ top of it:
 - Clone locate (same keyword), the feature reference inventory and the project
   context (same spec) are cached against the exact content version of the repos
   they read: HEAD plus uncommitted state. Any change in those repos re-runs them.
-  So does *Chạy lại từ đầu* / `--fresh`.
+  So does *Chạy lại từ đầu* / `--fresh`. One cache file per stage per project
+  (`runs/.stage-cache/<stage>-<project>-<id>.json`): a new answer overwrites the
+  old one.
+
+**Business questions.** Specs & Arch decides every technical matter itself. When
+the spec leaves a *business* decision open (who may do something, a rule, limit or
+status flow) that the code does not answer, it ends the proposal with
+`## Business questions` and the run stops as `needs-answers`, before review and
+before any code. Answer in the UI field "Trả lời câu hỏi nghiệp vụ" (CLI:
+`--answers "<text>"`) and run again with the same spec: the saved proposal is
+revised with the answers — no attempt used, nothing redone. Answers are not part
+of the run's fingerprint.
 
 Build or refresh the index ahead of time with `aidev index <folder>...`.
 
@@ -371,6 +397,57 @@ without that variable the CLI prints exactly what it always has.
 `npm run ui` works too, but like `npm run pipeline` it does not load `.env`, so the
 credential indicator in the header will read "no credential" even though runs
 themselves still pick one up from the launcher.
+
+**Progress mind map.** The progress card shows the run as a mind map by default
+(toggle "Sơ đồ tư duy / Dải giai đoạn"): the run, its stages, and under a stage
+the units it works through — each Coding task with its build check, each Clone
+Port group, each build/test/fix round. The running node is highlighted and
+pulses; every node shows a percentage. The tree and the numbers are computed
+server-side (`src/ui/mind-map.ts`, tested) from `step` events the CLI emits
+(`src/step-activity.ts`); `public/mindmap.js` only draws. What a percentage
+means: a finished step is 100, a step not started is 0, a **running agent step
+shows ≈ turns used of its turn cap** (capped at 95 — spent allowance, not work
+done), a running plain-code step (the build check) shows no number, and a stage
+or the run is the mean of its parts. Loop-guard interventions show as badges:
+⟳ repeat warning, ⛔ refused call, ⏱ wrap-up nudge.
+
+## Loop guards, budgets and the build check
+
+Four mechanisms that bound how an agent step loops and what a run spends. None
+of them retries anything — the pipeline's "every step runs once" rule stands.
+
+- **Loop guard** (`src/loop-guard.ts`, attached to every stage with a `maxTurns`
+  by `isolatedOptions`): plain-code SDK hooks. The same tool call returning the
+  same result a 3rd time gets a warning; a 5th time it is refused. At 80% of the
+  stage's `maxTurns` the agent is told to stop exploring and finish. Bash
+  stdout/stderr over 8,000 characters is cut to head + tail before the model sees
+  it. Verified against the real SDK with Haiku (2026-10-15): the hooks fire under
+  `settingSources: []`, and `updatedToolOutput` only takes effect in Bash's own
+  object shape — a plain string is silently ignored. Its messages start with `[aidev pipeline]` and the stage's system prompt says they come from the pipeline (`GUARD_NOTICE`): without that line the probe agent ignored them as unverified text. Settings: `config.loopGuard`.
+- **Per-step spend cap** (`config.maxBudgetUsd`, set through `limitsOf` in every
+  stage): the SDK stops a step at its cap with `error_max_budget_usd`, which stops
+  the run like any stage error; the step's session is kept and the next run
+  resumes it. Values are ~2–3× what each step cost on the runs measured on
+  2026-10-06, so a normal step never reaches them.
+- **Run budget** (`--max-run-usd`, UI field "Ngân sách tối đa"): checked before
+  each agent step starts. Once spent, the run ends with status `budget-stopped`
+  and its progress kept; running again with a higher cap (or none) carries on
+  from that step. The step already running finishes, so a run can end slightly
+  above the cap. Off by default.
+- **Build check** (`src/verify-gate.ts`, feature Coding): after each task the
+  pipeline itself runs the project's compile / type-check / lint commands and
+  judges them by exit code. The commands come from the Project Context scan
+  (`verifyCommands`, read from CI config / build files, saved in the project
+  map) and must pass a plain-code filter first: a known build tool, check-only
+  (no install/deploy/`--fix`/`:apply`), no chaining or redirection, inside a
+  target folder; the pipeline's credentials are not passed to them. A baseline
+  run before the next task decides whether the check is on: a project that
+  already fails it gets no per-task check for that run (new errors could not be
+  told from old ones). A failed check **stops the run** (`errored`) — not
+  retried; the next run resumes that task's own session with the failure in
+  front of it, and moves on only once the check passes. In clone mode the
+  target's commands (from Target Conventions) run first in the build step, and
+  the Clone Build agent is called only when one fails.
 
 ## Clone mode
 

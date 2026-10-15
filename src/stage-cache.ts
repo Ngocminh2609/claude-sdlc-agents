@@ -14,6 +14,11 @@ import { indexFor, type IndexRef } from "./project-index.js";
  * again — a cached answer is only ever served for code that is byte-for-byte
  * where it was. A folder with no index has no version, so nothing read from it
  * is cached.
+ *
+ * One file per stage kind per project: a new answer overwrites the previous
+ * one, so an old answer for code that has since changed is deleted, not kept
+ * next to it. The file records the key it was saved under; any other key is a
+ * miss.
  */
 
 const TOOL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,6 +27,8 @@ const cacheDir = () => process.env.AIDEV_STAGE_CACHE_DIR ?? path.join(TOOL_ROOT,
 
 interface CacheRecord<T> {
   savedAt: string;
+  /** Hash of the key the value was saved under. */
+  key: string;
   value: T;
 }
 
@@ -39,18 +46,20 @@ export function repoVersions(indexes: IndexRef[] | undefined, folders: string[])
   return [...versions].sort();
 }
 
-export async function readStageCache<T>(kind: string, key: unknown[]): Promise<CacheRecord<T> | null> {
+export async function readStageCache<T>(kind: string, project: string, key: unknown[]): Promise<CacheRecord<T> | null> {
   try {
-    return JSON.parse(await readFile(fileFor(kind, key), "utf-8")) as CacheRecord<T>;
+    const record = JSON.parse(await readFile(fileFor(kind, project), "utf-8")) as CacheRecord<T>;
+    return record.key === digest(key) ? record : null;
   } catch {
     return null;
   }
 }
 
-export async function writeStageCache<T>(kind: string, key: unknown[], value: T): Promise<void> {
+export async function writeStageCache<T>(kind: string, project: string, key: unknown[], value: T): Promise<void> {
   try {
     await mkdir(cacheDir(), { recursive: true });
-    await writeFile(fileFor(kind, key), JSON.stringify({ savedAt: new Date().toISOString(), value }), "utf-8");
+    const record: CacheRecord<T> = { savedAt: new Date().toISOString(), key: digest(key), value };
+    await writeFile(fileFor(kind, project), JSON.stringify(record), "utf-8");
   } catch {
     // A cache that cannot be written only costs the next run a stage call.
   }
@@ -63,25 +72,36 @@ export async function writeStageCache<T>(kind: string, key: unknown[], value: T)
  */
 export async function cachedStage<T>(opts: {
   kind: string;
+  /** The project the answer is about: its one cache file per kind. */
+  project: string;
   key: unknown[] | null;
   fresh?: boolean;
   run: () => Promise<T | null>;
   onHit?: (savedAt: string) => void;
 }): Promise<T | null> {
-  const { kind, key, fresh = false, run, onHit } = opts;
+  const { kind, project, key, fresh = false, run, onHit } = opts;
   if (key && !fresh) {
-    const hit = await readStageCache<T>(kind, key);
+    const hit = await readStageCache<T>(kind, project, key);
     if (hit) {
       onHit?.(hit.savedAt);
       return hit.value;
     }
   }
   const value = await run();
-  if (key && value !== null) await writeStageCache(kind, key, value);
+  if (key && value !== null) await writeStageCache(kind, project, key, value);
   return value;
 }
 
-function fileFor(kind: string, key: unknown[]): string {
-  const digest = createHash("sha1").update(JSON.stringify(key)).digest("hex").slice(0, 24);
-  return path.join(cacheDir(), `${kind}-${digest}.json`);
+function fileFor(kind: string, project: string): string {
+  const resolved = path.resolve(project);
+  const id = createHash("sha1").update(process.platform === "win32" ? resolved.toLowerCase() : resolved).digest("hex").slice(0, 16);
+  return path.join(cacheDir(), `${kind}-${slug(path.basename(resolved))}-${id}.json`);
+}
+
+function digest(key: unknown[]): string {
+  return createHash("sha1").update(JSON.stringify(key)).digest("hex");
+}
+
+function slug(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 40) || "project";
 }

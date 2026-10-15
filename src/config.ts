@@ -68,7 +68,54 @@ export const config = {
   // is a brand-new session — a full re-run of the stage's own turn budget,
   // not a cheap "ask again for JSON" — so this stays small.
   maxStructuredOutputRetries: 1,
+  // USD cap per agent step (one `query()`), keyed like `maxTurns`. The SDK
+  // stops the session with `error_max_budget_usd`, which stops the run like any
+  // other stage error; the step's session is kept, so the next run resumes it.
+  // Set at roughly 2–3x what the step cost on the two runs measured on
+  // 2026-10-06 (Coding ~$1.4 per task, E2E $2.9–3.4, design ~$1), so a normal
+  // step never reaches it and only a runaway one does.
+  maxBudgetUsd: {
+    specDraft: 3,
+    specsArch: 3,
+    specsArchWithReference: 4,
+    referenceInventory: 3,
+    projectContext: 3,
+    orchestratorReview: 2,
+    taskBreakdown: 2,
+    coding: 5,
+    e2e: 8,
+    targetConventions: 3,
+    cloneMapping: 4,
+    clonePort: 5,
+    cloneBuild: 2,
+    cloneTests: 6,
+    cloneTestsRerun: 2,
+    cloneFix: 4,
+  },
+  // Plain-code guards on every agent session's own loop (`src/loop-guard.ts`).
+  loopGuard: {
+    repeatWarn: 3,
+    repeatBlock: 5,
+    // Share of a stage's maxTurns after which it is told to wrap up.
+    softCapRatio: 0.8,
+    maxBashOutputChars: 8000,
+  },
+  // The build check the pipeline itself runs after each feature Coding task
+  // (`src/verify-gate.ts`). A failure stops the run — it is not retried (see
+  // CLAUDE.md, "Nothing after the design review is retried").
+  verifyGate: {
+    enabled: true,
+    timeoutMs: 15 * 60 * 1000,
+    tailLines: 60,
+  },
 };
+
+export type StageLimitKey = keyof typeof config.maxTurns;
+
+/** A stage's turn and spend caps, for its SDK `Options`. */
+export function limitsOf(stage: StageLimitKey): { maxTurns: number; maxBudgetUsd: number } {
+  return { maxTurns: config.maxTurns[stage], maxBudgetUsd: config.maxBudgetUsd[stage] };
+}
 
 // Defense-in-depth for stages that get Bash: the spec/DB content flowing
 // into every stage prompt could contain pasted text from elsewhere (a doc
@@ -87,3 +134,7 @@ export const networkExfilBashBlocklist = [
   "Bash(find / *)",
   "Bash(ls -R /*)",
 ];
+
+// Every stage with a turn cap has a spend cap: a missing key fails to compile.
+const budgetCoversEveryStage: Record<StageLimitKey, number> = config.maxBudgetUsd;
+void budgetCoversEveryStage;

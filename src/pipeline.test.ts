@@ -13,6 +13,7 @@ const loadCheckpoint = vi.fn();
 const saveCheckpoint = vi.fn();
 const clearCheckpoint = vi.fn();
 const canResumeSession = vi.fn();
+const runVerifyGate = vi.fn();
 
 vi.mock("./free-ports.js", () => ({ findFreePorts }));
 vi.mock("./sdk-helpers.js", () => ({ canResumeSession }));
@@ -23,13 +24,21 @@ vi.mock("./checkpoint.js", () => ({
   saveCheckpoint,
   clearCheckpoint,
 }));
-vi.mock("./stages/specs-arch.js", () => ({ runSpecsArch }));
+vi.mock("./stages/specs-arch.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./stages/specs-arch.js")>()),
+  runSpecsArch,
+}));
 vi.mock("./stages/orchestrator-review.js", () => ({ reviewSpecs }));
 vi.mock("./stages/task-breakdown.js", () => ({ breakDownTasks }));
 vi.mock("./stages/coding.js", () => ({ runCoding }));
 vi.mock("./stages/e2e-test.js", () => ({ runE2eTest }));
 vi.mock("./stages/reference-inventory.js", () => ({ inventoryReferences }));
 vi.mock("./stages/project-context.js", () => ({ inventoryProjectContext }));
+// Only the command runner is replaced: which commands may run stays the real code.
+vi.mock("./verify-gate.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./verify-gate.js")>()),
+  runVerifyGate,
+}));
 
 const { runPipeline } = await import("./pipeline.js");
 const { claimStepSession } = await import("./step-session.js");
@@ -64,6 +73,8 @@ beforeEach(() => {
   // Tests below swap these for session-recording implementations; never let one leak into the next.
   runCoding.mockReset();
   runE2eTest.mockReset();
+  runVerifyGate.mockReset();
+  runVerifyGate.mockResolvedValue({ ok: true, ran: 1 });
 });
 
 const savedPlan = {
@@ -78,6 +89,56 @@ const savedPlan = {
   ],
   completedTasks: [{ id: "task-1", description: "a", summary: "did a" }],
 };
+
+describe("runPipeline — business questions", () => {
+  const asking = [
+    "the design",
+    "",
+    "## Business questions",
+    "- Who may see the revenue page?",
+    "- Is revenue counted on payment or on delivery?",
+  ].join("\n");
+
+  it("stops before the review and keeps the proposal when the design asks a business question", async () => {
+    runSpecsArch.mockResolvedValue(asking);
+
+    const result = await runPipeline({ spec });
+
+    expect(result.status).toBe("needs-answers");
+    expect(result.message).toContain("1. Who may see the revenue page?");
+    expect(result.message).toContain("2. Is revenue counted on payment or on delivery?");
+    expect(reviewSpecs).not.toHaveBeenCalled();
+    expect(runCoding).not.toHaveBeenCalled();
+    const designSaves = saveCheckpoint.mock.calls.map(([, , , data]) => data).filter((data) => data.phase === "design");
+    expect(designSaves.at(-1)).toMatchObject({ draft: asking });
+  });
+
+  it("revises the proposal with the person's answers, without using up a design attempt", async () => {
+    runSpecsArch.mockResolvedValueOnce(asking).mockResolvedValueOnce("the answered design");
+    reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    const result = await runPipeline({ spec, answers: "1. Admins only. 2. On delivery." });
+
+    expect(result.status).toBe("done");
+    expect(runSpecsArch).toHaveBeenCalledTimes(2);
+    expect(runSpecsArch.mock.calls[1][1]).toBe(asking);
+    expect(runSpecsArch.mock.calls[1][2]).toContain("1. Admins only. 2. On delivery.");
+    expect(reviewSpecs).toHaveBeenCalledTimes(1);
+    expect(reviewSpecs.mock.calls[0][1]).toBe("the answered design");
+  });
+
+  it("stops again when the answered revision still asks", async () => {
+    runSpecsArch.mockResolvedValue(asking);
+
+    const result = await runPipeline({ spec, answers: "1. Admins only." });
+
+    expect(result.status).toBe("needs-answers");
+    expect(runSpecsArch).toHaveBeenCalledTimes(2);
+    expect(reviewSpecs).not.toHaveBeenCalled();
+  });
+});
 
 describe("runPipeline — design review with amendments", () => {
   it("builds the reviewer's amendments into the approved design every later stage sees", async () => {
@@ -136,7 +197,7 @@ describe("runPipeline — project map", () => {
       const projectMemory = {
         version: 1,
         roots: [],
-        conventions: { text: "saved conventions", manifestKey, savedAt: "2026-10-06T00:00:00Z" },
+        conventions: { text: "saved conventions", manifestKey, savedAt: "2026-10-06T00:00:00Z", verifyCommands: [] },
         features: [],
       };
       breakDownTasks.mockResolvedValue({
@@ -845,6 +906,133 @@ describe("runPipeline — database scripts", () => {
       expect(Object.keys(lastSave.sqlScripts.baseline)).toEqual(["00-existing.sql"]);
     } finally {
       await rm(sqlDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runPipeline — build check after each task", () => {
+  const checked = {
+    ...savedPlan,
+    projectContext: {
+      conventions: "npm project",
+      relevantFiles: [],
+      notes: "",
+      verifyCommands: [
+        { folder: spec.projectPath, command: "npm run lint" },
+        { folder: spec.projectPath, command: "npm install" },
+      ],
+    },
+  };
+  const failure = {
+    ok: false,
+    ran: 1,
+    failure: { command: "npm run lint", folder: spec.projectPath, exitCode: 1, timedOut: false, tail: "src/a.ts:3 error no-unused-vars" },
+  };
+
+  it("checks the code before the next task, then after every task, running only the commands that may run", async () => {
+    loadCheckpoint.mockResolvedValue({ status: "found", savedAt: "2026-10-15T01:00:00Z", data: checked });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+    const progress: string[] = [];
+
+    const result = await runPipeline({ spec, onProgress: (message) => progress.push(message) });
+
+    expect(result.status).toBe("done");
+    // Baseline + task-2 + task-3; "npm install" is refused, never run.
+    expect(runVerifyGate).toHaveBeenCalledTimes(3);
+    for (const [commands] of runVerifyGate.mock.calls) {
+      expect(commands.map((entry: { command: string }) => entry.command)).toEqual(["npm run lint"]);
+    }
+    expect(progress.some((line) => line.startsWith('Build check: not running "npm install"'))).toBe(true);
+    expect(progress).toContain("Build check: pass — task-3");
+    expect(buildSaves().at(-1)).toMatchObject({ verifyBaseline: "pass" });
+  });
+
+  it("stops at a task that fails the check, keeping that task's session to resume with the failure", async () => {
+    loadCheckpoint.mockResolvedValue({ status: "found", savedAt: "2026-10-15T01:00:00Z", data: checked });
+    runCoding.mockResolvedValue("implemented");
+    runVerifyGate.mockResolvedValueOnce({ ok: true, ran: 1 }).mockResolvedValueOnce(failure);
+
+    const result = await runPipeline({ spec });
+
+    expect(result.status).toBe("errored");
+    expect(result.message).toContain("Build check failed after task task-2");
+    expect(result.message).toContain("src/a.ts:3 error no-unused-vars");
+    expect(runCoding).toHaveBeenCalledTimes(1);
+    expect(runE2eTest).not.toHaveBeenCalled();
+    const last = buildSaves().at(-1);
+    expect(last.completedTasks.map((task: { id: string }) => task.id)).toEqual(["task-1"]);
+    expect(last.activeStep.step).toBe("coding:task-2");
+    expect(last.gateFailure.taskId).toBe("task-2");
+    expect(last.gateFailure.report).toContain("npm run lint");
+  });
+
+  it("shows the failure to the task's next session and moves on once the check passes", async () => {
+    loadCheckpoint.mockResolvedValue({
+      status: "found",
+      savedAt: "2026-10-15T01:00:00Z",
+      data: { ...checked, verifyBaseline: "pass", gateFailure: { taskId: "task-2", report: "lint failed" } },
+    });
+    runCoding.mockResolvedValue("fixed");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+
+    const result = await runPipeline({ spec });
+
+    expect(result.status).toBe("done");
+    expect(runCoding.mock.calls[0][0].buildCheckFailure).toBe("lint failed");
+    expect(runCoding.mock.calls[1][0].buildCheckFailure).toBeUndefined();
+    // The baseline was saved before: not run again.
+    expect(runVerifyGate).toHaveBeenCalledTimes(2);
+    expect(buildSaves().at(-1).gateFailure).toBeUndefined();
+  });
+
+  it("turns the check off for the run when the project already failed it before the next task", async () => {
+    loadCheckpoint.mockResolvedValue({ status: "found", savedAt: "2026-10-15T01:00:00Z", data: checked });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+    runVerifyGate.mockResolvedValueOnce(failure);
+    const progress: string[] = [];
+
+    const result = await runPipeline({ spec, onProgress: (message) => progress.push(message) });
+
+    expect(result.status).toBe("done");
+    expect(runVerifyGate).toHaveBeenCalledTimes(1);
+    expect(progress.some((line) => line.startsWith("Build check: off for this run"))).toBe(true);
+    expect(buildSaves().at(-1)).toMatchObject({ verifyBaseline: "fail" });
+  });
+
+  it("skips the check when the scan gave no command", async () => {
+    loadCheckpoint.mockResolvedValue({ status: "found", savedAt: "2026-10-15T01:00:00Z", data: savedPlan });
+    runCoding.mockResolvedValue("implemented");
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+    const progress: string[] = [];
+
+    await runPipeline({ spec, onProgress: (message) => progress.push(message) });
+
+    expect(runVerifyGate).not.toHaveBeenCalled();
+    expect(progress).toContain("Build check: skipped — no compile/lint command is known for this project");
+  });
+});
+
+describe("runPipeline — run budget", () => {
+  it("stops before the next step once the cap is spent, with the progress kept", async () => {
+    const { setRunBudget } = await import("./run-budget.js");
+    const { recordUsage, resetUsage } = await import("./token-usage.js");
+    loadCheckpoint.mockResolvedValue({ status: "found", savedAt: "2026-10-15T01:00:00Z", data: savedPlan });
+    setRunBudget(1);
+    recordUsage({ inputTokens: 10, outputTokens: 10, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 1.5 });
+    try {
+      const result = await runPipeline({ spec });
+
+      expect(result.status).toBe("budget-stopped");
+      expect(result.message).toContain('before "coding:task-2"');
+      expect(runCoding).not.toHaveBeenCalled();
+      expect(clearCheckpoint).not.toHaveBeenCalled();
+      // Nothing was saved for the step that did not start.
+      expect(buildSaves().some((save: { activeStep?: { step: string } }) => save.activeStep?.step === "coding:task-2")).toBe(false);
+    } finally {
+      setRunBudget(undefined);
+      resetUsage();
     }
   });
 });

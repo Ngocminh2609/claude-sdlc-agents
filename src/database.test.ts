@@ -25,6 +25,12 @@ describe("parseConnection", () => {
     });
   });
 
+  it("keeps + and = in a query-parameter password instead of form-decoding them", () => {
+    expect(parseConnection("jdbc:postgresql://h:5433/app?user=u&password=a+b=c").password).toBe("a+b=c");
+    expect(parseConnection("jdbc:postgresql://h:5433/app?user=u&password=a%2Bb").password).toBe("a+b");
+    expect(parseConnection("jdbc:postgresql://h:5433/app?user=u&password=100%").password).toBe("100%");
+  });
+
   it("reads SQL Server JDBC and ADO forms, including a named instance", () => {
     expect(parseConnection("jdbc:sqlserver://sql01:1433;databaseName=TKDT;user=sa;password=p;encrypt=false")).toMatchObject({
       dialect: "sqlserver",

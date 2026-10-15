@@ -29,13 +29,17 @@ export interface Args {
   fresh: boolean;
   /** Ignore the target's `.metadata-standards.yml` for this run, even if present. */
   noMetadataStandards: boolean;
+  /** Stop before the next agent step once the run has spent this much (USD). */
+  maxRunUsd?: number;
+  /** Answers to the business questions a stopped run asked. */
+  answers?: string;
 }
 
 export const USAGE =
-  "Usage: aidev --spec <path.md> (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--project-sql <dir>] [--db-connection <string> (needs --project-sql) | --db-schema <path>] [--reference <dir>]... [--fresh] [--no-metadata-standards]";
+  "Usage: aidev --spec <path.md> (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--project-sql <dir>] [--db-connection <string> (needs --project-sql) | --db-schema <path>] [--reference <dir>]... [--fresh] [--no-metadata-standards] [--max-run-usd <n>] [--answers <text>]";
 
 export const CLONE_USAGE =
-  'Usage: aidev clone --what "<keyword>" (--from <dir>... | --from-be <dir> [--from-fe <dir>] | --from-fe <dir>) (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--no-build] [--no-tests] [--fresh] [--no-metadata-standards]';
+  'Usage: aidev clone --what "<keyword>" (--from <dir>... | --from-be <dir> [--from-fe <dir>] | --from-fe <dir>) (--project <dir> | --project-be <dir> [--project-fe <dir>] | --project-fe <dir>) [--no-build] [--no-tests] [--fresh] [--no-metadata-standards] [--max-run-usd <n>]';
 
 /** Clone mode: port an existing feature from one repo into another. */
 export interface CloneArgs {
@@ -49,6 +53,8 @@ export interface CloneArgs {
   fresh: boolean;
   /** Ignore the target's `.metadata-standards.yml` for this run, even if present. */
   noMetadataStandards: boolean;
+  /** Stop before the next agent step once the run has spent this much (USD). */
+  maxRunUsd?: number;
 }
 
 export function parseCloneArgs(argv: string[]): CloneArgs {
@@ -57,6 +63,7 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
   let skipTests = false;
   let fresh = false;
   let noMetadataStandards = false;
+  let maxRunUsd: number | undefined;
   const target: TargetArgs = {};
   const from: CloneArgs["from"] = { paths: [] };
 
@@ -90,6 +97,9 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
       case "--no-metadata-standards":
         noMetadataStandards = true;
         break;
+      case "--max-run-usd":
+        maxRunUsd = parseUsd(argv[++i], CLONE_USAGE);
+        break;
     }
   }
 
@@ -97,7 +107,16 @@ export function parseCloneArgs(argv: string[]): CloneArgs {
   if (!what?.trim() || !hasTarget(target) || !hasSource) throw new Error(CLONE_USAGE);
   assertOneTargetKind(target, CLONE_USAGE);
 
-  return { what: what.trim(), target, from, skipBuild, skipTests, fresh, noMetadataStandards };
+  return {
+    what: what.trim(),
+    target,
+    from,
+    skipBuild,
+    skipTests,
+    fresh,
+    noMetadataStandards,
+    ...(maxRunUsd !== undefined ? { maxRunUsd } : {}),
+  };
 }
 
 export const SPEC_DRAFT_USAGE =
@@ -165,6 +184,8 @@ export function parseArgs(argv: string[]): Args {
   let dbInfo: DbInfo | undefined;
   let fresh = false;
   let noMetadataStandards = false;
+  let maxRunUsd: number | undefined;
+  let answers: string | undefined;
   const target: TargetArgs = {};
   const referencePaths: string[] = [];
 
@@ -193,13 +214,35 @@ export function parseArgs(argv: string[]): Args {
       case "--no-metadata-standards":
         noMetadataStandards = true;
         break;
+      case "--max-run-usd":
+        maxRunUsd = parseUsd(argv[++i], USAGE);
+        break;
+      case "--answers":
+        answers = argv[++i];
+        break;
     }
   }
 
   if (!specPath || !hasTarget(target)) throw new Error(USAGE);
   assertOneTargetKind(target, USAGE);
 
-  return { specPath, target, dbInfo, referencePaths, fresh, noMetadataStandards };
+  return {
+    specPath,
+    target,
+    dbInfo,
+    referencePaths,
+    fresh,
+    noMetadataStandards,
+    ...(maxRunUsd !== undefined ? { maxRunUsd } : {}),
+    ...(answers?.trim() ? { answers } : {}),
+  };
+}
+
+/** A positive dollar amount, or the usage text as the error. */
+function parseUsd(value: string | undefined, usage: string): number {
+  const amount = Number(value);
+  if (!value || !Number.isFinite(amount) || amount <= 0) throw new Error(usage);
+  return amount;
 }
 
 /** Consumes a target flag and its value at `i`; true when it did. */

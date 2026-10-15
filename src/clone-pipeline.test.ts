@@ -26,6 +26,7 @@ const saveCheckpoint = vi.fn();
 const clearCheckpoint = vi.fn();
 const findFreePorts = vi.fn();
 const canResumeSession = vi.fn();
+const runVerifyGate = vi.fn();
 
 vi.mock("./free-ports.js", () => ({ findFreePorts }));
 vi.mock("./sdk-helpers.js", () => ({ canResumeSession }));
@@ -60,6 +61,10 @@ vi.mock("./stages/clone-port.js", async (importOriginal) => ({
   fixCloneFailures,
 }));
 vi.mock("./stages/clone-tests.js", () => ({ runCloneTests }));
+vi.mock("./verify-gate.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./verify-gate.js")>()),
+  runVerifyGate,
+}));
 
 const { runClonePipeline } = await import("./clone-pipeline.js");
 const { claimStepSession } = await import("./step-session.js");
@@ -100,6 +105,44 @@ beforeEach(() => {
   runCloneTests.mockResolvedValue(passingTests);
   fixCloneFailures.mockResolvedValue("fixed");
   canResumeSession.mockResolvedValue(false);
+  runVerifyGate.mockResolvedValue({ ok: true, ran: 1 });
+});
+
+describe("runClonePipeline — the target's own build commands", () => {
+  const withCommands = {
+    summary: "modules/ layout",
+    verifyCommands: [{ folder: clone.projectPath, command: "./mvnw -q compile" }],
+  };
+
+  it("passes the build without the build agent when the commands exit 0", async () => {
+    readTargetConventions.mockResolvedValue(withCommands);
+
+    const result = await runClonePipeline({ clone });
+
+    expect(result.status).toBe("done");
+    expect(runVerifyGate.mock.calls[0][0]).toEqual([{ folder: clone.projectPath, command: "./mvnw -q compile" }]);
+    expect(verifyCloneBuild).not.toHaveBeenCalled();
+  });
+
+  it("hands a failing build to the build agent to judge", async () => {
+    readTargetConventions.mockResolvedValue(withCommands);
+    runVerifyGate.mockResolvedValue({
+      ok: false,
+      ran: 1,
+      failure: { command: "./mvnw -q compile", folder: clone.projectPath, exitCode: 1, timedOut: false, tail: "x" },
+    });
+
+    await runClonePipeline({ clone });
+
+    expect(verifyCloneBuild).toHaveBeenCalled();
+  });
+
+  it("uses only the build agent when no command is known", async () => {
+    await runClonePipeline({ clone });
+
+    expect(runVerifyGate).not.toHaveBeenCalled();
+    expect(verifyCloneBuild).toHaveBeenCalled();
+  });
 });
 
 describe("runClonePipeline", () => {

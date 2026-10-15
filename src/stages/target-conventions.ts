@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config } from "../config.js";
+import { config, limitsOf } from "../config.js";
 import { indexFor, indexPromptSection, withIndexAccess } from "../project-index.js";
 import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { CloneInput, TargetConventions } from "../types.js";
@@ -49,6 +49,14 @@ Cover, for each layer the project actually has:
   class of error itself. If a Dockerfile drives the pipeline's build, note how it
   registers which modules/packages get built (an explicit COPY or build-list per
   module means a new one must be added there too, not just to the source tree).
+- verifyCommands: the commands that check the code compiles and is clean, as
+  the CI (or, without CI, the build files) runs them: compile, type-check,
+  lint. One entry per command, "folder" set to exactly one of the target folder
+  paths you were given (where it runs), "command" a single command line. The
+  pipeline runs them itself and judges them by exit code, so: check-only (no
+  --fix, no formatter that writes), no install/deploy/publish, no tests, no app
+  start, no "&&", pipes or redirects; use the project's wrapper (./mvnw,
+  gradlew) when it has one. An empty list when there is no such command.
 
 Report what the project does, not what it should do. Where the project is
 inconsistent, say so and name the dominant pattern. Do not propose changes, do
@@ -58,8 +66,19 @@ const CONVENTIONS_SCHEMA = {
   type: "object",
   properties: {
     summary: { type: "string" },
+    verifyCommands: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          folder: { type: "string" },
+          command: { type: "string" },
+        },
+        required: ["folder", "command"],
+      },
+    },
   },
-  required: ["summary"],
+  required: ["summary", "verifyCommands"],
 };
 
 export async function readTargetConventions(clone: CloneInput): Promise<TargetConventions | null> {
@@ -67,7 +86,7 @@ export async function readTargetConventions(clone: CloneInput): Promise<TargetCo
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
     model: config.model,
-    maxTurns: config.maxTurns.targetConventions,
+    ...limitsOf("targetConventions"),
   };
 
   const roots = rootsOf(clone);

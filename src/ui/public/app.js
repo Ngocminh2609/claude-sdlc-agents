@@ -9,6 +9,8 @@
 // of the repo is English). The server sends ids and status codes; the wording
 // is decided here, so there is exactly one place to look for it.
 
+import { renderMindMap } from "./mindmap.js";
+
 const $ = (id) => document.getElementById(id);
 
 const el = {
@@ -16,6 +18,7 @@ const el = {
   tabs: $("tabs"),
   projectSql: $("feature-project-sql"),
   specPath: $("spec-path"),
+  featureAnswers: $("feature-answers"),
   specDir: $("spec-dir"),
   specRequest: $("spec-request"),
   specDraftStart: $("spec-draft-start"),
@@ -42,13 +45,13 @@ const el = {
   runMeta: $("run-meta"),
   statusPill: $("status-pill"),
   stages: $("stages"),
+  mindmap: $("mindmap"),
+  mindmapWrap: $("mindmap-wrap"),
+  viewToggle: $("view-toggle"),
   result: $("result"),
   log: $("log"),
   logOnlyProgress: $("log-only-progress"),
   logFollow: $("log-follow"),
-  specEditor: $("spec-editor"),
-  specFilePath: $("spec-file-path"),
-  specStatus: $("spec-status"),
   runList: $("run-list"),
   runsFilter: $("runs-filter"),
   report: $("report"),
@@ -80,6 +83,7 @@ const forms = Object.fromEntries(
         projectFe: part("project-fe"),
         precheck: part("precheck"),
         fresh: part("fresh"),
+        maxRunUsd: part("max-run-usd"),
         metadataStandards: part("metadata-standards"),
         runStart: part("run-start"),
         runError: part("run-error"),
@@ -150,6 +154,8 @@ const STATUS_TEXT = {
   incomplete: "chưa trọn vẹn",
   errored: "lỗi",
   "progress-kept": "dừng — giữ tiến độ cũ",
+  "budget-stopped": "dừng — chạm ngân sách",
+  "needs-answers": "dừng — chờ anh trả lời câu hỏi nghiệp vụ",
   stopped: "đã dừng",
   unknown: "không rõ",
 };
@@ -161,6 +167,8 @@ const STATUS_BADGE = {
   incomplete: "Chưa trọn vẹn",
   errored: "Lỗi",
   "progress-kept": "Giữ tiến độ",
+  "budget-stopped": "Chạm ngân sách",
+  "needs-answers": "Chờ trả lời",
   stopped: "Đã dừng",
   "in-progress": "Đang dở",
   unknown: "Không rõ",
@@ -188,6 +196,10 @@ const NEXT_STEPS = {
       "Pipeline dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở giai đoạn/task nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Tiến độ đã lưu: bấm Chạy lại với cùng spec sẽ <strong>tiếp tục từ chỗ dừng</strong>, bỏ qua thiết kế và các task đã xong.",
     "progress-kept":
       "Có tiến độ đã lưu nhưng <strong>không khớp</strong> với lần chạy này (spec, DB, thư mục, reference, metadata standards hoặc skill đã đổi), hoặc file của các task đã xong không còn trên đĩa. Hệ thống <strong>dừng ngay, không tốn token, không làm lại</strong> và giữ nguyên tiến độ cũ. Hoàn tác thay đổi rồi Chạy lại để tiếp tục; hoặc tick \"Chạy lại từ đầu\" nếu thật sự muốn bỏ tiến độ cũ.",
+    "budget-stopped":
+      "Lần chạy đã chạm <strong>ngân sách tối đa</strong> anh đặt và dừng <strong>trước</strong> bước AI kế tiếp — không bước nào bị bỏ dở. Tiến độ đã lưu: bấm Chạy lại với cùng spec (tăng ngân sách hoặc để trống) sẽ <strong>đi tiếp từ đúng bước đó</strong>.",
+    "needs-answers":
+      "Thiết kế cần <strong>quyết định nghiệp vụ</strong> mà spec và code không trả lời được (danh sách câu hỏi ở kết quả bên dưới). Code <strong>chưa bị đụng tới</strong>. Ghi câu trả lời vào ô \"Trả lời câu hỏi nghiệp vụ\" rồi bấm Chạy lại với cùng spec — bản thiết kế đã lưu sẽ được <strong>sửa theo câu trả lời</strong>, không làm lại từ đầu.",
     stopped:
       "Anh đã bấm Dừng. Các file AI đã ghi vào dự án <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án. Bấm Chạy lại với cùng spec sẽ tiếp tục từ task đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
   },
@@ -197,11 +209,13 @@ const NEXT_STEPS = {
       "Còn thiếu: có file trong bảng ánh xạ chưa được ghi ra, nối FE↔BE hỏng, hoặc build/unit test không qua. Code đã port <strong>vẫn nằm trên đĩa</strong>. Mở báo cáo xem đúng chỗ thiếu, hoàn thiện nốt, rồi bấm Chạy clone lại với cùng thiết lập — bảng ánh xạ và các nhóm đã port được dùng lại, chỉ chạy lại phần kiểm tra.",
     errored:
       "Clone dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở nhóm file nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Các nhóm đã port vẫn nằm trên đĩa và tiến độ đã lưu: bấm Chạy clone lại với cùng thiết lập sẽ <strong>tiếp tục từ nhóm đang dở</strong>, dùng lại bảng ánh xạ.",
+    "budget-stopped":
+      "Lần clone đã chạm <strong>ngân sách tối đa</strong> anh đặt và dừng <strong>trước</strong> bước AI kế tiếp. Các nhóm đã port vẫn trên đĩa, tiến độ đã lưu: bấm Chạy clone lại (tăng ngân sách hoặc để trống) sẽ <strong>đi tiếp từ đúng bước đó</strong>.",
     stopped:
       "Anh đã bấm Dừng. Các file đã port <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án đích. Bấm Chạy clone lại với cùng thiết lập sẽ tiếp tục từ nhóm đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
   },
   spec: {
-    done: "Đã sinh spec và điền vào bước 3 — <strong>chưa có code nào được viết</strong>. Bấm <strong>Xem / sửa spec</strong> ở bước 3: đọc kỹ, sửa chỗ sai, trả lời mục <em>Câu hỏi mở</em> và kiểm các chỗ ghi <em>(giả định)</em>. Xong thì làm tiếp bước 4 và 5.",
+    done: "Đã sinh spec và điền vào bước 3 — <strong>chưa có code nào được viết</strong>. Mở file spec ở bước 3 bằng trình soạn thảo: đọc kỹ, sửa chỗ sai, trả lời mục <em>Câu hỏi mở</em> và kiểm các chỗ ghi <em>(giả định)</em>. Xong thì làm tiếp bước 4 và 5.",
     errored:
       "Sinh spec không thành công, <strong>không có file nào bị sửa</strong>. Kết quả bên dưới ghi lý do (ví dụ <code>rate_limit</code> — chờ hạn mức reset). Có thể viết rõ hơn yêu cầu rồi bấm Sinh spec lại.",
     stopped: "Anh đã dừng việc sinh spec. Không có file nào bị sửa.",
@@ -222,23 +236,6 @@ const RUN_ERROR_TEXT = {
   "spec-exists": (detail) => `File spec đã tồn tại: ${detail}`,
   "sql-folder-required": () => "Có chuỗi kết nối DB thì phải chọn thư mục SQL ở bước 1 — script tạo bảng được lưu và chạy từ đó.",
 };
-
-const SPEC_TEMPLATE = `# Tên tính năng
-
-## Bối cảnh
-Màn hình / API nào, thuộc module nào, hiện đã có sẵn cái gì liên quan.
-
-## Yêu cầu
-- Yêu cầu 1, mô tả bằng hành vi quan sát được.
-- Yêu cầu 2.
-
-## Ràng buộc
-- Quy ước đặt tên, phân tầng, thư viện bắt buộc dùng của dự án.
-
-## Tiêu chí nghiệm thu
-- [ ] Người dùng bấm X thì thấy Y.
-- [ ] Nhập sai định dạng thì hiện thông báo Z.
-`;
 
 let appConfig = null;
 let stagesByMode = { feature: [], clone: [] };
@@ -693,8 +690,8 @@ for (const button of document.querySelectorAll("[data-browse]")) {
       return;
     }
 
-    if (what === "spec" || what === "spec-open") {
-      const field = what === "spec" ? el.specPath : el.specFilePath;
+    if (what === "spec") {
+      const field = el.specPath;
       const chosen = await openPicker({
         mode: "file",
         kind: "markdown",
@@ -705,7 +702,6 @@ for (const button of document.querySelectorAll("[data-browse]")) {
         field.value = chosen;
         saveForm();
         syncRunButtons();
-        if (what === "spec-open") loadSpecFile(chosen);
       }
       return;
     }
@@ -844,7 +840,7 @@ function useFinishedDraft(state) {
   el.specPath.value = state.specPath;
   saveForm();
   syncRunButtons();
-  el.specDraftResult.innerHTML = `✔ Đã sinh <code>${escapeHtml(state.specPath)}</code> và điền vào bước 3. Bấm <strong>Xem / sửa spec</strong> ở bước 3 để đọc lại trước khi chạy.`;
+  el.specDraftResult.innerHTML = `✔ Đã sinh <code>${escapeHtml(state.specPath)}</code> và điền vào bước 3. Mở file bằng trình soạn thảo để đọc lại trước khi chạy.`;
   el.specDraftResult.classList.remove("hidden");
 }
 
@@ -852,6 +848,12 @@ function useFinishedDraft(state) {
  * The two flows send different fields. Built here rather than at the click so
  * the shape of each request is readable in one place.
  */
+/** The run's spend cap, when one was typed: a positive number, otherwise none. */
+function budgetOf(form) {
+  const value = Number(form.maxRunUsd.value);
+  return form.maxRunUsd.value.trim() && Number.isFinite(value) && value > 0 ? { maxRunUsd: value } : {};
+}
+
 function runBody(flow) {
   const form = forms[flow];
   const common = {
@@ -860,6 +862,7 @@ function runBody(flow) {
     projectFePath: form.projectFe.value,
     fresh: form.fresh.checked,
     noMetadataStandards: form.metadataStandards.value === "skip",
+    ...budgetOf(form),
   };
   if (flow === "clone") {
     return {
@@ -879,6 +882,7 @@ function runBody(flow) {
     dbMode: el.dbMode.value,
     dbConnection: el.dbConnection.value,
     dbSchemaPath: el.dbSchemaPath.value,
+    answers: el.featureAnswers.value,
   };
 }
 
@@ -918,6 +922,7 @@ function renderState(state) {
 
   renderRunSubject(state);
   renderStages(state);
+  renderProgressMap(state);
   renderResult(state);
   useFinishedDraft(state);
 }
@@ -973,6 +978,51 @@ function renderStages(state) {
     }</div><div class="stage-tokens">${spent && usageTokens(spent) ? escapeHtml(describeUsage(spent)) : ""}</div>`;
     el.stages.append(item);
   }
+}
+
+// --- Mind map ----------------------------------------------------------------
+
+const VIEW_KEY = "aidev-ui-progress-view";
+let progressView = localStorage.getItem(VIEW_KEY) === "strip" ? "strip" : "map";
+
+function applyProgressView() {
+  for (const button of el.viewToggle.querySelectorAll("[data-view]")) {
+    button.classList.toggle("active", button.dataset.view === progressView);
+  }
+  el.stages.classList.toggle("hidden", progressView !== "strip");
+  el.mindmapWrap.classList.toggle("hidden", progressView !== "map");
+}
+
+el.viewToggle.addEventListener("click", (event) => {
+  const view = event.target.closest("[data-view]")?.dataset.view;
+  if (!view) return;
+  progressView = view;
+  localStorage.setItem(VIEW_KEY, view);
+  applyProgressView();
+  if (runState) renderProgressMap(runState);
+});
+applyProgressView();
+
+/**
+ * The run as a mind map. Before any run there is nothing to map: the strip
+ * shows the open flow's stages instead.
+ */
+function renderProgressMap(state) {
+  if (progressView !== "map") return;
+  if (!hasRun(state) || !state.mindMap) {
+    el.mindmap.innerHTML = `<div class="mindmap-empty">Sơ đồ sẽ hiện khi bắt đầu chạy.</div>`;
+    return;
+  }
+  const spent = state.usage?.costUsd ?? 0;
+  const budget = state.budgetCapUsd ? ` · $${spent.toFixed(2)}/$${state.budgetCapUsd.toFixed(2)}` : "";
+  renderMindMap(el.mindmap, state.mindMap, {
+    root: {
+      title: `${FLOW_TEXT[state.mode] ?? state.mode} · ${STATUS_TEXT[state.status] ?? state.status}`,
+      subtitle: `${state.mindMap.percent}% toàn bộ${budget}`,
+      tip: "Phần trăm toàn bộ = trung bình các giai đoạn; giai đoạn = trung bình các task/nhóm/vòng bên trong.",
+    },
+    stage: (id) => STAGE_TEXT[id] ?? { label: id, tip: "" },
+  });
 }
 
 /** Every token moved, cached or not — the figure the run is charged against. */
@@ -1100,75 +1150,6 @@ function connectStream() {
       appendLine(event.line);
     }
   };
-}
-
-// --- Spec editor -----------------------------------------------------------
-
-async function loadSpecFile(target) {
-  try {
-    const data = await api(`/api/spec?path=${encodeURIComponent(target)}`);
-    el.specFilePath.value = data.path;
-    el.specEditor.value = data.content;
-    el.specStatus.textContent = `Đã mở ${data.path}`;
-  } catch (error) {
-    el.specStatus.textContent = error.message;
-  }
-}
-
-async function saveSpecFile() {
-  const target = el.specFilePath.value.trim();
-  if (!target) {
-    el.specStatus.textContent = "Nhập đường dẫn lưu file trước đã.";
-    return null;
-  }
-  const data = await api("/api/spec", {
-    method: "POST",
-    body: JSON.stringify({ path: target, content: el.specEditor.value }),
-  });
-  el.specFilePath.value = data.path;
-  el.specStatus.textContent = `Đã lưu ${data.path} lúc ${new Date().toLocaleTimeString("vi-VN")}`;
-  return data.path;
-}
-
-$("spec-save").addEventListener("click", () => {
-  saveSpecFile().catch((error) => (el.specStatus.textContent = error.message));
-});
-
-$("spec-template").addEventListener("click", () => {
-  if (el.specEditor.value.trim() && !confirm("Ghi đè nội dung đang soạn bằng mẫu?")) return;
-  el.specEditor.value = SPEC_TEMPLATE;
-  el.specStatus.textContent = "Đã chèn mẫu — sửa lại theo tính năng của anh rồi bấm Lưu.";
-});
-
-$("spec-use").addEventListener("click", async () => {
-  try {
-    const saved = await saveSpecFile();
-    if (!saved) return;
-    el.specPath.value = saved;
-    saveForm();
-    syncRunButtons();
-    showTab("feature");
-  } catch (error) {
-    el.specStatus.textContent = error.message;
-  }
-});
-
-$("spec-edit").addEventListener("click", () => {
-  showTab("spec");
-  const current = el.specPath.value.trim();
-  if (current) {
-    loadSpecFile(current);
-  } else {
-    el.specFilePath.value = defaultSpecPath();
-    if (!el.specEditor.value.trim()) el.specEditor.value = SPEC_TEMPLATE;
-  }
-});
-
-function defaultSpecPath() {
-  if (!appConfig) return "";
-  const stamp = new Date().toISOString().slice(0, 10);
-  const separator = appConfig.platform === "win32" ? "\\" : "/";
-  return `${appConfig.specsDir}${separator}${stamp}-tinh-nang-moi.md`;
 }
 
 // --- History ---------------------------------------------------------------
@@ -1380,7 +1361,6 @@ async function init() {
 
   restoreForm();
   restoreTab();
-  el.specFilePath.value = defaultSpecPath();
   if (!el.specDir.value) el.specDir.value = appConfig.specsDir;
   syncRunButtons();
 

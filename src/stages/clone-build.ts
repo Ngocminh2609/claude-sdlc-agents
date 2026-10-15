@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, networkExfilBashBlocklist } from "../config.js";
+import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { isSplit, rootPath, secondaryRootDirs, type ProjectRoot } from "../target-roots.js";
 import type { CloneMapping, TargetConventions } from "../types.js";
@@ -90,7 +90,7 @@ export async function verifyCloneBuild(
       message: `Tool "${toolName}" is not permitted in the Clone Build stage — it reports, it does not fix.`,
     }),
     model: config.model,
-    maxTurns: config.maxTurns.cloneBuild,
+    ...limitsOf("cloneBuild"),
   };
 
   const split = isSplit(roots);

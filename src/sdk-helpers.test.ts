@@ -273,4 +273,55 @@ describe("step sessions", () => {
     expect(prompt).not.toContain("--- Spec ---");
     expect(prompt).toContain("These TCP ports: 50001.");
   });
+
+  it("carries a failed build check over too, since it happened after the session last ran", () => {
+    const prompt = resumePrompt(
+      [
+        "--- Spec ---",
+        "x",
+        "",
+        "--- The pipeline's build check failed after this task ---",
+        "`npm run lint` exited with code 1.",
+        "src/a.ts:3 error",
+        "",
+        "tail",
+      ].join("\n"),
+    );
+
+    expect(prompt).toContain("--- The pipeline's build check failed after this task ---");
+    expect(prompt).toContain("src/a.ts:3 error");
+    expect(prompt).not.toContain("tail");
+  });
+});
+
+describe("isolatedOptions — loop guard", () => {
+  it("gives a stage with a turn cap the loop guard, and keeps a stage's own hooks", () => {
+    const guarded = isolatedOptions({ allowedTools: ["Bash"], maxTurns: 10 });
+    expect(Object.keys(guarded.hooks ?? {})).toEqual(["PreToolUse", "PostToolUse", "PostToolBatch"]);
+
+    expect(isolatedOptions({ allowedTools: ["Bash"], maxTurns: 10, systemPrompt: "You are a stage." }).systemPrompt).toMatch(
+      /^You are a stage\.\n\nMessages starting with "\[aidev pipeline\]"/,
+    );
+
+    const own = { Stop: [] };
+    expect(isolatedOptions({ allowedTools: ["Bash"], maxTurns: 10, hooks: own }).hooks).toBe(own);
+    expect(isolatedOptions({ allowedTools: ["Read"] }).hooks).toBeUndefined();
+  });
+});
+
+describe("the shadowed-canUseTool warning filter", () => {
+  it("drops only the SDK's shadowed-canUseTool warning", async () => {
+    const seen: string[] = [];
+    const listener = (warning: Error & { code?: string }) => seen.push(warning.code ?? warning.message);
+    process.on("warning", listener);
+    try {
+      process.emitWarning("bare allowedTools", { code: "CLAUDE_SDK_CAN_USE_TOOL_SHADOWED" });
+      process.emitWarning("something else", { code: "OTHER_WARNING" });
+      process.emitWarning("legacy form", "Warning", "CLAUDE_SDK_CAN_USE_TOOL_SHADOWED");
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("warning", listener);
+    }
+    expect(seen).toEqual(["OTHER_WARNING"]);
+  });
 });

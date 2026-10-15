@@ -19,6 +19,7 @@
  */
 
 import { isTokenUsage, type TokenUsage } from "./token-usage.js";
+import type { StepNote, StepReport } from "./step-activity.js";
 
 export const EVENT_STREAM_ENV = "AIDEV_EVENT_STREAM";
 
@@ -48,11 +49,27 @@ export interface PipelineUsageEvent {
   total: TokenUsage;
 }
 
+/**
+ * A step started, used a turn, ended, or a stage announced its steps — see
+ * `step-activity.ts`. What the UI's mind map is drawn from.
+ */
+export type PipelineStepEvent = { type: "step" } & StepReport;
+
+/** The run's spend cap, sent once at the start when one was set (`--max-run-usd`). */
+export interface PipelineBudgetEvent {
+  type: "budget";
+  capUsd: number;
+}
+
 export type PipelineEvent =
   | PipelineProgressEvent
   | PipelineFinishedEvent
   | PipelineCrashedEvent
-  | PipelineUsageEvent;
+  | PipelineUsageEvent
+  | PipelineStepEvent
+  | PipelineBudgetEvent;
+
+const STEP_NOTES: readonly StepNote[] = ["repeat", "blocked", "soft-cap"];
 
 export function eventStreamEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[EVENT_STREAM_ENV] === "1";
@@ -101,7 +118,41 @@ export function parseEventLine(line: string): PipelineEvent | null {
       return typeof candidate.message === "string"
         ? { type: "crashed", message: candidate.message }
         : null;
+    case "step":
+      return parseStepEvent(candidate);
+    case "budget":
+      return typeof candidate.capUsd === "number" && Number.isFinite(candidate.capUsd)
+        ? { type: "budget", capUsd: candidate.capUsd }
+        : null;
     default:
       return null;
   }
+}
+
+function parseStepEvent(candidate: Record<string, unknown>): PipelineStepEvent | null {
+  if (candidate.phase === "plan") {
+    if (candidate.group !== "coding" && candidate.group !== "port") return null;
+    if (!Array.isArray(candidate.items)) return null;
+    const items = candidate.items.filter(
+      (item): item is { id: string; label: string } =>
+        typeof item?.id === "string" && typeof item?.label === "string",
+    );
+    if (items.length !== candidate.items.length) return null;
+    return { type: "step", phase: "plan", group: candidate.group, items: items.map(({ id, label }) => ({ id, label })) };
+  }
+  if (typeof candidate.step !== "string") return null;
+  if (candidate.phase !== "start" && candidate.phase !== "turn" && candidate.phase !== "end") return null;
+  const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined);
+  const turns = count(candidate.turns);
+  const maxTurns = count(candidate.maxTurns);
+  const note = STEP_NOTES.find((kind) => kind === candidate.note);
+  return {
+    type: "step",
+    step: candidate.step,
+    phase: candidate.phase,
+    ...(turns !== undefined ? { turns } : {}),
+    ...(maxTurns !== undefined ? { maxTurns } : {}),
+    ...(typeof candidate.ok === "boolean" ? { ok: candidate.ok } : {}),
+    ...(note ? { note } : {}),
+  };
 }

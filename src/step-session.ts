@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { canResumeSession } from "./sdk-helpers.js";
+import { assertRunBudget } from "./run-budget.js";
+import { withStepActivity } from "./step-activity.js";
 
 /**
  * Lets every agent step of a pipeline survive the process dying mid-step —
@@ -84,13 +86,16 @@ export class StepJournal {
     persist: (active: ActiveStep) => Promise<void>,
     body: (run: StepRun) => Promise<T>,
   ): Promise<T> {
+    // Before anything is saved for this step: a run stopped by its budget must
+    // leave the checkpoint exactly as the last finished step left it.
+    assertRunBudget(step);
     const saved = this.pending?.step === step ? this.pending : undefined;
     if (saved) this.pending = undefined;
     const resume = !!saved && (await canResumeSession(saved.sessionId));
     const sessionId = resume && saved ? saved.sessionId : randomUUID();
     await persist({ step, sessionId });
-    return current.run({ sessionId, resume, claimed: false }, () =>
-      body({ interrupted: !!saved, resumed: resume }),
+    return withStepActivity(step, () =>
+      current.run({ sessionId, resume, claimed: false }, () => body({ interrupted: !!saved, resumed: resume })),
     );
   }
 }

@@ -111,7 +111,9 @@ export function progressKeptMessage(reason: string, savedAt: string, inputs: str
     "",
     "The run stopped without doing anything, so no usage was spent and the saved progress is untouched.",
     `Either undo the change and run again to continue where it stopped (the progress depends on: ${inputs}),`,
-    "or start fresh (--fresh) to discard it and redo everything from the beginning.",
+    "or start fresh (--fresh; in the UI: \"Chạy lại từ đầu\") to discard it and redo everything from the beginning.",
+    "Starting a different feature on this project? Then that progress belongs to the earlier, unfinished run — start fresh.",
+    "Starting fresh deletes only that saved progress, never files in the project.",
   ].join("\n");
 }
 

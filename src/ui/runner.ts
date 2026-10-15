@@ -3,14 +3,16 @@ import { existsSync, statSync } from "node:fs";
 import { appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { parseEventLine, EVENT_STREAM_ENV } from "../events.js";
+import { parseEventLine, EVENT_STREAM_ENV, type PipelineStepEvent } from "../events.js";
 import { buildRoots, type RootRole } from "../target-roots.js";
 import { killTree } from "../kill-tree.js";
 import { addUsage, describeUsage, emptyUsage, subtractUsage, totalTokens, type TokenUsage } from "../token-usage.js";
 import { repoRoot } from "./paths.js";
+import { buildMindMap, type MindMapNode } from "./mind-map.js";
 import {
   isSetbackProgress,
   stageOfProgress,
+  stageOfStep,
   taskCountOfProgress,
   type RunMode,
   type StageId,
@@ -46,6 +48,8 @@ export type RunStatus =
   | "incomplete"
   | "errored"
   | "progress-kept"
+  | "budget-stopped"
+  | "needs-answers"
   | "stopped";
 
 export type DbMode = "none" | "connection" | "schema-file";
@@ -86,6 +90,10 @@ export interface RunRequest {
   fresh?: boolean;
   /** Ignore the target's `.metadata-standards.yml` for this run, even if present. Default: apply it. */
   noMetadataStandards?: boolean;
+  /** Stop before the next agent step once the run has spent this much (USD). Unset: no cap. */
+  maxRunUsd?: number;
+  /** Feature mode: answers to the business questions the previous run stopped on. */
+  answers?: string;
 }
 
 export interface RunLine {
@@ -119,6 +127,23 @@ export interface RunState {
   logPath: string | null;
   /** Folder name under runs/, so the UI can link straight to the report. */
   logRunId: string | null;
+  /** Every step reported so far, by name (`coding:T3`, `gate:T3`, `port:SQL`). */
+  steps: Record<string, StepState>;
+  /** The tasks / port groups announced before they start, in order. */
+  plan: { coding?: { id: string; label: string }[]; port?: { id: string; label: string }[] };
+  /** The run's spend cap, when one was set. */
+  budgetCapUsd: number | null;
+}
+
+/** One pipeline step as the mind map draws it (see `step-activity.ts`). */
+export interface StepState {
+  stage: StageId;
+  status: "active" | "done" | "failed";
+  /** Agent turns used and the stage's cap — a budget, not a completion measure. */
+  turns?: number;
+  maxTurns?: number;
+  /** Loop-guard interventions in this step. */
+  notes: { repeat: number; blocked: number; softCap: number };
 }
 
 export type RunnerEvent = { type: "line"; line: RunLine } | { type: "state"; state: RunState };
@@ -188,12 +213,17 @@ export class PipelineRunner {
     return () => this.listeners.delete(listener);
   }
 
-  getState(): RunState {
-    return {
+  getState(): RunState & { mindMap: MindMapNode } {
+    const state: RunState = {
       ...this.state,
       completedStages: [...this.state.completedStages],
       stageUsage: { ...this.state.stageUsage },
+      steps: Object.fromEntries(
+        Object.entries(this.state.steps).map(([name, step]) => [name, { ...step, notes: { ...step.notes } }]),
+      ),
+      plan: { ...this.state.plan },
     };
+    return { ...state, mindMap: buildMindMap(state) };
   }
 
   getLines(): RunLine[] {
@@ -262,6 +292,11 @@ export class PipelineRunner {
     }
     if (request.fresh) args.push("--fresh");
     if (request.noMetadataStandards) args.push("--no-metadata-standards");
+    if (request.maxRunUsd !== undefined && Number.isFinite(request.maxRunUsd) && request.maxRunUsd > 0) {
+      args.push("--max-run-usd", String(request.maxRunUsd));
+    }
+
+    if (!clone && request.answers?.trim()) args.push("--answers", request.answers.trim());
 
     if (clone) {
       if (request.skipBuild) args.push("--no-build");
@@ -350,6 +385,9 @@ export class PipelineRunner {
       finalMessage: null,
       logPath: null,
       logRunId: null,
+      steps: {},
+      plan: {},
+      budgetCapUsd: null,
     };
 
     const launcher = path.join(this.toolRoot, "bin", "aidev.js");
@@ -443,7 +481,44 @@ export class PipelineRunner {
         this.emitState();
         break;
       }
+      case "step": {
+        this.applyStep(event);
+        break;
+      }
+      case "budget": {
+        this.state.budgetCapUsd = event.capUsd;
+        this.emitState();
+        break;
+      }
     }
+  }
+
+  /**
+   * Keeps the mind map's state. A step that starts again (a resumed run
+   * replays nothing, but a fix round re-runs a check) is drawn active again
+   * with its notes kept.
+   */
+  private applyStep(event: PipelineStepEvent): void {
+    if (event.phase === "plan") {
+      this.state.plan[event.group] = event.items;
+      this.emitState();
+      return;
+    }
+    const stage = stageOfStep(event.step);
+    if (!stage) return;
+    const step = (this.state.steps[event.step] ??= {
+      stage,
+      status: "active",
+      notes: { repeat: 0, blocked: 0, softCap: 0 },
+    });
+    if (event.phase === "start") step.status = "active";
+    if (event.phase === "end") step.status = event.ok === false ? "failed" : "done";
+    if (event.turns !== undefined) step.turns = event.turns;
+    if (event.maxTurns !== undefined) step.maxTurns = event.maxTurns;
+    if (event.note === "repeat") step.notes.repeat++;
+    if (event.note === "blocked") step.notes.blocked++;
+    if (event.note === "soft-cap") step.notes.softCap++;
+    this.emitState();
   }
 
   /**
@@ -515,6 +590,10 @@ export class PipelineRunner {
     if (this.state.stage && !this.state.completedStages.includes(this.state.stage)) {
       this.state.completedStages.push(this.state.stage);
     }
+    // A step still active when the process ended did not finish.
+    for (const step of Object.values(this.state.steps)) {
+      if (step.status === "active") step.status = "failed";
+    }
 
     this.stopping = false;
     this.secret = null;
@@ -575,6 +654,9 @@ function idleState(): RunState {
     finalMessage: null,
     logPath: null,
     logRunId: null,
+    steps: {},
+    plan: {},
+    budgetCapUsd: null,
   };
 }
 
@@ -586,6 +668,8 @@ function asRunStatus(status: string): RunStatus {
     "incomplete",
     "errored",
     "progress-kept",
+    "budget-stopped",
+    "needs-answers",
   ];
   return known.includes(status as RunStatus) ? (status as RunStatus) : "errored";
 }

@@ -51,3 +51,46 @@ describe("encodeEvent / parseEventLine", () => {
     });
   });
 });
+
+describe("parseEventLine — steps and budget", () => {
+  it("reads a step's start, turn and end, keeping only known fields", () => {
+    expect(parseEventLine(JSON.stringify({ type: "step", step: "coding:T1", phase: "start" }))).toEqual({
+      type: "step",
+      step: "coding:T1",
+      phase: "start",
+    });
+    expect(
+      parseEventLine(
+        JSON.stringify({ type: "step", step: "coding:T1", phase: "turn", turns: 8, maxTurns: 60, note: "soft-cap", extra: 1 }),
+      ),
+    ).toEqual({ type: "step", step: "coding:T1", phase: "turn", turns: 8, maxTurns: 60, note: "soft-cap" });
+    expect(parseEventLine(JSON.stringify({ type: "step", step: "gate:T1", phase: "end", ok: false }))).toEqual({
+      type: "step",
+      step: "gate:T1",
+      phase: "end",
+      ok: false,
+    });
+  });
+
+  it("reads a plan of tasks or port groups", () => {
+    const line = JSON.stringify({ type: "step", phase: "plan", group: "coding", items: [{ id: "T1", label: "Login API" }] });
+    expect(parseEventLine(line)).toEqual({ type: "step", phase: "plan", group: "coding", items: [{ id: "T1", label: "Login API" }] });
+  });
+
+  it("drops a malformed step or plan to log text, and an unknown note", () => {
+    expect(parseEventLine(JSON.stringify({ type: "step", phase: "start" }))).toBeNull();
+    expect(parseEventLine(JSON.stringify({ type: "step", step: "x", phase: "later" }))).toBeNull();
+    expect(parseEventLine(JSON.stringify({ type: "step", phase: "plan", group: "coding", items: [{ id: 1 }] }))).toBeNull();
+    expect(parseEventLine(JSON.stringify({ type: "step", phase: "plan", group: "other", items: [] }))).toBeNull();
+    expect(parseEventLine(JSON.stringify({ type: "step", step: "x", phase: "turn", note: "panic" }))).toEqual({
+      type: "step",
+      step: "x",
+      phase: "turn",
+    });
+  });
+
+  it("reads the run's budget cap", () => {
+    expect(parseEventLine(JSON.stringify({ type: "budget", capUsd: 12.5 }))).toEqual({ type: "budget", capUsd: 12.5 });
+    expect(parseEventLine(JSON.stringify({ type: "budget", capUsd: "12" }))).toBeNull();
+  });
+});

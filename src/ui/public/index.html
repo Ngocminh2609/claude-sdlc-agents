@@ -27,7 +27,6 @@
         Clone từ dự án khác <span class="tab-sub">repo mẫu → port → build</span>
       </button>
       <span class="tab-sep" aria-hidden="true"></span>
-      <button class="tab" data-tab="spec">Soạn spec</button>
       <button class="tab" data-tab="history">Lịch sử chạy</button>
       <button class="tab" data-tab="guide">Hướng dẫn</button>
     </nav>
@@ -156,7 +155,6 @@
           <div class="row">
             <input id="spec-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\plans\tinh-nang-abc\spec.md" />
             <button class="btn btn-ghost" data-browse="spec">Chọn file…</button>
-            <button class="btn btn-ghost" id="spec-edit">Xem / sửa spec</button>
           </div>
         </div>
 
@@ -238,6 +236,26 @@
               </span>
             </span>
           </label>
+
+          <div class="field">
+            <label for="feature-answers">Trả lời câu hỏi nghiệp vụ</label>
+            <textarea id="feature-answers" class="request-input" rows="3" placeholder="Chỉ điền khi lần chạy trước dừng để hỏi — trả lời theo số thứ tự câu hỏi"></textarea>
+            <p class="hint">
+              Hệ thống tự quyết mọi chuyện kỹ thuật; nó chỉ dừng hỏi khi spec bỏ ngỏ một
+              <strong>quyết định nghiệp vụ</strong>. Câu trả lời sửa bản thiết kế đã lưu, không làm lại từ đầu.
+            </p>
+          </div>
+
+          <div class="field">
+            <label for="feature-max-run-usd">Ngân sách tối đa cho lần chạy (USD)</label>
+            <input type="number" id="feature-max-run-usd" min="0" step="0.5" placeholder="Để trống = không giới hạn" />
+            <p class="hint">
+              Khi tổng chi phí ước tính chạm mức này, hệ thống <strong>dừng trước bước AI kế tiếp</strong>
+              (bước đang chạy vẫn chạy nốt) và <strong>giữ nguyên tiến độ</strong> — chạy lại với mức cao
+              hơn hoặc để trống sẽ đi tiếp từ đúng bước đó. Ngoài ra mỗi bước AI có trần riêng, nên một
+              bước chạy lố không thể đốt hết hạn mức.
+            </p>
+          </div>
 
           <div class="field">
             <label for="feature-metadata-standards">Áp dụng metadata standards (DDI/GSIM/SDC…)</label>
@@ -407,6 +425,17 @@
           </label>
 
           <div class="field">
+            <label for="clone-max-run-usd">Ngân sách tối đa cho lần chạy (USD)</label>
+            <input type="number" id="clone-max-run-usd" min="0" step="0.5" placeholder="Để trống = không giới hạn" />
+            <p class="hint">
+              Khi tổng chi phí ước tính chạm mức này, hệ thống <strong>dừng trước bước AI kế tiếp</strong>
+              (bước đang chạy vẫn chạy nốt) và <strong>giữ nguyên tiến độ</strong> — chạy lại với mức cao
+              hơn hoặc để trống sẽ đi tiếp từ đúng bước đó. Ngoài ra mỗi bước AI có trần riêng, nên một
+              bước chạy lố không thể đốt hết hạn mức.
+            </p>
+          </div>
+
+          <div class="field">
             <label for="clone-metadata-standards">Áp dụng metadata standards (DDI/GSIM/SDC…)</label>
             <select id="clone-metadata-standards">
               <option value="apply">Có — theo file .metadata-standards.yml của thư mục dự án (mặc định)</option>
@@ -452,7 +481,21 @@
           </div>
           <p class="hint hidden" id="run-elsewhere"></p>
           <div class="run-meta" id="run-meta"></div>
+          <div class="view-toggle" id="view-toggle" role="group" aria-label="Kiểu hiển thị tiến trình">
+            <button type="button" class="chip" data-view="map">Sơ đồ tư duy</button>
+            <button type="button" class="chip" data-view="strip">Dải giai đoạn</button>
+          </div>
           <ol class="stages" id="stages"></ol>
+          <div class="mindmap-wrap" id="mindmap-wrap">
+            <div class="mindmap" id="mindmap"></div>
+            <p class="hint mindmap-legend">
+              Ô sáng xanh, nhấp nháy = bước đang chạy. <strong>≈%</strong> của bước AI đang chạy là số lượt
+              đã dùng trên giới hạn lượt (không phải phần việc đã xong); bước chỉ thành 100% khi kết thúc.
+              <strong>KT build</strong> = hệ thống tự chạy lệnh build/lint của dự án sau mỗi task.
+              ⟳ lặp lại cùng lệnh · ⛔ lệnh bị chặn vì lặp · ⏱ đã nhắc AI chốt vì gần hết lượt.
+              Rê chuột lên một ô để xem giải thích.
+            </p>
+          </div>
           <div class="result hidden" id="result"></div>
         </div>
 
@@ -474,36 +517,6 @@
           <div class="log" id="log"><div class="log-empty">Chưa có lần chạy nào.</div></div>
         </div>
       </div>
-
-      <!-- ================= SOẠN SPEC ================= -->
-      <section class="panel-group" id="tab-spec">
-        <div class="callout callout-info">
-          <div class="callout-body">
-            Spec tốt = AI làm đúng ngay lần đầu. Tối thiểu cần: <strong>bối cảnh</strong>,
-            <strong>yêu cầu cụ thể</strong> và <strong>tiêu chí nghiệm thu kiểm được bằng thao tác
-            trên giao diện</strong> — giai đoạn E2E sẽ dựa đúng vào các tiêu chí này để chấm đạt hay
-            không. <a href="#" data-goto="guide">Xem cách viết spec →</a>
-          </div>
-        </div>
-
-        <div class="card card-editor">
-          <div class="card-head">
-            <h2>Soạn spec</h2>
-            <span class="hint" id="spec-status"></span>
-          </div>
-          <div class="field">
-            <label for="spec-file-path">Lưu vào đường dẫn</label>
-            <div class="row">
-              <input id="spec-file-path" type="text" spellcheck="false" />
-              <button class="btn btn-ghost" data-browse="spec-open">Mở file có sẵn…</button>
-              <button class="btn btn-ghost" id="spec-template">Chèn mẫu</button>
-              <button class="btn btn-ghost" id="spec-save">Lưu</button>
-              <button class="btn btn-primary" id="spec-use">Lưu &amp; dùng để chạy</button>
-            </div>
-          </div>
-          <textarea id="spec-editor" spellcheck="false" placeholder="Bấm “Chèn mẫu” để có khung spec sẵn, rồi sửa lại theo tính năng của anh."></textarea>
-        </div>
-      </section>
 
       <!-- ================= LỊCH SỬ ================= -->
       <section class="panel-group" id="tab-history">
@@ -543,8 +556,7 @@
               <td><strong>Làm task mới</strong></td>
               <td>
                 Xây tính năng <strong>chưa có</strong>. Cần <strong>file spec</strong>. Chạy 6 giai
-                đoạn (mục 1), chốt bằng kiểm thử E2E trên trình duyệt thật. Tab “Soạn spec” chỉ phục vụ
-                luồng này.
+                đoạn (mục 1), chốt bằng kiểm thử E2E trên trình duyệt thật.
               </td>
             </tr>
             <tr>
@@ -661,7 +673,7 @@
           </p>
 
           <h3>3. Viết spec thế nào cho AI làm đúng</h3>
-          <p>Khung tối thiểu — bấm <strong>Chèn mẫu</strong> ở tab “Soạn spec” để có sẵn:</p>
+          <p>Khung tối thiểu:</p>
           <pre><code># Tên tính năng
 
 ## Bối cảnh
@@ -692,8 +704,8 @@ Màn hình/API nào, thuộc module nào, đang có sẵn cái gì liên quan.
             <strong>Chưa muốn tự viết?</strong> Ở bước 2 của tab Làm task mới, chọn thư mục lưu spec,
             mô tả yêu cầu bằng lời thường rồi bấm <strong>Sinh spec</strong>. AI chỉ đọc dự án đích để
             viết spec theo đúng khung trên, thêm mục <em>Câu hỏi mở</em> cho những gì yêu cầu chưa nói
-            rõ và ghi <em>(giả định)</em> ở chỗ nó tự suy ra. Spec được điền sẵn vào bước 3 — bấm
-            <strong>Xem / sửa spec</strong> để đọc lại trước khi chạy. Từ dòng lệnh:
+            rõ và ghi <em>(giả định)</em> ở chỗ nó tự suy ra. Spec được điền sẵn vào bước 3 — mở file
+            bằng trình soạn thảo của anh để đọc lại trước khi chạy. Từ dòng lệnh:
             <code>aidev spec --request "…" --project-be … --out spec.md</code>, đọc và sửa file, rồi
             <code>aidev --spec spec.md …</code>.
           </p>
