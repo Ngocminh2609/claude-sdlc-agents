@@ -174,7 +174,8 @@ export interface SqlProposal {
 
 function optionsFor(systemPrompt: string, stage: "sqlOptimize" | "sqlCheck"): Options {
   // The file is in the prompt; there is nothing to read and nothing to run.
-  return { systemPrompt, allowedTools: [], model: config.model, ...limitsOf(stage) };
+  const model = stage === "sqlCheck" ? config.sqlCheckModel : config.model;
+  return { systemPrompt, allowedTools: [], model, ...limitsOf(stage) };
 }
 
 function requestedSection(instructions: string | undefined): string[] {

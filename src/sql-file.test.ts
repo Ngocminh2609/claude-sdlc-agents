@@ -6,6 +6,8 @@ import { parseSqlOptimizeArgs } from "./cli-args.js";
 import {
   applySteps,
   detectDialect,
+  droppedReferences,
+  logicReferences,
   optimizedPathOf,
   readSqlFile,
   renderOptimizedFile,
@@ -140,6 +142,37 @@ describe("applySteps", () => {
     const whole = applySteps(loop, [{ ...rewrite("WHILE 1 = 0 BEGIN SET @id = 1; END"), index: 1 }], new Map());
     expect(whole.outcomes[0]).toMatchObject({ status: "applied", lines: [2, 3] });
     expect(whole.text).toBe("DECLARE @id INT;\nUPDATE r SET n = (SELECT COUNT(*) FROM l);\n");
+  });
+});
+
+describe("logic reference guard", () => {
+  it("reads tables, qualified columns and string literals, ignoring comments, schemas and brackets", () => {
+    const refs = logicReferences("SELECT o.[Status] FROM dbo.[Orders] o -- FROM Ghost\nWHERE o.Kind = 'IT''S' /* JOIN x */");
+    expect([...refs].sort()).toEqual(["column:kind", "column:orders", "column:status", "string:IT'S", "table:orders"]);
+  });
+
+  it("lets a pure performance rewrite through, cursor removal included", () => {
+    expect(droppedReferences("WHERE (SELECT COUNT(*) FROM s WHERE s.id = t.id) > 0", "WHERE EXISTS (SELECT 1 FROM s WHERE s.id = t.id)")).toEqual([]);
+    expect(
+      droppedReferences(
+        "DECLARE cur CURSOR FOR SELECT OrderId FROM @R; FETCH NEXT FROM cur INTO @Id; UPDATE @R SET n = (SELECT COUNT(*) FROM L l WHERE l.OrderId = @Id);",
+        "INSERT INTO @R SELECT o.OrderId, (SELECT COUNT(*) FROM L l WHERE l.OrderId = o.OrderId) FROM O o;",
+      ),
+    ).toEqual([]);
+  });
+
+  it("catches a dropped filter column, table or status literal", () => {
+    expect(droppedReferences("WHERE o.Status = 'PAID' AND o.Deleted = 0", "WHERE o.Status = 'PAID'")).toEqual(["column:deleted"]);
+    expect(droppedReferences("FROM a JOIN b ON b.id = a.id", "FROM a")).toEqual(["column:id", "table:b"]);
+    expect(droppedReferences("WHERE s = 'ACTIVE'", "WHERE s IS NOT NULL")).toEqual(["string:ACTIVE"]);
+  });
+
+  it("rejects a performance step that drops a reference, but not a requested logic change", () => {
+    const sql = "SELECT id FROM t WHERE t.flag = 1 AND t.region = 'VN';";
+    const drop = step("AND t.region = 'VN'", "", { category: "redundant-work", title: "Drop region" });
+    expect(applySteps(sql, [{ ...drop, index: 1 }], new Map()).outcomes[0].rejectedBecause).toMatch(/column:region, string:VN/);
+    const asked = { ...drop, category: "requested-logic" as const };
+    expect(applySteps(sql, [{ ...asked, index: 1 }], new Map()).outcomes[0].status).toBe("applied");
   });
 });
 

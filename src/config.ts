@@ -4,6 +4,10 @@ export const config = {
   // again revises that proposal instead of the pipeline looping on its own.
   maxSpecAttempts: 1,
   model: process.env.CLAUDE_MODEL ?? "claude-sonnet-5",
+  // The SQL optimizer's independent equivalence check (`stages/sql-optimize.ts`)
+  // is what protects the business logic, so it gets a strong model even when
+  // the proposing step runs on a cheaper one. Env: AIDEV_SQL_CHECK_MODEL.
+  sqlCheckModel: process.env.AIDEV_SQL_CHECK_MODEL ?? "claude-opus-5-5",
   playwrightTestCommand: "npx playwright test",
   // The three planning stages get Read/Glob/Grep and throw on exhaustion,
   // which crashes the pipeline outright — maxSpecAttempts only retries a

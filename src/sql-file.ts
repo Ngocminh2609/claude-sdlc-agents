@@ -175,6 +175,17 @@ export function applySteps(
       outcomes.push({ ...step, status: "rejected", rejectedBecause: attempt.failure });
       continue;
     }
+    // Plain-code guard under the model's check: a performance step keeps every
+    // table, qualified column and string literal the code referred to.
+    const dropped = step.category === "requested-logic" ? [] : droppedReferences(text, attempt.text);
+    if (dropped.length) {
+      outcomes.push({
+        ...step,
+        status: "rejected",
+        rejectedBecause: `it removes what the logic refers to (${dropped.join(", ")}) — a performance step must not`,
+      });
+      continue;
+    }
     text = attempt.text;
     outcomes.push({ ...step, status: "applied", lines: attempt.lines });
   }
@@ -204,6 +215,54 @@ function applyEdits(text: string, edits: SqlEdit[]): { text: string; lines: numb
     text = text.slice(0, at) + edit.after.trim() + text.slice(at + match[0].length);
   }
   return { text, lines };
+}
+
+/**
+ * What the business logic of SQL text refers to, read by plain code: tables
+ * (after FROM/JOIN/UPDATE/INTO…), qualified column names (`o.Status` → status)
+ * and string literals ('ACTIVE'). Comments are ignored; names are compared
+ * case-insensitively and without schema or brackets, so adding `dbo.` or
+ * renaming an alias is not a change. A heuristic, not a parser: it only ever
+ * makes the guard stricter.
+ */
+export function logicReferences(sql: string): Set<string> {
+  const refs = new Set<string>();
+  let code = "";
+  for (let i = 0; i < sql.length; ) {
+    const two = sql.slice(i, i + 2);
+    if (two === "--") {
+      const end = sql.indexOf("\n", i);
+      i = end < 0 ? sql.length : end;
+    } else if (two === "/*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? sql.length : end + 2;
+    } else if (sql[i] === "'") {
+      let j = i + 1;
+      while (j < sql.length && !(sql[j] === "'" && sql[j + 1] !== "'")) j += sql[j] === "'" ? 2 : 1;
+      refs.add(`string:${sql.slice(i + 1, j).replace(/''/g, "'")}`);
+      code += " '' ";
+      i = j + 1;
+    } else {
+      code += sql[i];
+      i++;
+    }
+  }
+  // A cursor's FETCH ... FROM cur INTO @var names a cursor and variables, not
+  // tables: removing a cursor loop must not read as dropping a table.
+  code = code.replace(/\bFETCH\b[^;]*;?/gi, " ");
+  const bare = (name: string) => name.replace(/[[\]"`]/g, "").split(".").pop()?.toLowerCase() ?? "";
+  for (const match of code.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO|TABLE|USING)\s+([#@]?[\w[\]".`]+)/gi)) {
+    const name = bare(match[1]);
+    if (name && !/^(select|values|set)$/.test(name)) refs.add(`table:${name}`);
+  }
+  for (const match of code.matchAll(/\b[A-Za-z_@#][\w]*\s*\.\s*\[?([A-Za-z_]\w*)\]?/g)) refs.add(`column:${match[1].toLowerCase()}`);
+  return refs;
+}
+
+/** What `after` no longer refers to that `before` did — a sign the step changed logic, not just speed. */
+export function droppedReferences(before: string, after: string): string[] {
+  const kept = logicReferences(after);
+  return [...logicReferences(before)].filter((ref) => !kept.has(ref)).sort();
 }
 
 const DIALECT_LABEL: Record<OptimizeDialect, string> = { sqlserver: "SQL Server", mysql: "MySQL", postgresql: "PostgreSQL" };
