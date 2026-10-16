@@ -147,7 +147,7 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
   if (!["none", "connection", "schema-file"].includes(dbMode)) {
     return sendJson(res, 400, { error: `Unknown dbMode: ${String(body.dbMode)}` });
   }
-  if (!["feature", "clone", "spec"].includes(mode)) {
+  if (!["feature", "clone", "spec", "sql"].includes(mode)) {
     return sendJson(res, 400, { error: `Unknown mode: ${String(body.mode)}` });
   }
 
@@ -156,6 +156,9 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
       mode,
       specPath: String(body.specPath ?? ""),
       what: String(body.what ?? ""),
+      ...(typeof body.sqlFile === "string" ? { sqlFile: body.sqlFile } : {}),
+      ...(typeof body.sqlDialect === "string" ? { sqlDialect: body.sqlDialect } : {}),
+      ...(typeof body.sqlInstructions === "string" ? { sqlInstructions: body.sqlInstructions } : {}),
       request: String(body.request ?? ""),
       overwrite: body.overwrite === true,
       skipBuild: body.skipBuild === true,

@@ -46,6 +46,11 @@ export const config = {
     cloneTests: 90,
     cloneTestsRerun: 20,
     cloneFix: 60,
+    // No tools: the file is in the prompt and the answer is one structured
+    // object, so the turns are only the answer and a schema retry or two.
+    sqlOptimize: 4,
+    // The independent equivalence check of the proposed edits, same shape.
+    sqlCheck: 4,
   },
   // Rounds of "fix the ported code, then re-run build and tests" before a
   // clone run gives up and reports incomplete with the remaining failures.
@@ -91,6 +96,9 @@ export const config = {
     cloneTests: 6,
     cloneTestsRerun: 2,
     cloneFix: 4,
+    // Not measured yet: a 100K-character file read once and written back once.
+    sqlOptimize: 2,
+    sqlCheck: 2,
   },
   // Plain-code guards on every agent session's own loop (`src/loop-guard.ts`).
   loopGuard: {

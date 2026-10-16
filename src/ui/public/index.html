@@ -26,6 +26,9 @@
       <button class="tab tab-flow" data-tab="clone">
         Clone từ dự án khác <span class="tab-sub">repo mẫu → port → build</span>
       </button>
+      <button class="tab tab-flow" data-tab="sql">
+        Tối ưu SQL <span class="tab-sub">file .sql → _optimized.sql</span>
+      </button>
       <span class="tab-sep" aria-hidden="true"></span>
       <button class="tab" data-tab="history">Lịch sử chạy</button>
       <button class="tab" data-tab="guide">Hướng dẫn</button>
@@ -464,8 +467,67 @@
         </div>
       </section>
 
-      <!-- Tiến trình + nhật ký của lần chạy hiện tại. Dùng chung cho hai luồng:
-           app.js chuyển khối này vào tab luồng đang mở. -->
+
+      <!-- ================= TỐI ƯU SQL ================= -->
+      <section class="panel-group" id="tab-sql">
+        <div class="callout callout-info">
+          <div class="callout-body">
+            <strong>Tối ưu SQL</strong> <span class="optional">bản demo</span> — đọc một file SQL
+            (procedure, function, view, câu truy vấn) của <strong>SQL Server</strong>, <strong>MySQL</strong>
+            hoặc <strong>PostgreSQL</strong> và viết bản tối ưu để giảm tải DB, giảm thời gian chạy: điều kiện
+            lọc dùng được index, bỏ cursor/vòng lặp từng dòng, <code>EXISTS</code> thay <code>COUNT(*)</code>,
+            bỏ <code>SELECT *</code> khi biết cột… Kết quả ghi ra <code>&lt;tên file&gt;_optimized.sql</code>
+            cạnh file gốc; <strong>file gốc không bị sửa</strong>.
+          </div>
+        </div>
+
+        <div class="card step">
+          <div class="step-head">
+            <span class="step-num">1</span>
+            <div>
+              <h2>Chọn file SQL</h2>
+              <p class="step-desc">
+                Tối đa 100.000 ký tự. AI chỉ thấy nội dung file — không kết nối DB — nên gì phụ thuộc
+                schema thật (cột đằng sau <code>SELECT *</code>, index đang có) sẽ được <em>ghi chú để anh
+                kiểm</em> thay vì đoán.
+              </p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="sql-file">File SQL</label>
+            <div class="row">
+              <input id="sql-file" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\SQL\usp_GetCustomerOrders.sql" />
+              <button class="btn btn-ghost" data-browse="sql-file">Chọn file…</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="sql-dialect">Hệ quản trị CSDL</label>
+            <select id="sql-dialect">
+              <option value="auto">Tự nhận biết từ cú pháp (mặc định)</option>
+              <option value="sqlserver">SQL Server</option>
+              <option value="mysql">MySQL</option>
+              <option value="postgresql">PostgreSQL</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="sql-instructions">Yêu cầu đổi logic nghiệp vụ <span class="optional">để trống = chỉ tối ưu hiệu năng</span></label>
+            <textarea id="sql-instructions" class="request-input" rows="3" placeholder="Chỉ điền khi anh muốn ĐỔI logic, ví dụ: chỉ lấy khách hàng đang hoạt động. Để trống thì logic nghiệp vụ giữ nguyên tuyệt đối."></textarea>
+          </div>
+          <p class="hint">
+            Cách làm: AI đề xuất từng bước sửa (đúng đoạn code trước → sau, thuộc câu truy vấn nào); một lượt
+            AI <strong>độc lập</strong> kiểm từng bước xem kết quả có giữ nguyên không — bước nào không được xác nhận
+            thì <strong>bị loại</strong>; code chỉ áp các bước đã qua kiểm, lần lượt, nên phần không nằm trong bước nào
+            giữ nguyên từng ký tự. Mọi bước (kể cả bị loại) hiện bên dưới khi chạy xong và ở đầu file kết quả.
+          </p>
+          <div class="actions">
+            <button class="btn btn-primary" id="sql-start" disabled>⚡ Tối ưu</button>
+          </div>
+          <p class="error-text hidden" id="sql-error"></p>
+        </div>
+      </section>
+
+      <!-- Tiến trình + nhật ký của lần chạy hiện tại. Dùng chung cho các tab chạy
+           (task mới, clone, tối ưu SQL): app.js chuyển khối này vào tab đang mở. -->
       <div class="run-monitor" id="run-monitor">
         <div class="card" id="status-card">
           <div class="card-head">

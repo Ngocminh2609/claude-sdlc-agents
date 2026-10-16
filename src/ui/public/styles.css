@@ -1375,3 +1375,103 @@ textarea {
     animation: none;
   }
 }
+
+/* --- SQL optimize: one card per proposed edit ------------------------------ */
+
+.sql-steps {
+  margin: 12px 0;
+}
+
+.sql-steps-head {
+  margin: 0 0 8px;
+}
+
+.sql-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sql-step {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--good, #3fb950);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+}
+
+.sql-step[data-status="rejected"] {
+  border-left-color: var(--err);
+  opacity: 0.85;
+}
+
+.sql-step-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.sql-step-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sql-step-logic {
+  margin-left: 6px;
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.sql-step-row {
+  font-size: 13px;
+  margin: 3px 0;
+}
+
+.sql-step-why-not {
+  color: var(--err);
+}
+
+.sql-step-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+@media (max-width: 760px) {
+  .sql-step-diff {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sql-step-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.sql-step-diff pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  overflow: auto;
+  font: 12px var(--mono);
+  white-space: pre;
+}
+
+.sql-before {
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.35);
+}
+
+.sql-after {
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid rgba(63, 185, 80, 0.35);
+}

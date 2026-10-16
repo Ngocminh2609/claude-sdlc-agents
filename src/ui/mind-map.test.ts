@@ -33,6 +33,7 @@ function runState(overrides: Partial<RunState>): RunState {
     steps: {},
     plan: {},
     budgetCapUsd: null,
+    sql: null,
     ...overrides,
   };
 }

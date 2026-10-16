@@ -25,6 +25,11 @@ const el = {
   specDraftError: $("spec-draft-error"),
   specDraftResult: $("spec-draft-result"),
   referencePath: $("reference-path"),
+  sqlFile: $("sql-file"),
+  sqlDialect: $("sql-dialect"),
+  sqlInstructions: $("sql-instructions"),
+  sqlStart: $("sql-start"),
+  sqlError: $("sql-error"),
   cloneWhat: $("clone-what"),
   cloneFromBe: $("clone-from-be"),
   cloneFromFe: $("clone-from-fe"),
@@ -97,9 +102,17 @@ const forms = Object.fromEntries(
 
 const isFlow = (name) => FLOWS.includes(name);
 
+/** Tabs that start a run and show the shared progress block: the two flows, plus SQL optimization. */
+const MONITOR_TABS = [...FLOWS, "sql"];
+const hasMonitor = (name) => MONITOR_TABS.includes(name);
+
 // --- Wording ---------------------------------------------------------------
 
 const STAGE_TEXT = {
+  "sql-optimize": {
+    label: "Tối ưu SQL",
+    tip: "Đọc file SQL, viết lại để giảm tải và thời gian chạy mà vẫn ra đúng kết quả cũ, ghi ra <tên>_optimized.sql cạnh file gốc.",
+  },
   "spec-draft": {
     label: "Sinh spec từ yêu cầu",
     tip: "Đọc dự án đích (chỉ đọc, không sửa file) rồi viết spec theo khung: bối cảnh, yêu cầu, ràng buộc, tiêu chí nghiệm thu, câu hỏi mở.",
@@ -175,7 +188,7 @@ const STATUS_BADGE = {
 };
 
 /** What the user sees on screen as the name of each flow. */
-const FLOW_TEXT = { feature: "Task mới", clone: "Clone", spec: "Sinh spec" };
+const FLOW_TEXT = { feature: "Task mới", clone: "Clone", spec: "Sinh spec", sql: "Tối ưu SQL" };
 
 /** The tab a run belongs to: a spec draft is started from, and feeds, the "task mới" form. */
 const flowOfMode = (mode) => (mode === "spec" ? "feature" : mode);
@@ -220,6 +233,12 @@ const NEXT_STEPS = {
       "Sinh spec không thành công, <strong>không có file nào bị sửa</strong>. Kết quả bên dưới ghi lý do (ví dụ <code>rate_limit</code> — chờ hạn mức reset). Có thể viết rõ hơn yêu cầu rồi bấm Sinh spec lại.",
     stopped: "Anh đã dừng việc sinh spec. Không có file nào bị sửa.",
   },
+  sql: {
+    done: "Đã ghi file <code>_optimized.sql</code> cạnh file gốc (file gốc giữ nguyên). Mở file: phần đầu là chú thích liệt kê từng thay đổi, các điểm cần kiểm (\"Check before use\") và index đề xuất. <strong>So sánh với bản gốc và chạy thử trên dữ liệu thật trước khi dùng.</strong>",
+    errored:
+      "Tối ưu không thành công, <strong>không có file nào được ghi</strong>. Kết quả bên dưới ghi lý do (file quá lớn, file rỗng, hoặc <code>rate_limit</code> — chờ hạn mức reset rồi chạy lại).",
+    stopped: "Anh đã dừng. Không có file nào được ghi.",
+  },
 };
 
 const RUN_ERROR_TEXT = {
@@ -234,11 +253,13 @@ const RUN_ERROR_TEXT = {
   "request-required": () => "Mô tả yêu cầu trước khi bấm Sinh spec.",
   "spec-path-required": () => "Chưa có đường dẫn để lưu spec.",
   "spec-exists": (detail) => `File spec đã tồn tại: ${detail}`,
+  "sql-file-not-found": (detail) => `Không tìm thấy file SQL: ${detail}`,
+  "sql-optimized-exists": (detail) => `File kết quả đã có: ${detail}`,
   "sql-folder-required": () => "Có chuỗi kết nối DB thì phải chọn thư mục SQL ở bước 1 — script tạo bảng được lưu và chạy từ đó.",
 };
 
 let appConfig = null;
-let stagesByMode = { feature: [], clone: [] };
+let stagesByMode = { feature: [], clone: [], sql: [] };
 /** The flow tab the user last had open — not necessarily what is running. */
 let activeFlow = "feature";
 let lines = [];
@@ -299,12 +320,12 @@ function showTab(name) {
   }
   document.querySelector("main").scrollTop = 0;
 
-  if (isFlow(name)) {
+  if (hasMonitor(name)) {
     activeFlow = name;
     localStorage.setItem(TAB_KEY, name);
-    // One progress/log block serves both flows: it follows the flow tab that
-    // is open, so each form keeps its own run view directly beneath it.
-    forms[name].section.append(el.monitor);
+    // One progress/log block serves every run tab: it follows the tab that is
+    // open, so each form keeps its own run view directly beneath it.
+    $(`tab-${name}`).append(el.monitor);
     if (runState) renderState(runState);
   }
   if (name === "history") loadRuns();
@@ -312,7 +333,7 @@ function showTab(name) {
 
 function restoreTab() {
   const saved = localStorage.getItem(TAB_KEY) ?? localStorage.getItem(LEGACY_MODE_KEY);
-  showTab(isFlow(saved) ? saved : "feature");
+  showTab(hasMonitor(saved) ? saved : "feature");
 }
 
 // --- Form state ------------------------------------------------------------
@@ -339,6 +360,8 @@ function saveForm() {
       cloneFromFe: el.cloneFromFe.value,
       dbMode: el.dbMode.value,
       dbSchemaPath: el.dbSchemaPath.value,
+      sqlFile: el.sqlFile.value,
+      sqlDialect: el.sqlDialect.value,
     }),
   );
 }
@@ -364,6 +387,8 @@ function restoreForm() {
     el.cloneFromFe.value = saved.cloneFromFe ?? saved.cloneFrom ?? "";
     el.dbMode.value = saved.dbMode || "none";
     el.dbSchemaPath.value = saved.dbSchemaPath || "";
+    el.sqlFile.value = saved.sqlFile || "";
+    el.sqlDialect.value = saved.sqlDialect || "auto";
   } catch {
     // Unreadable storage is not worth failing the page over.
   }
@@ -426,6 +451,15 @@ function syncRunButtons() {
     : running
       ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
       : "Điền thư mục BE/FE ở bước 1, thư mục lưu spec và yêu cầu";
+
+  // Optimizing writes only a new _optimized file next to the original, so it needs no commit/stash tick either.
+  const canOptimize = el.sqlFile.value.trim() && !running;
+  el.sqlStart.disabled = !canOptimize;
+  el.sqlStart.title = canOptimize
+    ? "AI đọc file SQL và ghi bản tối ưu ra file mới"
+    : running
+      ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
+      : "Chọn file SQL trước";
 }
 
 el.dbMode.addEventListener("change", () => {
@@ -706,6 +740,21 @@ for (const button of document.querySelectorAll("[data-browse]")) {
       return;
     }
 
+    if (what === "sql-file") {
+      const chosen = await openPicker({
+        mode: "file",
+        kind: "markdown",
+        title: "Chọn file SQL (.sql)",
+        startPath: parentOf(el.sqlFile.value),
+      });
+      if (chosen) {
+        el.sqlFile.value = chosen;
+        saveForm();
+        syncRunButtons();
+      }
+      return;
+    }
+
     if (what === "reference") {
       const chosen = await openPicker({
         mode: "dir",
@@ -826,6 +875,41 @@ async function startSpecDraft(specPath, overwrite = false) {
 }
 
 el.specDraftStart.addEventListener("click", () => startSpecDraft(draftSpecPath()));
+
+// --- Tối ưu SQL ---------------------------------------------------------------
+
+async function startSqlOptimize(overwrite = false) {
+  el.sqlError.classList.add("hidden");
+  try {
+    await api("/api/run", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "sql",
+        dbMode: "none",
+        sqlFile: el.sqlFile.value,
+        sqlDialect: el.sqlDialect.value,
+        sqlInstructions: el.sqlInstructions.value,
+        overwrite,
+      }),
+    });
+    saveForm();
+  } catch (error) {
+    if (error.code === "sql-optimized-exists" && confirm(`File ${error.detail} đã có. Ghi đè bằng bản tối ưu mới?`)) {
+      return startSqlOptimize(true);
+    }
+    const translate = RUN_ERROR_TEXT[error.code];
+    el.sqlError.textContent = translate ? translate(error.detail ?? "") : error.message;
+    el.sqlError.classList.remove("hidden");
+  }
+}
+
+el.sqlStart.addEventListener("click", () => startSqlOptimize());
+for (const field of [el.sqlFile, el.sqlDialect]) {
+  field.addEventListener("input", () => {
+    saveForm();
+    syncRunButtons();
+  });
+}
 
 /** A draft that just finished becomes step 3's spec, with a pointer to review it before running. */
 function useFinishedDraft(state) {
@@ -1058,14 +1142,63 @@ function renderResult(state) {
 
   el.result.dataset.status = state.status;
   el.result.classList.remove("hidden");
+  const sqlSteps = state.mode === "sql" && state.sql ? renderSqlSteps(state.sql) : "";
   el.result.innerHTML = `
     <div class="result-title">${escapeHtml(STATUS_TEXT[state.status] ?? state.status)}</div>
     ${guidance ? `<p class="result-guidance">${guidance}</p>` : ""}
+    ${sqlSteps}
     <details class="result-raw">
       <summary>Nguyên văn pipeline báo về</summary>
       <pre>${escapeHtml(state.finalMessage)}</pre>
     </details>
     ${report}`;
+}
+
+const VERDICT_TEXT = {
+  "same-results": "kết quả giữ nguyên",
+  "changes-results": "LÀM ĐỔI kết quả",
+  unsure: "không chắc",
+  "requested-change": "đúng thay đổi anh yêu cầu",
+};
+
+/** Every proposed edit of a SQL run, in order: the query, before → after, and why it was or was not applied. */
+function renderSqlSteps({ outputPath, steps }) {
+  const applied = steps.filter((step) => step.status === "applied").length;
+  const head = `<p class="sql-steps-head">${applied}/${steps.length} bước được áp dụng${
+    outputPath ? ` — file: <code>${escapeHtml(outputPath)}</code>` : ""
+  }. Mọi dòng không thuộc bước nào giữ nguyên như bản gốc.</p>`;
+  if (!steps.length) return `${head}<p class="hint">AI không đề xuất bước nào — file kết quả giống bản gốc.</p>`;
+  const items = steps
+    .map((step) => {
+      const ok = step.status === "applied";
+      const logic = step.category === "requested-logic" ? '<span class="sql-step-logic">ĐỔI LOGIC — theo yêu cầu</span>' : "";
+      const verdict = step.verdict
+        ? `<div class="sql-step-row"><strong>Kiểm độc lập:</strong> ${escapeHtml(VERDICT_TEXT[step.verdict] ?? step.verdict)} — ${escapeHtml(step.verdictReason ?? "")}</div>`
+        : "";
+      return `<li class="sql-step" data-status="${step.status}">
+        <div class="sql-step-title">
+          <span class="sql-step-badge">${ok ? `✔ Bước ${step.index} · dòng ${(step.lines ?? []).join(", ")}` : `✖ Bước ${step.index} · không áp dụng`}</span>
+          ${escapeHtml(step.title)} ${logic}
+        </div>
+        <div class="sql-step-row"><strong>Câu truy vấn:</strong> ${escapeHtml(step.statement)}</div>
+        ${ok ? "" : `<div class="sql-step-row sql-step-why-not"><strong>Lý do không áp dụng:</strong> ${escapeHtml(step.rejectedBecause ?? "")}</div>`}
+        <div class="sql-step-row"><strong>Nhanh hơn vì:</strong> ${escapeHtml(step.why)}</div>
+        <div class="sql-step-row"><strong>Kết quả giữ nguyên vì:</strong> ${escapeHtml(step.equivalence)}</div>
+        ${verdict}
+        ${step.edits
+          .map((edit, position) => {
+            const which = step.edits.length > 1 ? ` ${position + 1}/${step.edits.length}` : "";
+            const where = ok && step.lines?.[position] ? ` · dòng ${step.lines[position]}` : "";
+            return `<div class="sql-step-diff">
+          <div><div class="sql-step-label">Trước${which}${where}</div><pre class="sql-before">${escapeHtml(edit.before.trim())}</pre></div>
+          <div><div class="sql-step-label">Sau</div><pre class="sql-after">${escapeHtml(edit.after.trim())}</pre></div>
+        </div>`;
+          })
+          .join("")}
+      </li>`;
+    })
+    .join("");
+  return `<div class="sql-steps">${head}<ol class="sql-step-list">${items}</ol></div>`;
 }
 
 el.result.addEventListener("click", (event) => {

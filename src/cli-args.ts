@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
+import { OPTIMIZE_DIALECTS, type OptimizeDialect } from "./sql-file.js";
 import type { DbInfo } from "./types.js";
 
 /**
@@ -177,6 +178,49 @@ export function parseSpecDraftArgs(argv: string[]): SpecDraftArgs {
     referencePaths,
     overwrite,
   };
+}
+
+export const SQL_OPTIMIZE_USAGE =
+  "Usage: aidev sql-optimize --file <path.sql> [--dialect auto|sqlserver|mysql|postgresql] [--instructions <text>] [--overwrite]";
+
+/** `aidev sql-optimize`: write `<name>_optimized.sql` next to one SQL file. */
+export interface SqlOptimizeArgs {
+  file: string;
+  /** Unset: detected from the code. */
+  dialect?: OptimizeDialect;
+  /** Replace an existing `_optimized` file. Without it, one stops the command. */
+  overwrite: boolean;
+  /** Business-logic changes the person explicitly asks for. Unset: performance only. */
+  instructions?: string;
+}
+
+export function parseSqlOptimizeArgs(argv: string[]): SqlOptimizeArgs {
+  let file: string | undefined;
+  let dialect: OptimizeDialect | undefined;
+  let overwrite = false;
+  let instructions: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case "--instructions":
+        instructions = argv[++i];
+        break;
+      case "--file":
+        file = argv[++i];
+        break;
+      case "--dialect": {
+        const value = (argv[++i] ?? "").toLowerCase();
+        if (value === "auto") break;
+        if (!OPTIMIZE_DIALECTS.includes(value as OptimizeDialect)) throw new Error(SQL_OPTIMIZE_USAGE);
+        dialect = value as OptimizeDialect;
+        break;
+      }
+      case "--overwrite":
+        overwrite = true;
+        break;
+    }
+  }
+  if (!file?.trim()) throw new Error(SQL_OPTIMIZE_USAGE);
+  return { file, ...(dialect ? { dialect } : {}), overwrite, ...(instructions?.trim() ? { instructions: instructions.trim() } : {}) };
 }
 
 export function parseArgs(argv: string[]): Args {

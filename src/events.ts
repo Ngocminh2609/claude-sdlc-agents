@@ -61,7 +61,35 @@ export interface PipelineBudgetEvent {
   capUsd: number;
 }
 
+/**
+ * `aidev sql-optimize`: every proposed edit with its outcome, sent once before
+ * `finished`, so the UI can show each query's before/after step by step.
+ */
+export interface PipelineSqlStepsEvent {
+  type: "sql-steps";
+  outputPath: string | null;
+  steps: SqlStepView[];
+}
+
+/** One optimization step as the UI shows it: its edits are applied together or not at all. */
+export interface SqlStepView {
+  index: number;
+  status: "applied" | "rejected";
+  statement: string;
+  category: string;
+  title: string;
+  edits: { before: string; after: string }[];
+  why: string;
+  equivalence: string;
+  /** Per edit, where it starts in the file as it was at that edit. */
+  lines?: number[];
+  rejectedBecause?: string;
+  verdict?: string;
+  verdictReason?: string;
+}
+
 export type PipelineEvent =
+  | PipelineSqlStepsEvent
   | PipelineProgressEvent
   | PipelineFinishedEvent
   | PipelineCrashedEvent
@@ -124,9 +152,49 @@ export function parseEventLine(line: string): PipelineEvent | null {
       return typeof candidate.capUsd === "number" && Number.isFinite(candidate.capUsd)
         ? { type: "budget", capUsd: candidate.capUsd }
         : null;
+    case "sql-steps":
+      return parseSqlStepsEvent(candidate);
     default:
       return null;
   }
+}
+
+function parseSqlStepsEvent(candidate: Record<string, unknown>): PipelineSqlStepsEvent | null {
+  if (!Array.isArray(candidate.steps)) return null;
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  const steps: SqlStepView[] = [];
+  for (const raw of candidate.steps as Record<string, unknown>[]) {
+    const fields = ["statement", "category", "title", "why", "equivalence"].map((key) => text(raw?.[key]));
+    const edits = Array.isArray(raw?.edits)
+      ? (raw.edits as Record<string, unknown>[]).filter((edit) => text(edit?.before) !== null && text(edit?.after) !== null)
+      : null;
+    if (
+      typeof raw?.index !== "number" ||
+      (raw.status !== "applied" && raw.status !== "rejected") ||
+      fields.some((value) => value === null) ||
+      !edits ||
+      edits.length !== (raw.edits as unknown[]).length
+    ) {
+      return null;
+    }
+    const [statement, category, title, why, equivalence] = fields as string[];
+    const lines = Array.isArray(raw.lines) && raw.lines.every((line) => typeof line === "number") ? (raw.lines as number[]) : null;
+    steps.push({
+      index: raw.index,
+      status: raw.status,
+      statement,
+      category,
+      title,
+      edits: edits.map((edit) => ({ before: edit.before as string, after: edit.after as string })),
+      why,
+      equivalence,
+      ...(lines ? { lines } : {}),
+      ...(text(raw.rejectedBecause) ? { rejectedBecause: raw.rejectedBecause as string } : {}),
+      ...(text(raw.verdict) ? { verdict: raw.verdict as string } : {}),
+      ...(text(raw.verdictReason) ? { verdictReason: raw.verdictReason as string } : {}),
+    });
+  }
+  return { type: "sql-steps", outputPath: text(candidate.outputPath), steps };
 }
 
 function parseStepEvent(candidate: Record<string, unknown>): PipelineStepEvent | null {

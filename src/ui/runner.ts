@@ -3,8 +3,9 @@ import { existsSync, statSync } from "node:fs";
 import { appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { parseEventLine, EVENT_STREAM_ENV, type PipelineStepEvent } from "../events.js";
+import { parseEventLine, EVENT_STREAM_ENV, type PipelineStepEvent, type SqlStepView } from "../events.js";
 import { buildRoots, type RootRole } from "../target-roots.js";
+import { OPTIMIZE_DIALECTS, optimizedPathOf } from "../sql-file.js";
 import { killTree } from "../kill-tree.js";
 import { addUsage, describeUsage, emptyUsage, subtractUsage, totalTokens, type TokenUsage } from "../token-usage.js";
 import { repoRoot } from "./paths.js";
@@ -75,6 +76,12 @@ export interface RunRequest {
   overwrite?: boolean;
   /** Clone mode only: what to port, in the user's words. */
   what?: string;
+  /** SQL mode only: the file to optimize. */
+  sqlFile?: string;
+  /** SQL mode only: "auto" (detected from the code) or one dialect. */
+  sqlDialect?: string;
+  /** SQL mode only: business-logic changes the person explicitly asks for. Empty: performance only. */
+  sqlInstructions?: string;
   dbMode: DbMode;
   /** Only set when dbMode is "connection". Never leaves this process. */
   dbConnection?: string;
@@ -133,6 +140,8 @@ export interface RunState {
   plan: { coding?: { id: string; label: string }[]; port?: { id: string; label: string }[] };
   /** The run's spend cap, when one was set. */
   budgetCapUsd: number | null;
+  /** SQL mode: every proposed edit and what became of it, and the file written. */
+  sql: { outputPath: string | null; steps: SqlStepView[] } | null;
 }
 
 /** One pipeline step as the mind map draws it (see `step-activity.ts`). */
@@ -166,7 +175,9 @@ export type RunRejectionCode =
   | "request-required"
   | "spec-path-required"
   | "spec-exists"
-  | "sql-folder-required";
+  | "sql-folder-required"
+  | "sql-file-not-found"
+  | "sql-optimized-exists";
 
 /** The CLI flag that names each kind of target folder. */
 const TARGET_FLAG: Record<RootRole, string> = {
@@ -236,6 +247,8 @@ export class PipelineRunner {
 
   start(request: RunRequest): RunState {
     if (this.child) throw new RunnerBusyError();
+
+    if (request.mode === "sql") return this.startSqlOptimize(request);
 
     const clone = request.mode === "clone";
     if (!request.projectPath?.trim() && !request.projectBePath?.trim() && !request.projectFePath?.trim()) {
@@ -362,6 +375,29 @@ export class PipelineRunner {
     return this.launch(args, { mode: "spec", projectPath, specPath, what: null, dbMode: "none" });
   }
 
+  /**
+   * `aidev sql-optimize`: reads one SQL file and writes `<name>_optimized.sql`
+   * next to it. Needs no project folder; the original is never written.
+   */
+  private startSqlOptimize(request: RunRequest): RunState {
+    const file = path.resolve((request.sqlFile ?? "").trim() || ".");
+    if (!request.sqlFile?.trim() || !existsSync(file) || !statSync(file).isFile()) {
+      throw new RunRequestError(`SQL file not found: ${file}`, "sql-file-not-found", file);
+    }
+    const outPath = optimizedPathOf(file);
+    // Asked before any agent runs, so the UI can confirm instead of paying for an answer it then refuses.
+    if (existsSync(outPath) && !request.overwrite) {
+      throw new RunRequestError(`Optimized file already exists: ${outPath}`, "sql-optimized-exists", outPath);
+    }
+    const args = ["sql-optimize", "--file", file];
+    const dialect = (request.sqlDialect ?? "auto").toLowerCase();
+    if (dialect !== "auto" && (OPTIMIZE_DIALECTS as string[]).includes(dialect)) args.push("--dialect", dialect);
+    if (request.sqlInstructions?.trim()) args.push("--instructions", request.sqlInstructions.trim());
+    if (request.overwrite) args.push("--overwrite");
+    this.secret = null;
+    return this.launch(args, { mode: "sql", projectPath: path.dirname(file), specPath: file, what: null, dbMode: "none" });
+  }
+
   private launch(
     args: string[],
     run: Pick<RunState, "mode" | "projectPath" | "specPath" | "what" | "dbMode">,
@@ -388,6 +424,7 @@ export class PipelineRunner {
       steps: {},
       plan: {},
       budgetCapUsd: null,
+      sql: null,
     };
 
     const launcher = path.join(this.toolRoot, "bin", "aidev.js");
@@ -487,6 +524,11 @@ export class PipelineRunner {
       }
       case "budget": {
         this.state.budgetCapUsd = event.capUsd;
+        this.emitState();
+        break;
+      }
+      case "sql-steps": {
+        this.state.sql = { outputPath: event.outputPath, steps: event.steps };
         this.emitState();
         break;
       }
@@ -657,6 +699,7 @@ function idleState(): RunState {
     steps: {},
     plan: {},
     budgetCapUsd: null,
+    sql: null,
   };
 }
 

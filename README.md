@@ -177,6 +177,42 @@ In the UI, *Làm task mới* has five steps: 1. target folders (BE, FE, SQL, opt
 fills in when its draft finishes (open it in your editor to review it), 4. database, 5. check and run.
 The file name comes from the request (`<date>-<first words>.md`).
 
+## Optimizing a SQL file (demo)
+
+```bash
+aidev sql-optimize --file ./SQL/usp_GetCustomerOrders.sql [--dialect auto|sqlserver|mysql|postgresql] [--instructions "<logic change>"] [--overwrite]
+```
+
+Reads one SQL file (procedures, functions, views, queries — up to 100,000 characters) and
+writes `<name>_optimized.sql` next to it; the original is never written. UI: tab *Tối ưu SQL*.
+**Performance only — the business logic must not change** unless `--instructions` (UI: "Yêu
+cầu đổi logic nghiệp vụ") asks for a specific change. Three steps, none with tools
+(`src/stages/sql-optimize.ts`):
+
+1. **Propose.** The model returns *steps*, not a rewritten file. A step is one optimization
+   naming the query it touches, its edits (exact code before → after), why it is faster and
+   why the results stay the same. Edits that only make sense together (a cursor rewrite
+   removes the loop, its variable and moves the work into the INSERT) are one step.
+2. **Check.** A second, independent session judges every step: same results and side effects
+   for every input (`same-results`), `changes-results`, `unsure`, or — only with instructions —
+   `requested-change`. Fail-closed: anything but a confirmation drops the step
+   (`rejectionOf`); no verdict at all writes no file.
+3. **Apply.** Plain code (`applySteps` in `src/sql-file.ts`) applies the confirmed steps in
+   order, all edits of a step or none; an edit whose code does not occur exactly once is not
+   guessed into place. Code no applied edit touches stays byte-for-byte the original.
+
+Every step — applied or not, with the reason — is shown step by step in the progress log, as
+before/after cards in the UI, and in the comment header of the output file (query, line, code
+before and after, why faster, why the same, the check's verdict). Index DDL and rewrites that
+cannot be shown equivalent (e.g. `YEAR(col) = @y` → range, which errors where the original
+returns nothing for years outside 1–9999) are only listed. Dialect detected from syntax unless
+chosen; encoding (UTF-16 LE from SSMS, UTF-8 with/without BOM) and line endings are kept. Not
+connected to a database: anything that depends on the real schema is a warning, not a guess.
+Real run on a two-procedure SQL Server file with business-rule traps (`NOT IN` over a nullable
+column, a `FLOOR` price rule, `UNION` de-duplication): traps untouched, 6 steps applied,
+~$0.59 on Haiku. The check's verdicts are a model's judgement and varied between two runs of
+the same file (`SET NOCOUNT ON` was `unsure` once, `same-results` once).
+
 ## Cloning from a sample project
 
 Without `--reference`, every stage can see exactly one directory: the target project.
