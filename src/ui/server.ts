@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { config } from "../config.js";
 import { browse, BrowseError, type BrowseKind } from "./browse.js";
+import { refusalOf } from "./request-guard.js";
 import { deletePreset, listPresets, savePreset } from "./presets.js";
 import { publicDir, repoRoot, specsDir } from "./paths.js";
 import {
@@ -65,6 +66,8 @@ const server = createServer((req, res) => {
 });
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const refused = refusalOf(req, options.port);
+  if (refused) return sendJson(res, 403, { error: `Refused: ${refused}.` });
   const url = new URL(req.url ?? "/", `http://${HOST}`);
   const route = `${req.method} ${url.pathname}`;
 

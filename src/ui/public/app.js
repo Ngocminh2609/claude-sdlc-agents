@@ -270,9 +270,12 @@ let runState = null;
 // --- HTTP ------------------------------------------------------------------
 
 async function api(path, options = {}) {
+  // The server only takes JSON for anything but a read (see request-guard.ts), body or not.
+  const changes = (options.method ?? "GET") !== "GET";
   const response = await fetch(path, {
     ...options,
-    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    headers: changes || options.body ? { "Content-Type": "application/json" } : undefined,
+    ...(changes && options.body === undefined ? { body: "{}" } : {}),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
