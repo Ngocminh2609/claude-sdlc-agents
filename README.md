@@ -471,6 +471,13 @@ without that variable the CLI prints exactly what it always has.
 credential indicator in the header will read "no credential" even though runs
 themselves still pick one up from the launcher.
 
+**One run per tab.** *Làm task mới* (with *Sinh spec*), *Clone* and *Tối ưu SQL* each have their
+own runner on the server (`src/ui/server.ts`) — own state, log, progress block and Stop button; a
+tab never shows another tab's run. A SQL optimization runs alongside anything (it only reads its
+file and writes `<name>_optimized.sql`). Task mới and Clone both write into project folders, so
+only one of them runs at a time: starting the other is refused (`busy-other-pipeline`) and its tab
+says which one is running.
+
 **Progress mind map.** The progress card shows the run as a mind map by default
 (toggle "Sơ đồ tư duy / Dải giai đoạn"): the run, its stages, and under a stage
 the units it works through — each Coding task with its build check, each Clone

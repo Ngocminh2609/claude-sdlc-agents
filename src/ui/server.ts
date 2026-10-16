@@ -35,7 +35,24 @@ const HOST = "127.0.0.1";
 const DEFAULT_PORT = 4319;
 const MAX_BODY_BYTES = 2_000_000; // A spec is prose; 2MB is far past any real one.
 
-const runner = new PipelineRunner();
+/**
+ * One runner per tab, each with its own state, log and Stop: the "task mới"
+ * tab (feature runs and spec drafts), the clone tab and the SQL tab. A SQL
+ * optimization only reads its file and writes <name>_optimized.sql, so it runs
+ * alongside anything. The two pipelines write into project folders, so only
+ * one of them runs at a time (`startRun`).
+ */
+type Channel = "feature" | "clone" | "sql";
+const CHANNELS: Channel[] = ["feature", "clone", "sql"];
+const runners: Record<Channel, PipelineRunner> = {
+  feature: new PipelineRunner(undefined, "feature"),
+  clone: new PipelineRunner(undefined, "clone"),
+  sql: new PipelineRunner(undefined, "sql"),
+};
+const channelOf = (mode: RunMode): Channel => (mode === "sql" ? "sql" : mode === "clone" ? "clone" : "feature");
+const asChannel = (value: unknown): Channel => (CHANNELS.includes(value as Channel) ? (value as Channel) : "feature");
+/** The other pipeline that writes into project folders, if this channel has one. */
+const rivalOf = (channel: Channel): Channel | null => (channel === "feature" ? "clone" : channel === "clone" ? "feature" : null);
 
 interface Options {
   port: number;
@@ -100,7 +117,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       });
 
     case "GET /api/state":
-      return sendJson(res, 200, { state: runner.getState(), lines: runner.getLines() });
+      return sendJson(res, 200, {
+        channels: Object.fromEntries(CHANNELS.map((channel) => [channel, { state: runners[channel].getState(), lines: runners[channel].getLines() }])),
+      });
 
     case "GET /api/stream":
       return streamEvents(req, res);
@@ -108,9 +127,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     case "POST /api/run":
       return startRun(req, res);
 
-    case "POST /api/stop":
-      runner.stop();
-      return sendJson(res, 200, { state: runner.getState() });
+    case "POST /api/stop": {
+      const channel = asChannel((await readJsonBody(req)).channel);
+      runners[channel].stop();
+      return sendJson(res, 200, { channel, state: runners[channel].getState() });
+    }
 
     case "GET /api/browse":
       return browsePath(res, url);
@@ -154,8 +175,15 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
     return sendJson(res, 400, { error: `Unknown mode: ${String(body.mode)}` });
   }
 
+  const channel = channelOf(mode);
+  const rival = rivalOf(channel);
+  if (rival && runners[rival].isRunning()) {
+    const message = `A ${rival} run is writing into project folders; wait for it or stop it first.`;
+    return sendJson(res, 409, { error: message, code: "busy-other-pipeline", detail: rival });
+  }
+
   try {
-    const state = runner.start({
+    const state = runners[channel].start({
       mode,
       specPath: String(body.specPath ?? ""),
       what: String(body.what ?? ""),
@@ -189,7 +217,7 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
         ? body.referencePaths.filter((entry): entry is string => typeof entry === "string")
         : [],
     });
-    sendJson(res, 200, { state });
+    sendJson(res, 200, { channel, state });
   } catch (error) {
     // `code` is what the UI renders from; `error` is the English fallback.
     if (error instanceof RunnerBusyError) {
@@ -212,16 +240,18 @@ function streamEvents(req: IncomingMessage, res: ServerResponse): void {
     "X-Accel-Buffering": "no",
   });
 
-  const send = (event: RunnerEvent): void => {
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  const send = (channel: Channel, event: RunnerEvent): void => {
+    res.write(`data: ${JSON.stringify({ ...event, channel })}\n\n`);
   };
 
-  // A browser that connects mid-run must not see an empty console: replay the
-  // buffer first, then follow.
-  send({ type: "state", state: runner.getState() });
-  for (const line of runner.getLines()) send({ type: "line", line });
-
-  const unsubscribe = runner.subscribe(send);
+  // A browser that connects mid-run must not see an empty console: replay
+  // every tab's buffer first, then follow them all.
+  for (const channel of CHANNELS) {
+    send(channel, { type: "state", state: runners[channel].getState() });
+    for (const line of runners[channel].getLines()) send(channel, { type: "line", line });
+  }
+  const unsubscribers = CHANNELS.map((channel) => runners[channel].subscribe((event) => send(channel, event)));
+  const unsubscribe = () => unsubscribers.forEach((stop) => stop());
   const heartbeat = setInterval(() => res.write(": ping\n\n"), 25_000);
 
   req.on("close", () => {
@@ -413,7 +443,7 @@ server.listen(options.port, HOST, () => {
 // worse than stopping it.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    runner.stop();
+    for (const channel of CHANNELS) runners[channel].stop();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   });

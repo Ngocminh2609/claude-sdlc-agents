@@ -174,6 +174,7 @@ export type RunnerEvent = { type: "line"; line: RunLine } | { type: "state"; sta
  */
 export type RunRejectionCode =
   | "busy"
+  | "busy-other-pipeline"
   | "spec-not-found"
   | "project-not-found"
   | "schema-not-found"
@@ -198,10 +199,11 @@ const TARGET_FLAG: Record<RootRole, string> = {
 };
 
 export class RunnerBusyError extends Error {
-  readonly code: RunRejectionCode = "busy";
-
-  constructor() {
-    super("A run is already in progress. Stop it before starting another.");
+  constructor(
+    readonly code: RunRejectionCode = "busy",
+    message = "A run is already in progress. Stop it before starting another.",
+  ) {
+    super(message);
     this.name = "RunnerBusyError";
   }
 }
@@ -225,9 +227,18 @@ export class PipelineRunner {
   private lines: RunLine[] = [];
   private listeners = new Set<(event: RunnerEvent) => void>();
   private secret: string | null = null;
-  private state: RunState = idleState();
+  private state: RunState;
 
-  constructor(private readonly toolRoot: string = repoRoot) {}
+  /**
+   * @param idleMode what the idle state names before this runner's first run —
+   *   the UI keeps one runner per tab, so an idle SQL runner reads as "sql".
+   */
+  constructor(
+    private readonly toolRoot: string = repoRoot,
+    idleMode: RunMode = "feature",
+  ) {
+    this.state = idleState(idleMode);
+  }
 
   subscribe(listener: (event: RunnerEvent) => void): () => void {
     this.listeners.add(listener);
@@ -705,11 +716,11 @@ export class PipelineRunner {
   }
 }
 
-function idleState(): RunState {
+function idleState(mode: RunMode = "feature"): RunState {
   return {
     id: null,
     status: "idle",
-    mode: "feature",
+    mode,
     startedAt: null,
     finishedAt: null,
     projectPath: null,

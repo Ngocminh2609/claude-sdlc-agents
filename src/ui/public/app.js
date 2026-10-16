@@ -248,7 +248,9 @@ const NEXT_STEPS = {
 };
 
 const RUN_ERROR_TEXT = {
-  busy: () => "Đang có một lần chạy khác. Bấm Dừng để kết thúc nó trước khi chạy lần mới.",
+  busy: () => "Tab này đang có một lần chạy. Bấm Dừng để kết thúc nó trước khi chạy lần mới.",
+  "busy-other-pipeline": (detail) =>
+    `Luồng ${FLOW_TEXT[detail] ?? detail} đang chạy và ghi vào thư mục dự án — chờ nó xong hoặc dừng nó ở tab của nó.`,
   "spec-not-found": (detail) => `Không tìm thấy file spec: ${detail}`,
   "project-not-found": (detail) => `Không tìm thấy thư mục dự án: ${detail}`,
   "schema-not-found": (detail) => `Không tìm thấy file schema: ${detail}`,
@@ -269,10 +271,17 @@ let appConfig = null;
 let stagesByMode = { feature: [], clone: [], sql: [] };
 /** The flow tab the user last had open — not necessarily what is running. */
 let activeFlow = "feature";
-let lines = [];
-let currentRunId = null;
-let lastSeq = 0;
+/**
+ * One run per tab, kept apart: "feature" (task mới and spec drafts), "clone"
+ * and "sql" each have their own server-side runner, state and log. The progress
+ * block shows the open tab's own run, never another tab's.
+ */
+const CHANNELS = ["feature", "clone", "sql"];
+const channelOfMode = (mode) => (mode === "sql" ? "sql" : mode === "clone" ? "clone" : "feature");
+const channels = Object.fromEntries(CHANNELS.map((channel) => [channel, { state: null, lines: [], runId: null, lastSeq: 0 }]));
+/** The run the progress block is showing: the open run tab's. */
 let runState = null;
+const shownLines = () => channels[activeFlow]?.lines ?? [];
 
 // --- HTTP ------------------------------------------------------------------
 
@@ -336,9 +345,17 @@ function showTab(name) {
     // One progress/log block serves every run tab: it follows the tab that is
     // open, so each form keeps its own run view directly beneath it.
     $(`tab-${name}`).append(el.monitor);
-    if (runState) renderState(runState);
+    showChannel();
   }
   if (name === "history") loadRuns();
+}
+
+/** Puts the open tab's own run (state and log) into the progress block. */
+function showChannel() {
+  const channel = channels[activeFlow];
+  if (!channel) return;
+  if (channel.state) renderState(channel.state);
+  renderLog();
 }
 
 function restoreTab() {
@@ -417,7 +434,9 @@ function syncDbMode() {
   el.dbSchemaRow.classList.toggle("hidden", mode !== "schema-file");
 }
 
-const isRunning = () => runState?.status === "running";
+const isRunning = (channel) => channels[channel]?.state?.status === "running";
+/** Task mới and clone both write into project folders: one of them at a time. */
+const pipelineBusy = () => isRunning("feature") || isRunning("clone");
 
 /** Whether a flow's own inputs (besides the target folders) are filled in. */
 const FLOW_INPUTS_FILLED = {
@@ -439,7 +458,7 @@ const FLOW_MISSING_HINT = {
  * tree with no backup, so this is the one piece of friction worth keeping.
  */
 function syncRunButtons() {
-  const running = isRunning();
+  const running = pipelineBusy();
   for (const flow of FLOWS) {
     const form = forms[flow];
     const hasTarget = form.projectBe.value.trim() || form.projectFe.value.trim();
@@ -470,12 +489,13 @@ function syncRunButtons() {
   // A test database must be confirmed as one: every step runs on it (rolled back, but still run).
   const usesDb = Boolean(el.sqlVerifyDb.value.trim());
   el.sqlTestDbRow.classList.toggle("hidden", !usesDb);
-  const canOptimize = el.sqlFile.value.trim() && (!usesDb || el.sqlTestDbConfirm.checked) && !running;
+  const sqlRunning = isRunning("sql");
+  const canOptimize = el.sqlFile.value.trim() && (!usesDb || el.sqlTestDbConfirm.checked) && !sqlRunning;
   el.sqlStart.disabled = !canOptimize;
   el.sqlStart.title = canOptimize
     ? "AI đọc file SQL và ghi bản tối ưu ra file mới"
-    : running
-      ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
+    : sqlRunning
+      ? "Đang có một lần tối ưu SQL — xem khối Tiến trình bên dưới"
       : usesDb
         ? "Tick xác nhận đây là DB thử nghiệm"
         : "Chọn file SQL trước";
@@ -1012,7 +1032,7 @@ function showRunError(form, error) {
 el.runStop.addEventListener("click", async () => {
   if (!confirm("Dừng lần chạy này? Các file AI đã ghi vào dự án sẽ không được hoàn tác.")) return;
   el.runStop.disabled = true;
-  await api("/api/stop", { method: "POST" }).catch(() => {});
+  await api("/api/stop", { method: "POST", body: JSON.stringify({ channel: activeFlow }) }).catch(() => {});
 });
 
 function renderState(state) {
@@ -1041,7 +1061,6 @@ function renderState(state) {
   renderStages(state);
   renderProgressMap(state);
   renderResult(state);
-  useFinishedDraft(state);
 }
 
 /** Whether the block is showing a real run rather than the idle placeholder. */
@@ -1059,14 +1078,12 @@ function renderRunSubject(state) {
   el.runFlow.dataset.flow = state.mode;
   el.runSubject.textContent = shown ? (state.mode === "clone" ? state.what : baseName(state.specPath)) ?? "" : "";
 
-  const elsewhere = shown && flowOfMode(state.mode) !== activeFlow;
-  el.runElsewhere.classList.toggle("hidden", !elsewhere);
-  if (elsewhere) {
-    const other = FLOW_TEXT[state.mode] ?? state.mode;
-    el.runElsewhere.innerHTML =
-      state.status === "running"
-        ? `Đang chạy luồng <strong>${escapeHtml(other)}</strong> (mở ở tab bên kia). Nút chạy của tab này bị khoá cho tới khi lần đó xong hoặc bị dừng.`
-        : `Đây là lần chạy gần nhất, thuộc luồng <strong>${escapeHtml(other)}</strong> — không phải của form bên trên.`;
+  // Task mới and clone write into project folders, so one locks the other's Run button.
+  const rival = activeFlow === "feature" ? "clone" : activeFlow === "clone" ? "feature" : null;
+  const rivalRunning = rival !== null && isRunning(rival);
+  el.runElsewhere.classList.toggle("hidden", !rivalRunning);
+  if (rivalRunning) {
+    el.runElsewhere.innerHTML = `Luồng <strong>${escapeHtml(FLOW_TEXT[rival])}</strong> đang chạy ở tab của nó và ghi vào thư mục dự án — nút chạy của tab này bị khoá tới khi lần đó xong hoặc bị dừng. Tối ưu SQL không bị ảnh hưởng.`;
   }
 }
 
@@ -1254,7 +1271,7 @@ el.result.addEventListener("click", (event) => {
 
 function renderLog() {
   el.log.innerHTML = "";
-  const visible = lines.filter(passesLogFilter);
+  const visible = shownLines().filter(passesLogFilter);
   if (!visible.length) {
     el.log.innerHTML = '<div class="log-empty">Chưa có dòng nào.</div>';
     return;
@@ -1291,7 +1308,7 @@ function scrollLog() {
 el.logOnlyProgress.addEventListener("change", renderLog);
 
 $("log-copy").addEventListener("click", async () => {
-  await navigator.clipboard.writeText(lines.map((line) => line.text).join("\n"));
+  await navigator.clipboard.writeText(shownLines().map((line) => line.text).join("\n"));
   const button = $("log-copy");
   button.textContent = "Đã chép";
   setTimeout(() => (button.textContent = "Sao chép"), 1200);
@@ -1304,24 +1321,35 @@ function connectStream() {
   source.onmessage = (message) => {
     const event = JSON.parse(message.data);
 
+    const channel = channels[event.channel ?? "feature"];
+    if (!channel) return;
+    const shown = (event.channel ?? "feature") === activeFlow;
+
     if (event.type === "state") {
       // A new run resets the sequence, and a reconnect replays the buffer —
       // keying on the run id keeps both cases from duplicating or dropping.
-      if (event.state.id !== currentRunId) {
-        currentRunId = event.state.id;
-        lines = [];
-        lastSeq = 0;
-        renderLog();
+      if (event.state.id !== channel.runId) {
+        channel.runId = event.state.id;
+        channel.lines = [];
+        channel.lastSeq = 0;
+        if (shown) renderLog();
       }
-      renderState(event.state);
+      channel.state = event.state;
+      // A finished spec draft fills step 3 whichever tab is open.
+      if (event.channel === "feature") useFinishedDraft(event.state);
+      if (shown) renderState(event.state);
+      else {
+        syncRunButtons();
+        if (runState) renderRunSubject(runState);
+      }
       return;
     }
 
     if (event.type === "line") {
-      if (event.line.seq <= lastSeq) return;
-      lastSeq = event.line.seq;
-      lines.push(event.line);
-      appendLine(event.line);
+      if (event.line.seq <= channel.lastSeq) return;
+      channel.lastSeq = event.line.seq;
+      channel.lines.push(event.line);
+      if (shown) appendLine(event.line);
     }
   };
 }
@@ -1539,11 +1567,18 @@ async function init() {
   syncRunButtons();
 
   const initial = await api("/api/state");
-  currentRunId = initial.state.id;
-  lines = initial.lines;
-  lastSeq = lines.at(-1)?.seq ?? 0;
-  renderState(initial.state);
-  renderLog();
+  for (const name of CHANNELS) {
+    const loaded = initial.channels?.[name];
+    if (!loaded) continue;
+    Object.assign(channels[name], {
+      state: loaded.state,
+      lines: loaded.lines,
+      runId: loaded.state.id,
+      lastSeq: loaded.lines.at(-1)?.seq ?? 0,
+    });
+  }
+  syncRunButtons();
+  showChannel();
 
   await loadPresets();
   connectStream();
