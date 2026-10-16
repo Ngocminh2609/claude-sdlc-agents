@@ -17,10 +17,12 @@ import {
   renderOptimizedFile,
   sqlFilesOf,
   writeSqlFile,
+  type OptimizeDialect,
   type StepOutcome,
 } from "./sql-file.js";
 import { planFileFor, readPlanFile, type PlanSummary } from "./sql-plan.js";
-import { openProbe, type SqlProbe } from "./sql-probe.js";
+import { splitSqlChunks } from "./sql-chunks.js";
+import { openProbe, type ProbeRun, type SqlProbe } from "./sql-probe.js";
 import { applyStepsVerified, parseTestCalls, testPlanFor } from "./sql-verify.js";
 
 /**
@@ -144,9 +146,7 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
   );
 
   const schema = await schemaFor(source.text, context, io);
-  const input = {
-    sql: source.text,
-    fileName: path.basename(file),
+  const common = {
     dialect: detected,
     dialectChosen: Boolean(args.dialect),
     ...(args.instructions ? { instructions: args.instructions } : {}),
@@ -154,51 +154,113 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
     ...(executionPlan ? { plan: executionPlan.text } : {}),
   };
 
-  let proposal;
-  let checks;
-  try {
-    io.onProgress("SQL optimize: 3/4 optimizing — proposing steps, each naming its query and the exact code before and after");
-    proposal = await proposeSqlSteps(input);
-    const total = proposal.steps.length;
-    io.onProgress(`SQL optimize: ${total} step(s) proposed`);
-    proposal.steps.forEach((step, index) => io.onProgress(`SQL optimize: step ${index + 1}/${total} proposed — ${step.statement} — ${step.title}`));
-    if (total) io.onProgress(`SQL optimize: independent check of ${total} step(s) — do the results stay exactly the same?`);
-    checks = total ? await checkSqlSteps(input, proposal.steps) : new Map();
-  } catch (error) {
-    // Fail-closed: without a check, nothing is applied and no file is written.
-    if (error instanceof StageError) return { ...base, error: `${error.message} — no file written` };
-    throw error;
+  // A large file goes part by part (routines, batches); the parts reassemble into one file.
+  const chunks = splitSqlChunks(source.text);
+  const parts = chunks.map((chunk) => source.text.slice(chunk.start, chunk.end));
+  if (chunks.length > 1) {
+    io.onProgress(`SQL optimize: ${chunks.length} part(s) — each is optimized and checked on its own, then they are put back together`);
   }
 
-  const numbered = proposal.steps.map((step, index) => ({
-    ...step,
-    index: index + 1,
-    ...(checks.get(index + 1) ? { check: checks.get(index + 1) } : {}),
-  }));
-  const rejected = new Map<number, string>();
-  for (const step of numbered) {
-    const reason = rejectionOf(step, step.check, args.instructions);
-    if (reason) rejected.set(step.index, reason);
-  }
+  const testPlan = context.probe ? testPlanFor(source.text, context.calls) : null;
+  const verifying = Boolean(context.probe && testPlan && !("skip" in testPlan) && context.probe.dialect !== "mysql");
+  let baseline: ProbeRun | undefined;
+  let baselineMs = 0;
+  let keptMs: number | undefined;
+  let baselineError: string | undefined;
 
-  let text: string;
-  let outcomes: StepOutcome[];
-  let verification: string | undefined;
-  const plan = context.probe ? testPlanFor(source.text, context.calls) : null;
-  if (context.probe && plan && !("skip" in plan) && context.probe.dialect !== "mysql") {
-    const verified = await applyStepsVerified({ original: source.text, steps: numbered, rejectedUpFront: rejected, probe: context.probe, plan, repeats: 3, onProgress: io.onProgress });
-    ({ text, outcomes } = verified);
-    verification = verified.baselineError
-      ? `not compared — the original does not run on the test database: ${verified.baselineError}`
-      : `${plan.describe}, rolled back; ${verified.baselineMs} ms → ${outcomes.filter((o) => o.status === "applied").at(-1)?.db?.msAfter ?? verified.baselineMs} ms`;
-  } else {
-    ({ text, outcomes } = applySteps(source.text, numbered, rejected));
-    if (context.probe) {
-      verification =
-        context.probe.dialect === "mysql"
-          ? "not compared — MySQL commits CREATE/ALTER at once, so no rolled-back test run"
-          : `not compared — ${plan && "skip" in plan ? plan.skip : "no test plan"}`;
+  const outcomes: StepOutcome[] = [];
+  const warnings: string[] = [];
+  const indexSuggestions: string[] = [];
+  let dialect = detected;
+  let failedParts = 0;
+
+  io.onProgress("SQL optimize: 3/4 optimizing — proposing steps, each naming its query and the exact code before and after");
+  for (const [i, chunk] of chunks.entries()) {
+    const where = chunks.length > 1 ? ` part ${i + 1}/${chunks.length} (${chunk.label})` : "";
+    const input = {
+      ...common,
+      sql: parts[i],
+      fileName: `${path.basename(file)}${where}`,
+      ...(chunk.context ? { context: chunk.context } : {}),
+    };
+
+    let proposal;
+    let checks;
+    try {
+      if (where) io.onProgress(`SQL optimize:${where} — ${parts[i].length.toLocaleString("en-US")} characters`);
+      proposal = await proposeSqlSteps(input);
+      const total = proposal.steps.length;
+      const first = outcomes.length + 1;
+      io.onProgress(`SQL optimize: ${total} step(s) proposed${where}`);
+      proposal.steps.forEach((step, index) => io.onProgress(`SQL optimize: step ${first + index} proposed — ${step.statement} — ${step.title}`));
+      if (total) io.onProgress(`SQL optimize: independent check of ${total} step(s)${where} — do the results stay exactly the same?`);
+      checks = total ? await checkSqlSteps(input, proposal.steps) : new Map();
+    } catch (error) {
+      // Fail-closed per part: without a check nothing of this part is applied; it stays as it was.
+      if (!(error instanceof StageError)) throw error;
+      failedParts++;
+      warnings.push(`Part ${i + 1}/${chunks.length} (${chunk.label}) was left unchanged: ${error.message}`);
+      io.onProgress(`SQL optimize:${where || " the file"} left unchanged — ${error.message}`);
+      continue;
     }
+    dialect = proposal.dialect ?? dialect;
+    warnings.push(...proposal.warnings);
+    indexSuggestions.push(...proposal.indexSuggestions);
+
+    const offset = outcomes.length;
+    const numbered = proposal.steps.map((step, index) => ({
+      ...step,
+      index: offset + index + 1,
+      ...(checks.get(index + 1) ? { check: checks.get(index + 1) } : {}),
+    }));
+    const rejected = new Map<number, string>();
+    for (const step of numbered) {
+      const reason = rejectionOf(step, step.check, args.instructions);
+      if (reason) rejected.set(step.index, reason);
+    }
+
+    // Lines are reported in the output file: count what the earlier (already edited) parts hold.
+    const lineOffset = parts.slice(0, i).join("").split("\n").length - 1;
+    let partText: string;
+    let partOutcomes: StepOutcome[];
+    if (verifying && context.probe && testPlan && !("skip" in testPlan)) {
+      const verified = await applyStepsVerified({
+        original: parts[i],
+        steps: numbered,
+        rejectedUpFront: rejected,
+        probe: context.probe,
+        plan: testPlan,
+        repeats: 3,
+        onProgress: io.onProgress,
+        wrap: (part) => [...parts.slice(0, i), part, ...parts.slice(i + 1)].join(""),
+        ...(baseline ? { baseline } : {}),
+        ...(keptMs !== undefined ? { startMs: keptMs } : {}),
+        ...(chunk.context ? { guardContext: chunk.context } : {}),
+      });
+      ({ text: partText, outcomes: partOutcomes } = verified);
+      baseline = verified.baseline;
+      baselineMs = verified.baselineMs;
+      keptMs = verified.keptMs;
+      baselineError = verified.baselineError;
+    } else {
+      ({ text: partText, outcomes: partOutcomes } = applySteps(parts[i], numbered, rejected, chunk.context ?? ""));
+    }
+    parts[i] = partText;
+    outcomes.push(...partOutcomes.map((step) => (step.lines ? { ...step, lines: step.lines.map((line) => line + lineOffset) } : step)));
+  }
+  if (failedParts === chunks.length) return { ...base, error: `${warnings.at(-1) ?? "every part failed"} — no file written` };
+  const text = parts.join("");
+
+  let verification: string | undefined;
+  if (verifying) {
+    verification = baselineError
+      ? `not compared — the original does not run on the test database: ${baselineError}`
+      : `${(testPlan as { describe: string }).describe}, rolled back; ${baselineMs} ms → ${keptMs ?? baselineMs} ms`;
+  } else if (context.probe) {
+    verification =
+      context.probe.dialect === "mysql"
+        ? "not compared — MySQL commits CREATE/ALTER at once, so no rolled-back test run"
+        : `not compared — ${testPlan && "skip" in testPlan ? testPlan.skip : "no test plan"}`;
   }
   if (verification) io.onProgress(`SQL verify: ${verification}`);
   for (const step of outcomes) {
@@ -210,10 +272,10 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
   }
 
   const report = {
-    dialect: proposal.dialect,
+    dialect: (dialect ?? "sqlserver") as OptimizeDialect,
     steps: outcomes,
-    warnings: [...(verification ? [`Test database: ${verification}.`] : []), ...proposal.warnings],
-    indexSuggestions: proposal.indexSuggestions,
+    warnings: [...(verification ? [`Test database: ${verification}.`] : []), ...warnings],
+    indexSuggestions: [...new Set(indexSuggestions)],
   };
   io.onProgress(`SQL optimize: 4/4 writing the optimized file`);
   await writeSqlFile(outPath, renderOptimizedFile(report, text, file), source);
@@ -221,10 +283,10 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
   return {
     source: file,
     outputPath: outPath,
-    dialect: proposal.dialect,
+    dialect: report.dialect,
     ...(verification ? { verification } : {}),
     ...(planFile ? { plan: executionPlan ? `${path.basename(planFile)} (${executionPlan.format}, ${executionPlan.operators} operator(s))` : `${path.basename(planFile)} (unreadable)` } : {}),
-    warnings: proposal.warnings,
+    warnings,
     steps: outcomes.map(({ check, db, ...step }) => ({
       ...step,
       ...(check ? { verdict: check.verdict, verdictReason: check.reason } : {}),

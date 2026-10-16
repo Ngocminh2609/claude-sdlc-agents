@@ -89,6 +89,11 @@ indexes the plan reports go to "indexSuggestions" (never into the code), unless
 the schema shows an equivalent index already exists. A plan explains cost; it
 never justifies changing results.
 
+A large file is sent in parts. The "SQL" section is then one part; a "Context"
+section, when present, holds the header and declarations of the routine the part
+is cut from. Use it to understand parameters and variables, but edit only code in
+the "SQL" section: every "before" must be copied from it.
+
 Each step is ONE optimization, reviewed and applied all-or-nothing:
 - "edits": the code changes it needs, applied in order. Each "before" is code
   copied VERBATIM from the file, long enough to occur only once, as the file is
@@ -191,6 +196,8 @@ export interface SqlOptimizeInput {
   schema?: string;
   /** The execution plan's hotspots, summarized by plain code (`sql-plan.ts`). */
   plan?: string;
+  /** For one piece of a routine split across parts: its header and declarations, read-only. */
+  context?: string;
 }
 
 export interface SqlProposal {
@@ -204,6 +211,12 @@ function optionsFor(systemPrompt: string, stage: "sqlOptimize" | "sqlCheck"): Op
   // The file is in the prompt; there is nothing to read and nothing to run.
   const model = stage === "sqlCheck" ? config.sqlCheckModel : config.model;
   return { systemPrompt, allowedTools: [], model, ...limitsOf(stage) };
+}
+
+function contextSection(context: string | undefined): string[] {
+  return context?.trim()
+    ? ["", "--- Context (read-only: the routine this part is cut from — its header and declarations) ---", context.trim()]
+    : [];
 }
 
 function planSection(plan: string | undefined): string[] {
@@ -230,6 +243,7 @@ export async function proposeSqlSteps(input: SqlOptimizeInput): Promise<SqlPropo
     ...requestedSection(input.instructions),
     ...planSection(input.plan),
     ...schemaSection(input.schema),
+    ...contextSection(input.context),
     "",
     "--- SQL ---",
     input.sql,
@@ -248,12 +262,13 @@ export async function proposeSqlSteps(input: SqlOptimizeInput): Promise<SqlPropo
 
 /** The checker's verdict per step number (1-based); a step it skipped has none. */
 export async function checkSqlSteps(
-  input: Pick<SqlOptimizeInput, "sql" | "instructions" | "schema">,
+  input: Pick<SqlOptimizeInput, "sql" | "instructions" | "schema" | "context">,
   steps: ProposedStep[],
 ): Promise<Map<number, { verdict: StepVerdict; reason: string }>> {
   const prompt = [
     ...requestedSection(input.instructions),
     ...schemaSection(input.schema),
+    ...contextSection(input.context),
     "",
     "--- Original SQL ---",
     input.sql,

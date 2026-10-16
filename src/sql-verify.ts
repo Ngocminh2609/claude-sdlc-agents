@@ -93,6 +93,7 @@ export function compareRuns(base: ProbeRun, next: ProbeRun): { same: boolean; de
  * dropped one may then no longer find its code — it is rejected, not guessed.
  */
 export async function applyStepsVerified(opts: {
+  /** The text the steps edit: the whole file, or one part of it (see `wrap`). */
   original: string;
   steps: (ProposedStep & { index: number; check?: StepOutcome["check"] })[];
   rejectedUpFront: Map<number, string>;
@@ -100,23 +101,37 @@ export async function applyStepsVerified(opts: {
   plan: TestPlan;
   repeats: number;
   onProgress: (message: string) => void;
-}): Promise<{ text: string; outcomes: StepOutcome[]; baselineMs: number; baselineError?: string }> {
-  const { original, steps, rejectedUpFront, probe, plan, repeats, onProgress } = opts;
-  const run = (text: string) => probe.runRolledBack(plan.setupOf(text), plan.callsOf(text), repeats);
+  /** For one part of a split file: the whole file with this part's text in place. The database always runs the whole file. */
+  wrap?: (part: string) => string;
+  /** The original's run, when an earlier part already made it; compared against, never re-run. */
+  baseline?: ProbeRun;
+  /** The time of the file as the earlier parts left it, for this part's first step. */
+  startMs?: number;
+  /** Read-only lines around a part, so the reference guard sees its declarations. */
+  guardContext?: string;
+}): Promise<{ text: string; outcomes: StepOutcome[]; baseline: ProbeRun; baselineMs: number; keptMs: number; baselineError?: string }> {
+  const { original, steps, rejectedUpFront, probe, plan, repeats, onProgress, wrap = (part) => part, guardContext = "" } = opts;
+  const run = (text: string) => {
+    const whole = wrap(text);
+    return probe.runRolledBack(plan.setupOf(whole), plan.callsOf(whole), repeats);
+  };
 
-  onProgress(`SQL verify: baseline — running the original on the test database (${plan.describe}, rolled back)`);
-  const baseline = await run(original);
+  let baseline = opts.baseline;
+  if (!baseline) {
+    onProgress(`SQL verify: baseline — running the original on the test database (${plan.describe}, rolled back)`);
+    baseline = await run(original);
+    if (!baseline.setupError) onProgress(`SQL verify: baseline ${totalMs(baseline)} ms`);
+  }
   if (baseline.setupError) {
-    const { text, outcomes } = applySteps(original, steps, rejectedUpFront);
-    return { text, outcomes, baselineMs: 0, baselineError: baseline.setupError };
+    const { text, outcomes } = applySteps(original, steps, rejectedUpFront, guardContext);
+    return { text, outcomes, baseline, baselineMs: 0, keptMs: 0, baselineError: baseline.setupError };
   }
   let keptText = original;
-  let keptMs = totalMs(baseline);
-  onProgress(`SQL verify: baseline ${keptMs} ms`);
+  let keptMs = opts.startMs ?? totalMs(baseline);
 
   const outcomes: StepOutcome[] = [];
   for (const step of steps) {
-    const { text: candidate, outcomes: [outcome] } = applySteps(keptText, [step], rejectedUpFront);
+    const { text: candidate, outcomes: [outcome] } = applySteps(keptText, [step], rejectedUpFront, guardContext);
     if (outcome.status === "rejected") {
       outcomes.push(outcome);
       continue;
@@ -139,5 +154,5 @@ export async function applyStepsVerified(opts: {
     keptMs = db.msAfter;
     outcomes.push({ ...outcome, db });
   }
-  return { text: keptText, outcomes, baselineMs: totalMs(baseline) };
+  return { text: keptText, outcomes, baseline, baselineMs: totalMs(baseline), keptMs };
 }

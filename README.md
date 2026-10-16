@@ -183,7 +183,7 @@ The file name comes from the request (`<date>-<first words>.md`).
 aidev sql-optimize --file ./SQL/usp_GetCustomerOrders.sql [--dialect auto|sqlserver|mysql|postgresql] [--instructions "<logic change>"] [--overwrite]
 ```
 
-Reads one SQL file (procedures, functions, views, queries — up to 100,000 characters) and
+Reads one SQL file (procedures, functions, views, queries — up to 1,000,000 characters; a file over 60,000 is split by plain code (`src/sql-chunks.ts`) at procedure/function/view boundaries and GO/DELIMITER batches, small units merged, and one procedure over 150,000 cut at statement ends with its header and DECLARE lines as read-only context — each part proposed, checked and applied on its own, then reassembled; with a test database every step still runs against the whole file) and
 writes `<name>_optimized.sql` next to it; the original is never written. UI: tab *Tối ưu SQL*.
 **Performance only — the business logic must not change** unless `--instructions` (UI: "Yêu
 cầu đổi logic nghiệp vụ") asks for a specific change. Three steps, none with tools

@@ -14,8 +14,11 @@ import type { SqlDialect } from "./database.js";
 export type OptimizeDialect = Extract<SqlDialect, "sqlserver" | "mysql" | "postgresql">;
 export const OPTIMIZE_DIALECTS: OptimizeDialect[] = ["sqlserver", "mysql", "postgresql"];
 
-/** Larger files would not fit the model's answer in one piece. */
-export const MAX_SQL_CHARS = 100_000;
+/**
+ * Per file. A file over `CHUNK_TARGET_CHARS` is optimized part by part
+ * (`sql-chunks.ts`), so this bounds the run's length and cost, not a prompt.
+ */
+export const MAX_SQL_CHARS = 1_000_000;
 
 export interface SqlFile {
   text: string;
@@ -174,6 +177,8 @@ export function applySteps(
   original: string,
   steps: (ProposedStep & { index: number; check?: StepOutcome["check"] })[],
   rejectedUpFront: Map<number, string>,
+  /** Read-only text around a part of a split file (its routine's header and declarations), seen by the guard only. */
+  guardContext = "",
 ): { text: string; outcomes: StepOutcome[] } {
   let text = original;
   const outcomes: StepOutcome[] = [];
@@ -190,7 +195,8 @@ export function applySteps(
     }
     // Plain-code guard under the model's check: a performance step keeps every
     // table, qualified column and string literal the code referred to.
-    const dropped = step.category === "requested-logic" ? [] : droppedReferences(text, attempt.text);
+    const dropped =
+      step.category === "requested-logic" ? [] : droppedReferences(`${guardContext}\n${text}`, `${guardContext}\n${attempt.text}`);
     if (dropped.length) {
       outcomes.push({
         ...step,
