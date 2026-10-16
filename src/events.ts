@@ -83,6 +83,8 @@ export interface SqlFileView {
   warnings?: string[];
   /** Why the file was not optimized at all. */
   error?: string;
+  /** The run budget ran out in or before this file: later parts or files were left unchanged. */
+  budgetStopped?: boolean;
   steps: SqlStepView[];
 }
 
@@ -192,6 +194,7 @@ function parseSqlStepsEvent(candidate: Record<string, unknown>): PipelineSqlStep
       ...optional("verification"),
       ...optional("plan"),
       ...optional("error"),
+      ...(raw.budgetStopped === true ? { budgetStopped: true } : {}),
       ...(Array.isArray(raw.warnings) ? { warnings: raw.warnings.filter((w): w is string => typeof w === "string") } : {}),
       steps,
     });

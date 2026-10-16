@@ -315,7 +315,9 @@ async function runSpecDraftCommand(argv: string[]): Promise<void> {
 
 /** `aidev sql-optimize` — see `src/sql-optimize-command.ts`. */
 async function runSqlOptimizeCommand(argv: string[]): Promise<void> {
-  await runSqlOptimize(parseSqlOptimizeArgs(argv), {
+  const args = parseSqlOptimizeArgs(argv);
+  applyRunBudget(args.maxRunUsd);
+  await runSqlOptimize(args, {
     onProgress,
     emitFiles: (files) => {
       if (streamEvents) emit({ type: "sql-steps", files });

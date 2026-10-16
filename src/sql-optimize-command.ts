@@ -11,7 +11,7 @@ import {
   applySteps,
   detectDialect,
   logicReferences,
-  MAX_SQL_CHARS,
+  maxSqlChars,
   optimizedPathOf,
   readSqlFile,
   renderOptimizedFile,
@@ -22,6 +22,7 @@ import {
 } from "./sql-file.js";
 import { planFileFor, readPlanFile, type PlanSummary } from "./sql-plan.js";
 import { splitSqlChunks } from "./sql-chunks.js";
+import { assertRunBudget, RunBudgetError, runBudget } from "./run-budget.js";
 import { openProbe, type ProbeRun, type SqlProbe } from "./sql-probe.js";
 import { applyStepsVerified, parseTestCalls, testPlanFor } from "./sql-verify.js";
 
@@ -89,7 +90,7 @@ export async function runSqlOptimize(args: SqlOptimizeArgs, io: CommandIo): Prom
   }
 
   const failed = views.filter((view) => view.error);
-  const status = failed.length === views.length ? "errored" : "done";
+  const status = views.some((view) => view.budgetStopped) ? "budget-stopped" : failed.length === views.length ? "errored" : "done";
   const message = [
     files.length > 1 ? `${views.length - failed.length} of ${views.length} file(s) optimized.` : "",
     ...lines,
@@ -125,12 +126,21 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
     io.onProgress(`SQL optimize: 1/4 no execution plan${args.planPath ? ` matching ${path.basename(file)}` : ""} — optimizing from the code alone`);
   }
 
+  // A spent budget leaves the rest of a folder untouched rather than writing copies of the originals.
+  const spent = budgetReached(`${path.basename(file)}`);
+  if (spent) return { ...base, error: `not optimized — ${spent}`, budgetStopped: true };
+
   // 2/4 — the SQL file itself.
   io.onProgress(`SQL optimize: 2/4 reading ${path.basename(file)}`);
+  const limit = maxSqlChars();
+  // Checked on bytes first: a file past the ceiling cannot even be read into one string.
+  if (statSync(file).size > limit * 2) {
+    return { ...base, error: `${statSync(file).size.toLocaleString("en-US")} bytes; the limit is ${limit.toLocaleString("en-US")} characters` };
+  }
   const source = await readSqlFile(file);
   if (!source.text.trim()) return { ...base, error: "the file is empty" };
-  if (source.text.length > MAX_SQL_CHARS) {
-    return { ...base, error: `${source.text.length.toLocaleString("en-US")} characters; the limit is ${MAX_SQL_CHARS.toLocaleString("en-US")} — split it` };
+  if (source.text.length > limit) {
+    return { ...base, error: `${source.text.length.toLocaleString("en-US")} characters; the limit is ${limit.toLocaleString("en-US")}` };
   }
 
   const detected = args.dialect ?? executionPlan?.dialect ?? detectDialect(source.text);
@@ -159,6 +169,9 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
   const parts = chunks.map((chunk) => source.text.slice(chunk.start, chunk.end));
   if (chunks.length > 1) {
     io.onProgress(`SQL optimize: ${chunks.length} part(s) — each is optimized and checked on its own, then they are put back together`);
+    io.onProgress(
+      `SQL optimize: about ${chunks.length * 2} AI call(s) for this file (propose + check per part)${runBudget() ? `, stopping once ~$${runBudget()?.toFixed(2)} is spent` : " — set a budget to cap the cost"}`,
+    );
   }
 
   const testPlan = context.probe ? testPlanFor(source.text, context.calls) : null;
@@ -173,6 +186,7 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
   const indexSuggestions: string[] = [];
   let dialect = detected;
   let failedParts = 0;
+  let budgetStopped = false;
 
   io.onProgress("SQL optimize: 3/4 optimizing — proposing steps, each naming its query and the exact code before and after");
   for (const [i, chunk] of chunks.entries()) {
@@ -183,6 +197,15 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
       fileName: `${path.basename(file)}${where}`,
       ...(chunk.context ? { context: chunk.context } : {}),
     };
+
+    const overBudget = budgetReached(`part ${i + 1}/${chunks.length}`);
+    if (overBudget) {
+      budgetStopped = true;
+      const rest = chunks.length > 1 ? `Parts ${i + 1}–${chunks.length}` : "The file";
+      warnings.push(`${rest} left unchanged: ${overBudget}.`);
+      io.onProgress(`SQL optimize: ${rest.toLowerCase()} left unchanged — ${overBudget}`);
+      break;
+    }
 
     let proposal;
     let checks;
@@ -249,6 +272,7 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
     outcomes.push(...partOutcomes.map((step) => (step.lines ? { ...step, lines: step.lines.map((line) => line + lineOffset) } : step)));
   }
   if (failedParts === chunks.length) return { ...base, error: `${warnings.at(-1) ?? "every part failed"} — no file written` };
+  if (budgetStopped && !outcomes.length) return { ...base, error: `not optimized — ${warnings.at(-1) ?? "run budget reached"}`, budgetStopped: true };
   const text = parts.join("");
 
   let verification: string | undefined;
@@ -285,6 +309,7 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
     outputPath: outPath,
     dialect: report.dialect,
     ...(verification ? { verification } : {}),
+    ...(budgetStopped ? { budgetStopped: true } : {}),
     ...(planFile ? { plan: executionPlan ? `${path.basename(planFile)} (${executionPlan.format}, ${executionPlan.operators} operator(s))` : `${path.basename(planFile)} (unreadable)` } : {}),
     warnings,
     steps: outcomes.map(({ check, db, ...step }) => ({
@@ -401,4 +426,15 @@ async function writeRunRecord(
     "utf-8",
   );
   return dir;
+}
+
+/** The spend so far against `--max-run-usd`, in words, or null while under it (no cap: always null). */
+function budgetReached(before: string): string | null {
+  try {
+    assertRunBudget(before);
+    return null;
+  } catch (error) {
+    if (!(error instanceof RunBudgetError)) throw error;
+    return `run budget reached (~$${error.spentUsd.toFixed(2)} of $${error.capUsd.toFixed(2)})`;
+  }
 }

@@ -30,6 +30,7 @@ const el = {
   sqlInstructions: $("sql-instructions"),
   sqlSchema: $("sql-schema"),
   sqlPlan: $("sql-plan"),
+  sqlMaxRunUsd: $("sql-max-run-usd"),
   sqlVerifyDb: $("sql-verify-db"),
   sqlTestCalls: $("sql-test-calls"),
   sqlTestDbRow: $("sql-test-db-row"),
@@ -244,6 +245,8 @@ const NEXT_STEPS = {
     errored:
       "Tối ưu không thành công, <strong>không có file nào được ghi</strong>. Kết quả bên dưới ghi lý do (file quá lớn, file rỗng, hoặc <code>rate_limit</code> — chờ hạn mức reset rồi chạy lại).",
     stopped: "Anh đã dừng. Không có file nào được ghi.",
+    "budget-stopped":
+      "Đã chạm <strong>ngân sách tối đa</strong>: các phần đã tối ưu xong vẫn được ghi vào file <code>_optimized.sql</code>, các phần (hoặc file) chưa tới <strong>giữ nguyên như bản gốc</strong> — xem cảnh báo ở đầu file. Chạy lại với ngân sách cao hơn (hoặc để trống) để tối ưu nốt.",
   },
 };
 
@@ -937,6 +940,7 @@ async function startSqlOptimize(overwrite = false) {
         sqlInstructions: el.sqlInstructions.value,
         sqlSchemaPath: el.sqlSchema.value,
         sqlPlanPath: el.sqlPlan.value,
+        ...(Number(el.sqlMaxRunUsd.value) > 0 ? { maxRunUsd: Number(el.sqlMaxRunUsd.value) } : {}),
         sqlVerifyDb: el.sqlVerifyDb.value,
         sqlTestCalls: el.sqlTestCalls.value,
         overwrite,

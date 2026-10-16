@@ -100,13 +100,67 @@ describe("runSqlOptimize on a file larger than one part", () => {
     expect(output.match(/CREATE INDEX IX_Orders_Status/g)).toHaveLength(1);
   });
 
-  it("refuses a file over the limit before any model call", async () => {
-    const file = path.join(dir, "huge.sql");
-    await writeFile(file, "SELECT 1;\n".repeat(110_000));
-    let reported = { status: "", message: "" };
-    await runSqlOptimize({ file, overwrite: false }, { onProgress: () => {}, emitFiles: () => {}, report: (status, message) => (reported = { status, message }) });
-    expect(proposeSqlSteps).not.toHaveBeenCalled();
-    expect(reported.status).toBe("errored");
-    expect(reported.message).toContain("the limit is 1,000,000");
+  it("has no fixed length limit, and refuses a file over a cap the person set, before any model call", async () => {
+    const file = path.join(dir, "long.sql");
+    await writeFile(file, Array.from({ length: 12_000 }, (_, i) => `SELECT ${i} AS n FROM dbo.Orders WHERE Id = ${i};\n`).join("") + "GO\n");
+    proposeSqlSteps.mockResolvedValue({ dialect: "sqlserver", steps: [], warnings: [], indexSuggestions: [] });
+    const io = (sink: { status: string; message: string }, progress: string[] = []) => ({
+      onProgress: (line: string) => progress.push(line),
+      emitFiles: () => {},
+      report: (status: string, message: string) => Object.assign(sink, { status, message }),
+    });
+
+    const progress: string[] = [];
+    const done = { status: "", message: "" };
+    await runSqlOptimize({ file, overwrite: true }, io(done, progress));
+    expect(done.status).toBe("done");
+    expect(proposeSqlSteps.mock.calls.length).toBeGreaterThan(1);
+    expect(progress.some((line) => /about \d+ AI call\(s\) for this file/.test(line))).toBe(true);
+
+    proposeSqlSteps.mockClear();
+    process.env.AIDEV_SQL_MAX_CHARS = "100000";
+    try {
+      const refused = { status: "", message: "" };
+      await runSqlOptimize({ file, overwrite: true }, io(refused));
+      expect(proposeSqlSteps).not.toHaveBeenCalled();
+      expect(refused.status).toBe("errored");
+      expect(refused.message).toContain("the limit is 100,000");
+    } finally {
+      delete process.env.AIDEV_SQL_MAX_CHARS;
+    }
+  });
+
+  it("stops at the run budget: parts done are written, parts not reached stay as they were", async () => {
+    const { setRunBudget } = await import("./run-budget.js");
+    const { recordUsage, resetUsage, emptyUsage } = await import("./token-usage.js");
+    const text = Array.from({ length: 80 }, (_, i) => proc(i)).join("");
+    const file = path.join(dir, "big.sql");
+    await writeFile(file, text);
+    // Each part's proposal costs $1; the cap is $1, so only the first part gets through.
+    proposeSqlSteps.mockImplementation(async (input: { sql: string }) => {
+      recordUsage({ ...emptyUsage(), costUsd: 1 });
+      const [, , check, select] = input.sql.split("\n");
+      return {
+        dialect: "sqlserver",
+        steps: [{ statement: "q", category: "existence-check", title: "EXISTS", edits: [{ before: `${check}\n${select}`, after: `    IF EXISTS (SELECT 1 FROM dbo.Orders o WHERE o.Status = 'PAID')\n${select}` }], why: "w", equivalence: "e" }],
+        warnings: [],
+        indexSuggestions: [],
+      };
+    });
+    checkSqlSteps.mockImplementation(async () => new Map([[1, { verdict: "same-results", reason: "ok" }]]));
+    setRunBudget(1);
+    try {
+      const reported = { status: "", message: "" };
+      await runSqlOptimize({ file, overwrite: false }, { onProgress: () => {}, emitFiles: () => {}, report: (status, message) => Object.assign(reported, { status, message }) });
+      expect(proposeSqlSteps).toHaveBeenCalledTimes(1);
+      expect(reported.status).toBe("budget-stopped");
+      const output = await readFile(path.join(dir, "big_optimized.sql"), "utf-8");
+      const code = output.split("\n").filter((line) => !line.startsWith("--")).join("\n");
+      expect(code.match(/IF EXISTS/g)).toHaveLength(1);
+      expect(output).toMatch(/Parts 2–\d+ left unchanged: run budget reached \(~\$1\.00 of \$1\.00\)/);
+    } finally {
+      setRunBudget(undefined);
+      resetUsage();
+    }
   });
 });

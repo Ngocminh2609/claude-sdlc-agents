@@ -432,6 +432,9 @@ export class PipelineRunner {
       args.push("--verify-db", verifyDb);
       for (const call of parseTestCalls(request.sqlTestCalls)) args.push("--test-call", call);
     }
+    if (request.maxRunUsd !== undefined && Number.isFinite(request.maxRunUsd) && request.maxRunUsd > 0) {
+      args.push("--max-run-usd", String(request.maxRunUsd));
+    }
     if (request.overwrite) args.push("--overwrite");
     // The connection string can carry a password: masked in every line the UI shows.
     this.secret = verifyDb || null;

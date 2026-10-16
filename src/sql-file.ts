@@ -15,10 +15,18 @@ export type OptimizeDialect = Extract<SqlDialect, "sqlserver" | "mysql" | "postg
 export const OPTIMIZE_DIALECTS: OptimizeDialect[] = ["sqlserver", "mysql", "postgresql"];
 
 /**
- * Per file. A file over `CHUNK_TARGET_CHARS` is optimized part by part
- * (`sql-chunks.ts`), so this bounds the run's length and cost, not a prompt.
+ * Node holds one string of at most ~536 million characters: nothing longer
+ * can be read as text at all. That is the only fixed ceiling — the model is
+ * never sent a whole file, only parts of it (`sql-chunks.ts`), so file
+ * length bounds the run's time and cost, not what the model can take.
  */
-export const MAX_SQL_CHARS = 1_000_000;
+export const SQL_TEXT_CEILING = 500_000_000;
+
+/** The per-file limit: the text ceiling, or a lower cap set in AIDEV_SQL_MAX_CHARS. */
+export function maxSqlChars(env: NodeJS.ProcessEnv = process.env): number {
+  const cap = Number(env.AIDEV_SQL_MAX_CHARS);
+  return Number.isFinite(cap) && cap > 0 ? Math.min(cap, SQL_TEXT_CEILING) : SQL_TEXT_CEILING;
+}
 
 export interface SqlFile {
   text: string;

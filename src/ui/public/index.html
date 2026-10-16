@@ -487,7 +487,7 @@
             <div>
               <h2>Chọn file SQL</h2>
               <p class="step-desc">
-                Tối đa 1.000.000 ký tự mỗi file; file lớn được tự chia theo procedure/batch, tối ưu và kiểm từng phần rồi ghép lại thành một file. AI chỉ thấy nội dung file — không kết nối DB — nên gì phụ thuộc
+                Không giới hạn độ dài theo AI (trần kỹ thuật ~500 triệu ký tự); file lớn được tự chia theo procedure/batch, tối ưu và kiểm từng phần rồi ghép lại thành một file. AI chỉ thấy nội dung file — không kết nối DB — nên gì phụ thuộc
                 schema thật (cột đằng sau <code>SELECT *</code>, index đang có) sẽ được <em>ghi chú để anh
                 kiểm</em> thay vì đoán.
               </p>
@@ -562,6 +562,16 @@
             thì <strong>bị loại</strong>; code chỉ áp các bước đã qua kiểm, lần lượt, nên phần không nằm trong bước nào
             giữ nguyên từng ký tự. Mọi bước (kể cả bị loại) hiện bên dưới khi chạy xong và ở đầu file kết quả.
           </p>
+          <div class="field">
+            <label for="sql-max-run-usd">Ngân sách tối đa cho lần chạy (USD) <span class="optional">tuỳ chọn</span></label>
+            <input type="number" id="sql-max-run-usd" min="0" step="0.5" placeholder="Để trống = không giới hạn" />
+            <p class="hint">
+              Không giới hạn độ dài file theo AI: file dài được chia phần, chi phí tăng theo độ dài (khoảng 2 lượt AI mỗi
+              phần ~60.000 ký tự — số phần hiện trong Tiến trình trước khi AI chạy). Chạm ngân sách thì các phần chưa tới
+              <strong>giữ nguyên</strong>, phần đã xong vẫn được ghi ra file.
+            </p>
+          </div>
+
           <div class="actions">
             <button class="btn btn-primary" id="sql-start" disabled>⚡ Tối ưu</button>
           </div>
