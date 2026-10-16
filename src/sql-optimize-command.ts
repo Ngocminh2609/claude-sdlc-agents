@@ -1,0 +1,314 @@
+import { existsSync, statSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { SqlOptimizeArgs } from "./cli-args.js";
+import { describeDatabase, parseConnection } from "./database.js";
+import type { SqlFileView } from "./events.js";
+import { StageError } from "./stage-error.js";
+import { checkSqlSteps, proposeSqlSteps, rejectionOf } from "./stages/sql-optimize.js";
+import {
+  applySteps,
+  detectDialect,
+  logicReferences,
+  MAX_SQL_CHARS,
+  optimizedPathOf,
+  readSqlFile,
+  renderOptimizedFile,
+  sqlFilesOf,
+  writeSqlFile,
+  type StepOutcome,
+} from "./sql-file.js";
+import { openProbe, type SqlProbe } from "./sql-probe.js";
+import { applyStepsVerified, parseTestCalls, testPlanFor } from "./sql-verify.js";
+
+/**
+ * `aidev sql-optimize` — one SQL file, or every `.sql` file of a folder. Per
+ * file: propose steps → independent check → reference guard → (with a test
+ * database) run each step and keep it only on identical results → write
+ * `<name>_optimized.sql`. Every step is reported as it happens, sent to the UI,
+ * written into the output header and into a run record under runs/ that the
+ * UI's history lists.
+ */
+
+export interface CommandIo {
+  onProgress(message: string): void;
+  /** Sends the per-file step view to the UI (event stream only). */
+  emitFiles(files: SqlFileView[]): void;
+  report(status: string, message: string, logPath?: string): void;
+}
+
+const TOOL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const RUNS_DIR = () => process.env.AIDEV_RUNS_DIR ?? path.join(TOOL_ROOT, "runs");
+const MAX_SCHEMA_CHARS = 20_000;
+
+
+export async function runSqlOptimize(args: SqlOptimizeArgs, io: CommandIo): Promise<void> {
+  const started = new Date();
+  const files = sqlFilesOf(args.file);
+  if (!files.length) return io.report("errored", `No .sql file in ${path.resolve(args.file)}.`);
+  // Checked before any agent runs: refusing afterwards would throw away paid answers.
+  const existing = files.map(optimizedPathOf).filter((out) => existsSync(out));
+  if (existing.length && !args.overwrite) {
+    throw new Error(`${existing.length} output file(s) already exist (${existing[0]}…). Pass --overwrite to replace them.`);
+  }
+  const calls = parseTestCalls(args.testCalls);
+  const givenSchema = args.schemaFile ? await readFile(path.resolve(args.schemaFile), "utf-8") : "";
+
+  let probe: SqlProbe | null = null;
+  if (args.verifyDb) {
+    const target = parseConnection(args.verifyDb);
+    io.onProgress(`SQL verify: connecting to the TEST database ${describeDatabase(target)}`);
+    try {
+      probe = await openProbe(target);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.split(target.password ?? "\u0000").join("***") : String(error);
+      return io.report("errored", `SQL verify: could not connect to ${describeDatabase(target)}: ${reason}\nNo file was written.`);
+    }
+  }
+
+  const views: SqlFileView[] = [];
+  const lines: string[] = [];
+  try {
+    for (const [position, file] of files.entries()) {
+      if (files.length > 1) io.onProgress(`SQL optimize: file ${position + 1}/${files.length} — ${path.basename(file)}`);
+      const view = await optimizeOne(file, args, { calls, givenSchema, probe }, io);
+      views.push(view);
+      io.emitFiles(views);
+      lines.push(summaryOf(view));
+    }
+  } finally {
+    await probe?.close().catch(() => {});
+  }
+
+  const failed = views.filter((view) => view.error);
+  const status = failed.length === views.length ? "errored" : "done";
+  const message = [
+    files.length > 1 ? `${views.length - failed.length} of ${views.length} file(s) optimized.` : "",
+    ...lines,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const logPath = await writeRunRecord(args, views, status, message, started).catch(() => undefined);
+  io.report(status, message, logPath);
+}
+
+interface Context {
+  calls: string[];
+  givenSchema: string;
+  probe: SqlProbe | null;
+}
+
+async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context, io: CommandIo): Promise<SqlFileView> {
+  const outPath = optimizedPathOf(file);
+  const base: SqlFileView = { source: file, outputPath: null, steps: [] };
+  const source = await readSqlFile(file);
+  if (!source.text.trim()) return { ...base, error: "the file is empty" };
+  if (source.text.length > MAX_SQL_CHARS) {
+    return { ...base, error: `${source.text.length.toLocaleString("en-US")} characters; the limit is ${MAX_SQL_CHARS.toLocaleString("en-US")} — split it` };
+  }
+
+  const detected = args.dialect ?? detectDialect(source.text);
+  io.onProgress(
+    `SQL optimize: ${path.basename(file)} — ${source.text.length.toLocaleString("en-US")} characters, dialect ${
+      args.dialect ? `${args.dialect} (chosen)` : (detected ?? "not detected, the model decides")
+    }`,
+  );
+  io.onProgress(
+    args.instructions
+      ? "SQL optimize: mode — performance, plus only the logic changes you requested"
+      : "SQL optimize: mode — performance only, business logic must stay exactly the same",
+  );
+
+  const schema = await schemaFor(source.text, context, io);
+  const input = {
+    sql: source.text,
+    fileName: path.basename(file),
+    dialect: detected,
+    dialectChosen: Boolean(args.dialect),
+    ...(args.instructions ? { instructions: args.instructions } : {}),
+    ...(schema ? { schema } : {}),
+  };
+
+  let proposal;
+  let checks;
+  try {
+    io.onProgress("SQL optimize: proposing steps — each names its query and the exact code before and after");
+    proposal = await proposeSqlSteps(input);
+    const total = proposal.steps.length;
+    io.onProgress(`SQL optimize: ${total} step(s) proposed`);
+    proposal.steps.forEach((step, index) => io.onProgress(`SQL optimize: step ${index + 1}/${total} proposed — ${step.statement} — ${step.title}`));
+    if (total) io.onProgress(`SQL optimize: independent check of ${total} step(s) — do the results stay exactly the same?`);
+    checks = total ? await checkSqlSteps(input, proposal.steps) : new Map();
+  } catch (error) {
+    // Fail-closed: without a check, nothing is applied and no file is written.
+    if (error instanceof StageError) return { ...base, error: `${error.message} — no file written` };
+    throw error;
+  }
+
+  const numbered = proposal.steps.map((step, index) => ({
+    ...step,
+    index: index + 1,
+    ...(checks.get(index + 1) ? { check: checks.get(index + 1) } : {}),
+  }));
+  const rejected = new Map<number, string>();
+  for (const step of numbered) {
+    const reason = rejectionOf(step, step.check, args.instructions);
+    if (reason) rejected.set(step.index, reason);
+  }
+
+  let text: string;
+  let outcomes: StepOutcome[];
+  let verification: string | undefined;
+  const plan = context.probe ? testPlanFor(source.text, context.calls) : null;
+  if (context.probe && plan && !("skip" in plan) && context.probe.dialect !== "mysql") {
+    const verified = await applyStepsVerified({ original: source.text, steps: numbered, rejectedUpFront: rejected, probe: context.probe, plan, repeats: 3, onProgress: io.onProgress });
+    ({ text, outcomes } = verified);
+    verification = verified.baselineError
+      ? `not compared — the original does not run on the test database: ${verified.baselineError}`
+      : `${plan.describe}, rolled back; ${verified.baselineMs} ms → ${outcomes.filter((o) => o.status === "applied").at(-1)?.db?.msAfter ?? verified.baselineMs} ms`;
+  } else {
+    ({ text, outcomes } = applySteps(source.text, numbered, rejected));
+    if (context.probe) {
+      verification =
+        context.probe.dialect === "mysql"
+          ? "not compared — MySQL commits CREATE/ALTER at once, so no rolled-back test run"
+          : `not compared — ${plan && "skip" in plan ? plan.skip : "no test plan"}`;
+    }
+  }
+  if (verification) io.onProgress(`SQL verify: ${verification}`);
+  for (const step of outcomes) {
+    io.onProgress(
+      step.status === "applied"
+        ? `SQL optimize: step ${step.index}/${outcomes.length} applied (line ${step.lines?.join(", ")}) — ${step.title}`
+        : `SQL optimize: step ${step.index}/${outcomes.length} NOT applied — ${step.rejectedBecause}`,
+    );
+  }
+
+  const report = {
+    dialect: proposal.dialect,
+    steps: outcomes,
+    warnings: [...(verification ? [`Test database: ${verification}.`] : []), ...proposal.warnings],
+    indexSuggestions: proposal.indexSuggestions,
+  };
+  await writeSqlFile(outPath, renderOptimizedFile(report, text, file), source);
+  io.onProgress(`SQL optimize: written to ${outPath}`);
+  return {
+    source: file,
+    outputPath: outPath,
+    dialect: proposal.dialect,
+    ...(verification ? { verification } : {}),
+    warnings: proposal.warnings,
+    steps: outcomes.map(({ check, db, ...step }) => ({
+      ...step,
+      ...(check ? { verdict: check.verdict, verdictReason: check.reason } : {}),
+      ...(db ? { db } : {}),
+    })),
+  };
+}
+
+/** The real tables behind the file: from the given schema file and/or the test database's catalog. */
+async function schemaFor(sql: string, context: Context, io: CommandIo): Promise<string> {
+  const parts: string[] = [];
+  if (context.givenSchema.trim()) parts.push(context.givenSchema.trim());
+  if (context.probe) {
+    const tables = [...logicReferences(sql)]
+      .filter((ref) => ref.startsWith("table:"))
+      .map((ref) => ref.slice("table:".length))
+      .filter((name) => !/^[@#]/.test(name));
+    try {
+      const described = await context.probe.describeTables(tables);
+      if (described) {
+        io.onProgress(`SQL verify: schema read from the test database for ${tables.length} table(s)`);
+        parts.push(described);
+      }
+    } catch (error) {
+      io.onProgress(`SQL verify: could not read the schema (${error instanceof Error ? error.message : String(error)}) — continuing without it`);
+    }
+  }
+  const schema = parts.join("\n\n");
+  return schema.length > MAX_SCHEMA_CHARS ? `${schema.slice(0, MAX_SCHEMA_CHARS)}\n… (schema cut at ${MAX_SCHEMA_CHARS} characters)` : schema;
+}
+
+function summaryOf(view: SqlFileView): string {
+  if (view.error) return `${path.basename(view.source)}: NOT optimized — ${view.error}`;
+  const applied = view.steps.filter((step) => step.status === "applied").length;
+  return [
+    `${path.basename(view.source)} → ${view.outputPath} (${view.dialect}). The original is unchanged.`,
+    `${applied} of ${view.steps.length} step(s) applied; every other line is the original.`,
+    ...(view.verification ? [`Test database: ${view.verification}`] : []),
+    ...view.steps.map(
+      (step) =>
+        `- Step ${step.index} [${step.status === "applied" ? `applied, line ${step.lines?.join(", ")}` : "NOT applied"}] ${step.title}` +
+        (step.status === "rejected" ? ` — ${step.rejectedBecause}` : "") +
+        (step.db ? ` — ${step.db.detail}, ${step.db.msBefore} → ${step.db.msAfter} ms` : ""),
+    ),
+  ].join("\n");
+}
+
+/** A run record the UI's history lists: log.json (summary) and report.md (every step, before/after). */
+async function writeRunRecord(
+  args: SqlOptimizeArgs,
+  views: SqlFileView[],
+  status: string,
+  message: string,
+  started: Date,
+): Promise<string> {
+  const target = path.resolve(args.file);
+  const folder = statSync(target).isFile() ? path.dirname(target) : target;
+  const slug = (text: string) => text.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "sql";
+  const id = `${started.toISOString().replace(/[:.]/g, "-")}-${slug(path.basename(folder))}-sql-${slug(path.basename(target, ".sql"))}`;
+  const dir = path.join(RUNS_DIR(), id);
+  await mkdir(dir, { recursive: true });
+  const fence = (code: string) => ["```sql", code.trim(), "```"];
+  const report = [
+    `# SQL optimize — ${path.basename(target)}`,
+    "",
+    `Status: **${status}** · ${views.length} file(s) · ${started.toISOString()}`,
+    ...views.flatMap((view) => [
+      "",
+      `## ${path.basename(view.source)}`,
+      "",
+      view.error ? `Not optimized: ${view.error}` : `Output: \`${view.outputPath}\` (${view.dialect})`,
+      ...(view.verification ? ["", `Test database: ${view.verification}`] : []),
+      ...view.steps.flatMap((step) => [
+        "",
+        `### Step ${step.index} — ${step.title} — ${step.status === "applied" ? `applied (line ${step.lines?.join(", ")})` : "NOT applied"}`,
+        "",
+        `- Query: ${step.statement}`,
+        ...(step.rejectedBecause ? [`- Not applied because: ${step.rejectedBecause}`] : []),
+        `- Faster because: ${step.why}`,
+        `- Same results because: ${step.equivalence}`,
+        ...(step.verdict ? [`- Independent check: ${step.verdict} — ${step.verdictReason ?? ""}`] : []),
+        ...(step.db ? [`- Test database: ${step.db.detail}; ${step.db.msBefore} → ${step.db.msAfter} ms`] : []),
+        ...step.edits.flatMap((edit, position) => [
+          "",
+          `Before${step.edits.length > 1 ? ` ${position + 1}/${step.edits.length}` : ""}:`,
+          ...fence(edit.before),
+          "After:",
+          ...fence(edit.after),
+        ]),
+      ]),
+      ...((view.warnings ?? []).length ? ["", "**Check before use**", ...(view.warnings ?? []).map((warning) => `- ${warning}`)] : []),
+    ]),
+  ].join("\n");
+  await writeFile(path.join(dir, "report.md"), `${report}\n`, "utf-8");
+  await writeFile(
+    path.join(dir, "log.json"),
+    JSON.stringify(
+      {
+        mode: "sql",
+        startedAt: started.toISOString(),
+        finishedAt: new Date().toISOString(),
+        finalStatus: status,
+        finalMessage: message,
+        spec: { projectPath: folder },
+        files: views,
+      },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+  return dir;
+}

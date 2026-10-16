@@ -62,12 +62,25 @@ export interface PipelineBudgetEvent {
 }
 
 /**
- * `aidev sql-optimize`: every proposed edit with its outcome, sent once before
- * `finished`, so the UI can show each query's before/after step by step.
+ * `aidev sql-optimize`: every file done so far, each with every proposed step
+ * and its outcome — sent after each file, so the UI can show each query's
+ * before/after step by step while a folder is still being worked through.
  */
 export interface PipelineSqlStepsEvent {
   type: "sql-steps";
+  files: SqlFileView[];
+}
+
+/** One SQL file of a run, as the UI shows it. */
+export interface SqlFileView {
+  source: string;
   outputPath: string | null;
+  dialect?: string;
+  /** How the steps were measured on the test database, or why they were not. */
+  verification?: string;
+  warnings?: string[];
+  /** Why the file was not optimized at all. */
+  error?: string;
   steps: SqlStepView[];
 }
 
@@ -86,6 +99,8 @@ export interface SqlStepView {
   rejectedBecause?: string;
   verdict?: string;
   verdictReason?: string;
+  /** Measured on the test database: same results or not, and the time before/after this step. */
+  db?: { verdict: string; detail: string; msBefore: number; msAfter: number };
 }
 
 export type PipelineEvent =
@@ -160,7 +175,29 @@ export function parseEventLine(line: string): PipelineEvent | null {
 }
 
 function parseSqlStepsEvent(candidate: Record<string, unknown>): PipelineSqlStepsEvent | null {
-  if (!Array.isArray(candidate.steps)) return null;
+  if (!Array.isArray(candidate.files)) return null;
+  const files: SqlFileView[] = [];
+  for (const raw of candidate.files as Record<string, unknown>[]) {
+    if (typeof raw?.source !== "string") return null;
+    const steps = parseSqlSteps(raw.steps);
+    if (!steps) return null;
+    const optional = (key: string) => (typeof raw[key] === "string" ? { [key]: raw[key] as string } : {});
+    files.push({
+      source: raw.source,
+      outputPath: typeof raw.outputPath === "string" ? raw.outputPath : null,
+      ...optional("dialect"),
+      ...optional("verification"),
+      ...optional("error"),
+      ...(Array.isArray(raw.warnings) ? { warnings: raw.warnings.filter((w): w is string => typeof w === "string") } : {}),
+      steps,
+    });
+  }
+  return { type: "sql-steps", files };
+}
+
+function parseSqlSteps(value: unknown): SqlStepView[] | null {
+  if (!Array.isArray(value)) return null;
+  const candidate = { steps: value } as Record<string, unknown>;
   const text = (value: unknown) => (typeof value === "string" ? value : null);
   const steps: SqlStepView[] = [];
   for (const raw of candidate.steps as Record<string, unknown>[]) {
@@ -192,9 +229,15 @@ function parseSqlStepsEvent(candidate: Record<string, unknown>): PipelineSqlStep
       ...(text(raw.rejectedBecause) ? { rejectedBecause: raw.rejectedBecause as string } : {}),
       ...(text(raw.verdict) ? { verdict: raw.verdict as string } : {}),
       ...(text(raw.verdictReason) ? { verdictReason: raw.verdictReason as string } : {}),
+      ...(isDbCheck(raw.db) ? { db: raw.db } : {}),
     });
   }
-  return { type: "sql-steps", outputPath: text(candidate.outputPath), steps };
+  return steps;
+}
+
+function isDbCheck(value: unknown): value is NonNullable<SqlStepView["db"]> {
+  const db = value as Record<string, unknown> | undefined;
+  return typeof db?.verdict === "string" && typeof db.detail === "string" && typeof db.msBefore === "number" && typeof db.msAfter === "number";
 }
 
 function parseStepEvent(candidate: Record<string, unknown>): PipelineStepEvent | null {

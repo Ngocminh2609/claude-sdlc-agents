@@ -1,3 +1,4 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SqlDialect } from "./database.js";
@@ -131,6 +132,15 @@ export interface ProposedStep {
 /** The independent check's verdict on one step. */
 export type StepVerdict = "same-results" | "changes-results" | "unsure" | "requested-change";
 
+/** A step run on the test database (`sql-verify.ts`): same results or not, and the time it took. */
+export interface DbCheck {
+  verdict: "identical" | "differs";
+  detail: string;
+  /** Sum over the test calls of each call's median time, before and after the step. */
+  msBefore: number;
+  msAfter: number;
+}
+
 export interface StepOutcome extends ProposedStep {
   /** 1-based, in the order the model proposed and the code applied them. */
   index: number;
@@ -139,6 +149,7 @@ export interface StepOutcome extends ProposedStep {
   lines?: number[];
   rejectedBecause?: string;
   check?: { verdict: StepVerdict; reason: string };
+  db?: DbCheck;
 }
 
 export interface OptimizationReport {
@@ -251,9 +262,19 @@ export function logicReferences(sql: string): Set<string> {
   // tables: removing a cursor loop must not read as dropping a table.
   code = code.replace(/\bFETCH\b[^;]*;?/gi, " ");
   const bare = (name: string) => name.replace(/[[\]"`]/g, "").split(".").pop()?.toLowerCase() ?? "";
+  // Variables are not tables: `SELECT count(*) INTO n` (PL/pgSQL, MySQL) names one.
+  // Table variables (`DECLARE @r TABLE`) stay tables.
+  const declared = new Set<string>();
+  for (const block of code.matchAll(/\bDECLARE\b([\s\S]*?)\bBEGIN\b/gi)) {
+    for (const part of block[1].split(";")) {
+      const name = /^\s*([A-Za-z_]\w*)\s+(?!TABLE\b)/i.exec(part)?.[1];
+      if (name) declared.add(name.toLowerCase());
+    }
+  }
+  for (const match of code.matchAll(/\bDECLARE\s+(@?[A-Za-z_]\w*)\s+(?!TABLE\b)/gi)) declared.add(match[1].toLowerCase());
   for (const match of code.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO|TABLE|USING)\s+([#@]?[\w[\]".`]+)/gi)) {
     const name = bare(match[1]);
-    if (name && !/^(select|values|set)$/.test(name)) refs.add(`table:${name}`);
+    if (name && !/^(select|values|set)$/.test(name) && !declared.has(name)) refs.add(`table:${name}`);
   }
   for (const match of code.matchAll(/\b[A-Za-z_@#][\w]*\s*\.\s*\[?([A-Za-z_]\w*)\]?/g)) refs.add(`column:${match[1].toLowerCase()}`);
   return refs;
@@ -290,6 +311,7 @@ export function renderOptimizedFile(report: OptimizationReport, sql: string, sou
       ...comment(`Faster because: ${step.why}`),
       ...comment(`Same results because: ${step.equivalence}`),
       ...(step.check ? comment(`Independent check: ${step.check.verdict} — ${step.check.reason}`) : []),
+      ...(step.db ? comment(`Test database: ${step.db.detail}; ${step.db.msBefore} → ${step.db.msAfter} ms`) : []),
     );
     step.edits.forEach((edit, position) => {
       const which = step.edits.length > 1 ? ` ${position + 1}/${step.edits.length}` : "";
@@ -312,4 +334,15 @@ export function renderOptimizedFile(report: OptimizationReport, sql: string, sou
     lines.push("--", "-- Index suggestions (not applied — check the existing indexes first):", ...report.indexSuggestions.flatMap((ddl) => comment(ddl)));
   }
   return `${lines.join("\n")}\n\n${sql.trim()}\n`;
+}
+
+/** The files a `--file` names: the file, or the folder's `.sql` files that are not themselves outputs. */
+export function sqlFilesOf(target: string): string[] {
+  const resolved = path.resolve(target);
+  if (!existsSync(resolved)) throw new Error(`SQL file or folder not found: ${resolved}`);
+  if (statSync(resolved).isFile()) return [resolved];
+  return readdirSync(resolved)
+    .filter((name) => /\.sql$/i.test(name) && !/_optimized\.sql$/i.test(name))
+    .sort()
+    .map((name) => path.join(resolved, name));
 }

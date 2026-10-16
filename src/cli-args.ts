@@ -181,7 +181,7 @@ export function parseSpecDraftArgs(argv: string[]): SpecDraftArgs {
 }
 
 export const SQL_OPTIMIZE_USAGE =
-  "Usage: aidev sql-optimize --file <path.sql> [--dialect auto|sqlserver|mysql|postgresql] [--instructions <text>] [--overwrite]";
+  "Usage: aidev sql-optimize --file <path.sql> [--dialect auto|sqlserver|mysql|postgresql] [--instructions <text>] [--verify-db <test-db-connection> [--test-call <sql>]...] [--schema <file>] [--overwrite]   (--file may be a folder: every .sql in it)";
 
 /** `aidev sql-optimize`: write `<name>_optimized.sql` next to one SQL file. */
 export interface SqlOptimizeArgs {
@@ -192,6 +192,12 @@ export interface SqlOptimizeArgs {
   overwrite: boolean;
   /** Business-logic changes the person explicitly asks for. Unset: performance only. */
   instructions?: string;
+  /** A TEST database: schema is read from it and every step is run there (rolled back) before it is kept. */
+  verifyDb?: string;
+  /** Calls that exercise the file's procedures/functions, one per line. */
+  testCalls?: string;
+  /** A schema/DDL file describing the real tables. */
+  schemaFile?: string;
 }
 
 export function parseSqlOptimizeArgs(argv: string[]): SqlOptimizeArgs {
@@ -199,10 +205,26 @@ export function parseSqlOptimizeArgs(argv: string[]): SqlOptimizeArgs {
   let dialect: OptimizeDialect | undefined;
   let overwrite = false;
   let instructions: string | undefined;
+  let verifyDb: string | undefined;
+  let testCalls: string | undefined;
+  let schemaFile: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case "--instructions":
         instructions = argv[++i];
+        break;
+      case "--verify-db":
+        verifyDb = argv[++i];
+        break;
+      case "--test-calls":
+        testCalls = [testCalls, argv[++i]].filter(Boolean).join("\n");
+        break;
+      // Repeatable, one call each: a multi-line argument does not survive a Windows `npx`/cmd launch.
+      case "--test-call":
+        testCalls = [testCalls, argv[++i]].filter(Boolean).join("\n");
+        break;
+      case "--schema":
+        schemaFile = argv[++i];
         break;
       case "--file":
         file = argv[++i];
@@ -220,7 +242,15 @@ export function parseSqlOptimizeArgs(argv: string[]): SqlOptimizeArgs {
     }
   }
   if (!file?.trim()) throw new Error(SQL_OPTIMIZE_USAGE);
-  return { file, ...(dialect ? { dialect } : {}), overwrite, ...(instructions?.trim() ? { instructions: instructions.trim() } : {}) };
+  return {
+    file,
+    ...(dialect ? { dialect } : {}),
+    overwrite,
+    ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+    ...(verifyDb?.trim() ? { verifyDb: verifyDb.trim() } : {}),
+    ...(testCalls?.trim() ? { testCalls } : {}),
+    ...(schemaFile?.trim() ? { schemaFile: schemaFile.trim() } : {}),
+  };
 }
 
 export function parseArgs(argv: string[]): Args {

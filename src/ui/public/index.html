@@ -494,7 +494,7 @@
             </div>
           </div>
           <div class="field">
-            <label for="sql-file">File SQL</label>
+            <label for="sql-file">File SQL hoặc thư mục (tối ưu mọi file .sql trong đó)</label>
             <div class="row">
               <input id="sql-file" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\SQL\usp_GetCustomerOrders.sql" />
               <button class="btn btn-ghost" data-browse="sql-file">Chọn file…</button>
@@ -513,6 +513,34 @@
             <label for="sql-instructions">Yêu cầu đổi logic nghiệp vụ <span class="optional">để trống = chỉ tối ưu hiệu năng</span></label>
             <textarea id="sql-instructions" class="request-input" rows="3" placeholder="Chỉ điền khi anh muốn ĐỔI logic, ví dụ: chỉ lấy khách hàng đang hoạt động. Để trống thì logic nghiệp vụ giữ nguyên tuyệt đối."></textarea>
           </div>
+          <div class="field">
+            <label for="sql-schema">File schema / DDL <span class="optional">tuỳ chọn</span></label>
+            <div class="row">
+              <input id="sql-schema" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\SQL\01-create-tables.sql" />
+              <button class="btn btn-ghost" data-browse="sql-schema">Chọn file…</button>
+            </div>
+            <p class="hint">Cho AI biết cột thật, NULL hay NOT NULL, index đang có — mở khoá thay <code>SELECT *</code>, <code>NOT IN → NOT EXISTS</code>, đề xuất index không trùng.</p>
+          </div>
+
+          <div class="field">
+            <label for="sql-verify-db">Kiểm chứng trên DB <strong>THỬ NGHIỆM</strong> <span class="optional">tuỳ chọn — SQL Server / PostgreSQL</span></label>
+            <input id="sql-verify-db" type="password" spellcheck="false" autocomplete="off" placeholder="postgresql://user:pass@host:5432/testdb  hoặc  Server=...;Database=...;User Id=...;Password=..." />
+            <p class="hint">
+              Có chuỗi này thì hệ thống <strong>đọc schema thật</strong> và <strong>chạy thử từng bước</strong>: bản gốc, rồi
+              thêm từng bước một — mỗi lần trong một transaction <strong>luôn rollback</strong>. Bước nào cho kết quả khác bản
+              gốc dù chỉ một dòng thì bị loại; thời gian chạy trước/sau được đo. Rollback không trả lại số identity/sequence
+              đã dùng hay mail đã gửi — <strong>chỉ dùng DB thử nghiệm, không dùng production</strong>. Chuỗi không được lưu lại.
+            </p>
+          </div>
+          <div class="field" id="sql-test-calls-row">
+            <label for="sql-test-calls">Lệnh chạy thử <span class="optional">mỗi dòng một lệnh — cần khi file định nghĩa procedure/function</span></label>
+            <textarea id="sql-test-calls" class="request-input" rows="3" spellcheck="false" placeholder="EXEC dbo.usp_GetCustomerOrders @Year = 2024&#10;EXEC dbo.usp_GetCustomerOrders @Year = 2024, @CustomerCode = 'C001'"></textarea>
+          </div>
+          <label class="precheck hidden" id="sql-test-db-row">
+            <input type="checkbox" id="sql-test-db-confirm" />
+            <span>Tôi xác nhận đây là DB <strong>thử nghiệm</strong>, không phải production.</span>
+          </label>
+
           <p class="hint">
             Cách làm: AI đề xuất từng bước sửa (đúng đoạn code trước → sau, thuộc câu truy vấn nào); một lượt
             AI <strong>độc lập</strong> kiểm từng bước xem kết quả có giữ nguyên không — bước nào không được xác nhận

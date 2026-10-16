@@ -158,6 +158,7 @@ async function readLog(id: string): Promise<Record<string, unknown> | null> {
  */
 export function runModeOfLog(log: Record<string, unknown> | null, id: string): RunMode {
   if (log?.mode === "clone") return "clone";
+  if (log?.mode === "sql") return "sql";
   if (log) return "feature";
   return /^\d{4}-\d{2}-\d{2}T[\d-]+Z-.+?-clone-/.test(id) ? "clone" : "feature";
 }

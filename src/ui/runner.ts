@@ -3,9 +3,10 @@ import { existsSync, statSync } from "node:fs";
 import { appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { parseEventLine, EVENT_STREAM_ENV, type PipelineStepEvent, type SqlStepView } from "../events.js";
+import { parseEventLine, EVENT_STREAM_ENV, type PipelineStepEvent, type SqlFileView } from "../events.js";
 import { buildRoots, type RootRole } from "../target-roots.js";
-import { OPTIMIZE_DIALECTS, optimizedPathOf } from "../sql-file.js";
+import { OPTIMIZE_DIALECTS, optimizedPathOf, sqlFilesOf } from "../sql-file.js";
+import { parseTestCalls } from "../sql-verify.js";
 import { killTree } from "../kill-tree.js";
 import { addUsage, describeUsage, emptyUsage, subtractUsage, totalTokens, type TokenUsage } from "../token-usage.js";
 import { repoRoot } from "./paths.js";
@@ -82,6 +83,12 @@ export interface RunRequest {
   sqlDialect?: string;
   /** SQL mode only: business-logic changes the person explicitly asks for. Empty: performance only. */
   sqlInstructions?: string;
+  /** SQL mode only: a TEST database to read the schema from and run every step on (rolled back). Never leaves this process. */
+  sqlVerifyDb?: string;
+  /** SQL mode only: calls exercising the file's procedures, one per line. */
+  sqlTestCalls?: string;
+  /** SQL mode only: a schema/DDL file. */
+  sqlSchemaPath?: string;
   dbMode: DbMode;
   /** Only set when dbMode is "connection". Never leaves this process. */
   dbConnection?: string;
@@ -140,8 +147,8 @@ export interface RunState {
   plan: { coding?: { id: string; label: string }[]; port?: { id: string; label: string }[] };
   /** The run's spend cap, when one was set. */
   budgetCapUsd: number | null;
-  /** SQL mode: every proposed edit and what became of it, and the file written. */
-  sql: { outputPath: string | null; steps: SqlStepView[] } | null;
+  /** SQL mode: per file, every proposed step and what became of it. */
+  sql: { files: SqlFileView[] } | null;
 }
 
 /** One pipeline step as the mind map draws it (see `step-activity.ts`). */
@@ -381,21 +388,36 @@ export class PipelineRunner {
    */
   private startSqlOptimize(request: RunRequest): RunState {
     const file = path.resolve((request.sqlFile ?? "").trim() || ".");
-    if (!request.sqlFile?.trim() || !existsSync(file) || !statSync(file).isFile()) {
-      throw new RunRequestError(`SQL file not found: ${file}`, "sql-file-not-found", file);
+    let files: string[];
+    try {
+      if (!request.sqlFile?.trim()) throw new Error("none");
+      files = sqlFilesOf(file);
+    } catch {
+      throw new RunRequestError(`SQL file or folder not found: ${file}`, "sql-file-not-found", file);
     }
-    const outPath = optimizedPathOf(file);
+    if (!files.length) throw new RunRequestError(`No .sql file in ${file}`, "sql-file-not-found", file);
+    const existing = files.map(optimizedPathOf).find((out) => existsSync(out));
     // Asked before any agent runs, so the UI can confirm instead of paying for an answer it then refuses.
-    if (existsSync(outPath) && !request.overwrite) {
-      throw new RunRequestError(`Optimized file already exists: ${outPath}`, "sql-optimized-exists", outPath);
+    if (existing && !request.overwrite) {
+      throw new RunRequestError(`Optimized file already exists: ${existing}`, "sql-optimized-exists", existing);
     }
+    const schemaPath = request.sqlSchemaPath?.trim() ? path.resolve(request.sqlSchemaPath.trim()) : null;
+    if (schemaPath) assertFile(schemaPath, "Schema file", "schema-not-found");
     const args = ["sql-optimize", "--file", file];
     const dialect = (request.sqlDialect ?? "auto").toLowerCase();
     if (dialect !== "auto" && (OPTIMIZE_DIALECTS as string[]).includes(dialect)) args.push("--dialect", dialect);
     if (request.sqlInstructions?.trim()) args.push("--instructions", request.sqlInstructions.trim());
+    if (schemaPath) args.push("--schema", schemaPath);
+    const verifyDb = request.sqlVerifyDb?.trim();
+    if (verifyDb) {
+      args.push("--verify-db", verifyDb);
+      for (const call of parseTestCalls(request.sqlTestCalls)) args.push("--test-call", call);
+    }
     if (request.overwrite) args.push("--overwrite");
-    this.secret = null;
-    return this.launch(args, { mode: "sql", projectPath: path.dirname(file), specPath: file, what: null, dbMode: "none" });
+    // The connection string can carry a password: masked in every line the UI shows.
+    this.secret = verifyDb || null;
+    const folder = statSync(file).isFile() ? path.dirname(file) : file;
+    return this.launch(args, { mode: "sql", projectPath: folder, specPath: file, what: null, dbMode: verifyDb ? "connection" : "none" });
   }
 
   private launch(
@@ -528,7 +550,7 @@ export class PipelineRunner {
         break;
       }
       case "sql-steps": {
-        this.state.sql = { outputPath: event.outputPath, steps: event.steps };
+        this.state.sql = { files: event.files };
         this.emitState();
         break;
       }

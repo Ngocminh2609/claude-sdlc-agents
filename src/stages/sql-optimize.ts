@@ -68,6 +68,13 @@ PostgreSQL wiki), each only when exactly equivalent:
 - Never add CREATE INDEX to the code: put index DDL in "indexSuggestions", one
   statement each, with a short comment line above it naming the query it helps.
 
+When a "Schema" section is given (read from the real database catalog or a file
+the person supplied), use it: SELECT * may become the table's real column list in
+the table's column order; NOT IN → NOT EXISTS is allowed when the column is NOT
+NULL there; never suggest an index that already exists (or is a prefix of one);
+compare against the real column types for implicit conversions. Without it, do
+none of these — warn instead.
+
 Each step is ONE optimization, reviewed and applied all-or-nothing:
 - "edits": the code changes it needs, applied in order. Each "before" is code
   copied VERBATIM from the file, long enough to occur only once, as the file is
@@ -101,7 +108,9 @@ Judge each step applied to the code as it stands after the earlier steps. Do not
 judge whether it is faster. Under concurrent writes, reading the same data once
 instead of in several statements is not a result change when every outcome the
 new code can produce is one the original could also produce at the same
-isolation level. Be skeptical: when in doubt, "unsure".`;
+isolation level. When a "Schema" section is given, it is the real table
+definitions and existing indexes: use it to judge NULL-ability, column lists and
+types. Be skeptical: when in doubt, "unsure".`;
 
 const PROPOSE_SCHEMA = {
   type: "object",
@@ -163,6 +172,8 @@ export interface SqlOptimizeInput {
   dialectChosen: boolean;
   /** Logic changes the person explicitly asks for. Empty: performance only. */
   instructions?: string;
+  /** Real table definitions and indexes (test database catalog, or a file the person gave). */
+  schema?: string;
 }
 
 export interface SqlProposal {
@@ -176,6 +187,10 @@ function optionsFor(systemPrompt: string, stage: "sqlOptimize" | "sqlCheck"): Op
   // The file is in the prompt; there is nothing to read and nothing to run.
   const model = stage === "sqlCheck" ? config.sqlCheckModel : config.model;
   return { systemPrompt, allowedTools: [], model, ...limitsOf(stage) };
+}
+
+function schemaSection(schema: string | undefined): string[] {
+  return schema?.trim() ? ["", "--- Schema (real tables, columns and existing indexes) ---", schema.trim()] : [];
 }
 
 function requestedSection(instructions: string | undefined): string[] {
@@ -192,6 +207,7 @@ export async function proposeSqlSteps(input: SqlOptimizeInput): Promise<SqlPropo
     `File: ${input.fileName}`,
     dialectLine,
     ...requestedSection(input.instructions),
+    ...schemaSection(input.schema),
     "",
     "--- SQL ---",
     input.sql,
@@ -210,11 +226,12 @@ export async function proposeSqlSteps(input: SqlOptimizeInput): Promise<SqlPropo
 
 /** The checker's verdict per step number (1-based); a step it skipped has none. */
 export async function checkSqlSteps(
-  input: Pick<SqlOptimizeInput, "sql" | "instructions">,
+  input: Pick<SqlOptimizeInput, "sql" | "instructions" | "schema">,
   steps: ProposedStep[],
 ): Promise<Map<number, { verdict: StepVerdict; reason: string }>> {
   const prompt = [
     ...requestedSection(input.instructions),
+    ...schemaSection(input.schema),
     "",
     "--- Original SQL ---",
     input.sql,

@@ -201,6 +201,28 @@ cầu đổi logic nghiệp vụ") asks for a specific change. Three steps, none
    order, all edits of a step or none; an edit whose code does not occur exactly once is not
    guessed into place. Code no applied edit touches stays byte-for-byte the original.
 
+4. **Measure (optional, `--verify-db <test-db>`, UI: "Kiểm chứng trên DB THỬ NGHIỆM").** The
+   original runs on a TEST database, then the code with each step added, one step at a time —
+   every run inside a transaction that is always rolled back (`src/sql-probe.ts`). A step is kept
+   only when every test call (`--test-call "EXEC dbo.p @Year = 2024"`, repeatable; a plain
+   script is its own test) returns exactly the original's result sets, rows, order and values,
+   and is not measurably slower (>20%). SQL Server and PostgreSQL; MySQL commits DDL at once, so
+   there the database is used for the schema only. Rollback does not undo identity/sequence
+   values or mail sent — never point it at production. The UI asks for a confirmation tick.
+   Real run (throwaway PostgreSQL, 30,000 rows, a `NOT IN` trap over a nullable column): 3 of 3
+   steps confirmed on 3 calls, 2,625 → 2,211 ms, the trap and the business rules untouched,
+   nothing left in the database.
+
+The real schema (columns, NULL-ability, existing indexes) goes to both model calls when given:
+read from the test database's catalog for the tables the file uses, and/or from `--schema
+<ddl-file>`. It unlocks `SELECT *` → the real column list, `NOT IN` → `NOT EXISTS` on a NOT NULL
+column and index suggestions that do not duplicate an existing index. Plain-code guard on top of
+the model check: a performance step that drops a table, qualified column or string literal the
+code used is rejected. The check runs on `config.sqlCheckModel` (default `claude-opus-5-5`, env
+`AIDEV_SQL_CHECK_MODEL`). `--file` may be a folder: every `.sql` in it except earlier
+`_optimized` outputs. Each run is written to `runs/` (`log.json` + `report.md` with every
+step's before/after) and listed under *Lịch sử chạy*.
+
 Every step — applied or not, with the reason — is shown step by step in the progress log, as
 before/after cards in the UI, and in the comment header of the output file (query, line, code
 before and after, why faster, why the same, the check's verdict). Index DDL and rewrites that

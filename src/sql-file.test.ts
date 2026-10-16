@@ -161,6 +161,14 @@ describe("logic reference guard", () => {
     ).toEqual([]);
   });
 
+  it("does not take a declared variable for a table", () => {
+    const loop = "DECLARE r record; n bigint; BEGIN FOR r IN SELECT o.id FROM orders o LOOP SELECT count(*) INTO n FROM lines l WHERE l.id = r.id; END LOOP; END";
+    const setBased = "BEGIN RETURN QUERY SELECT o.id, (SELECT count(*) FROM lines l WHERE l.id = o.id) FROM orders o; END";
+    expect(droppedReferences(loop, setBased)).toEqual([]);
+    // A table variable is still a table.
+    expect([...logicReferences("DECLARE @R TABLE (id int); INSERT INTO @R SELECT 1;")]).toContain("table:@r");
+  });
+
   it("catches a dropped filter column, table or status literal", () => {
     expect(droppedReferences("WHERE o.Status = 'PAID' AND o.Deleted = 0", "WHERE o.Status = 'PAID'")).toEqual(["column:deleted"]);
     expect(droppedReferences("FROM a JOIN b ON b.id = a.id", "FROM a")).toEqual(["column:id", "table:b"]);

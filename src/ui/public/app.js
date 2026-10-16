@@ -28,6 +28,11 @@ const el = {
   sqlFile: $("sql-file"),
   sqlDialect: $("sql-dialect"),
   sqlInstructions: $("sql-instructions"),
+  sqlSchema: $("sql-schema"),
+  sqlVerifyDb: $("sql-verify-db"),
+  sqlTestCalls: $("sql-test-calls"),
+  sqlTestDbRow: $("sql-test-db-row"),
+  sqlTestDbConfirm: $("sql-test-db-confirm"),
   sqlStart: $("sql-start"),
   sqlError: $("sql-error"),
   cloneWhat: $("clone-what"),
@@ -365,6 +370,7 @@ function saveForm() {
       dbSchemaPath: el.dbSchemaPath.value,
       sqlFile: el.sqlFile.value,
       sqlDialect: el.sqlDialect.value,
+      sqlSchema: el.sqlSchema.value,
     }),
   );
 }
@@ -392,6 +398,7 @@ function restoreForm() {
     el.dbSchemaPath.value = saved.dbSchemaPath || "";
     el.sqlFile.value = saved.sqlFile || "";
     el.sqlDialect.value = saved.sqlDialect || "auto";
+    el.sqlSchema.value = saved.sqlSchema || "";
   } catch {
     // Unreadable storage is not worth failing the page over.
   }
@@ -456,13 +463,18 @@ function syncRunButtons() {
       : "Điền thư mục BE/FE ở bước 1, thư mục lưu spec và yêu cầu";
 
   // Optimizing writes only a new _optimized file next to the original, so it needs no commit/stash tick either.
-  const canOptimize = el.sqlFile.value.trim() && !running;
+  // A test database must be confirmed as one: every step runs on it (rolled back, but still run).
+  const usesDb = Boolean(el.sqlVerifyDb.value.trim());
+  el.sqlTestDbRow.classList.toggle("hidden", !usesDb);
+  const canOptimize = el.sqlFile.value.trim() && (!usesDb || el.sqlTestDbConfirm.checked) && !running;
   el.sqlStart.disabled = !canOptimize;
   el.sqlStart.title = canOptimize
     ? "AI đọc file SQL và ghi bản tối ưu ra file mới"
     : running
       ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
-      : "Chọn file SQL trước";
+      : usesDb
+        ? "Tick xác nhận đây là DB thử nghiệm"
+        : "Chọn file SQL trước";
 }
 
 el.dbMode.addEventListener("change", () => {
@@ -743,15 +755,16 @@ for (const button of document.querySelectorAll("[data-browse]")) {
       return;
     }
 
-    if (what === "sql-file") {
+    if (what === "sql-file" || what === "sql-schema") {
+      const field = what === "sql-file" ? el.sqlFile : el.sqlSchema;
       const chosen = await openPicker({
         mode: "file",
         kind: "markdown",
-        title: "Chọn file SQL (.sql)",
-        startPath: parentOf(el.sqlFile.value),
+        title: what === "sql-file" ? "Chọn file SQL (.sql) — hoặc gõ đường dẫn thư mục vào ô" : "Chọn file schema / DDL",
+        startPath: parentOf(field.value) || parentOf(el.sqlFile.value),
       });
       if (chosen) {
-        el.sqlFile.value = chosen;
+        field.value = chosen;
         saveForm();
         syncRunButtons();
       }
@@ -892,6 +905,9 @@ async function startSqlOptimize(overwrite = false) {
         sqlFile: el.sqlFile.value,
         sqlDialect: el.sqlDialect.value,
         sqlInstructions: el.sqlInstructions.value,
+        sqlSchemaPath: el.sqlSchema.value,
+        sqlVerifyDb: el.sqlVerifyDb.value,
+        sqlTestCalls: el.sqlTestCalls.value,
         overwrite,
       }),
     });
@@ -907,7 +923,10 @@ async function startSqlOptimize(overwrite = false) {
 }
 
 el.sqlStart.addEventListener("click", () => startSqlOptimize());
-for (const field of [el.sqlFile, el.sqlDialect]) {
+// The connection string and the test-DB tick are never saved: each run states them again.
+for (const field of [el.sqlVerifyDb, el.sqlTestDbConfirm]) field.addEventListener("input", syncRunButtons);
+el.sqlTestDbConfirm.addEventListener("change", syncRunButtons);
+for (const field of [el.sqlFile, el.sqlDialect, el.sqlSchema]) {
   field.addEventListener("input", () => {
     saveForm();
     syncRunButtons();
@@ -1145,7 +1164,7 @@ function renderResult(state) {
 
   el.result.dataset.status = state.status;
   el.result.classList.remove("hidden");
-  const sqlSteps = state.mode === "sql" && state.sql ? renderSqlSteps(state.sql) : "";
+  const sqlSteps = state.mode === "sql" && state.sql ? state.sql.files.map(renderSqlFile).join("") : "";
   el.result.innerHTML = `
     <div class="result-title">${escapeHtml(STATUS_TEXT[state.status] ?? state.status)}</div>
     ${guidance ? `<p class="result-guidance">${guidance}</p>` : ""}
@@ -1164,13 +1183,17 @@ const VERDICT_TEXT = {
   "requested-change": "đúng thay đổi anh yêu cầu",
 };
 
-/** Every proposed edit of a SQL run, in order: the query, before → after, and why it was or was not applied. */
-function renderSqlSteps({ outputPath, steps }) {
+/** One file of a SQL run: every proposed step in order — the query, before → after, and why it was or was not applied. */
+function renderSqlFile({ source, outputPath, verification, error, steps }) {
+  const name = `<h4 class="sql-file-name">${escapeHtml(baseName(source))}</h4>`;
+  if (error) return `<div class="sql-steps">${name}<p class="error-text">Không tối ưu: ${escapeHtml(error)}</p></div>`;
   const applied = steps.filter((step) => step.status === "applied").length;
-  const head = `<p class="sql-steps-head">${applied}/${steps.length} bước được áp dụng${
+  const head = `${name}<p class="sql-steps-head">${applied}/${steps.length} bước được áp dụng${
     outputPath ? ` — file: <code>${escapeHtml(outputPath)}</code>` : ""
-  }. Mọi dòng không thuộc bước nào giữ nguyên như bản gốc.</p>`;
-  if (!steps.length) return `${head}<p class="hint">AI không đề xuất bước nào — file kết quả giống bản gốc.</p>`;
+  }. Mọi dòng không thuộc bước nào giữ nguyên như bản gốc.</p>${
+    verification ? `<p class="sql-steps-head"><strong>DB thử nghiệm:</strong> ${escapeHtml(verification)}</p>` : ""
+  }`;
+  if (!steps.length) return `<div class="sql-steps">${head}<p class="hint">AI không đề xuất bước nào — file kết quả giống bản gốc.</p></div>`;
   const items = steps
     .map((step) => {
       const ok = step.status === "applied";
@@ -1188,6 +1211,7 @@ function renderSqlSteps({ outputPath, steps }) {
         <div class="sql-step-row"><strong>Nhanh hơn vì:</strong> ${escapeHtml(step.why)}</div>
         <div class="sql-step-row"><strong>Kết quả giữ nguyên vì:</strong> ${escapeHtml(step.equivalence)}</div>
         ${verdict}
+        ${step.db ? `<div class="sql-step-row"><strong>Chạy thử trên DB:</strong> ${escapeHtml(step.db.detail)} · ${step.db.msBefore} → ${step.db.msAfter} ms</div>` : ""}
         ${step.edits
           .map((edit, position) => {
             const which = step.edits.length > 1 ? ` ${position + 1}/${step.edits.length}` : "";

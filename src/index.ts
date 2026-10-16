@@ -13,16 +13,7 @@ import {
   type Args,
   type TargetArgs,
 } from "./cli-args.js";
-import { checkSqlSteps, proposeSqlSteps, rejectionOf } from "./stages/sql-optimize.js";
-import {
-  applySteps,
-  detectDialect,
-  MAX_SQL_CHARS,
-  optimizedPathOf,
-  readSqlFile,
-  renderOptimizedFile,
-  writeSqlFile,
-} from "./sql-file.js";
+import { runSqlOptimize } from "./sql-optimize-command.js";
 import { runSpecDraft, type SpecDraftInput } from "./stages/spec-draft.js";
 import { connectDatabase, describeDatabase, parseConnection, type SqlRunner } from "./database.js";
 import type { DatabaseContext } from "./database-scripts.js";
@@ -321,135 +312,15 @@ async function runSpecDraftCommand(argv: string[]): Promise<void> {
   );
 }
 
-/**
- * `aidev sql-optimize --file x.sql` — writes `x_optimized.sql` next to it. The
- * original is never written. Three steps, each reported as it happens:
- * 1. an agent proposes edits (exact code before → after, per query);
- * 2. a second, independent agent checks each one keeps the results and side
- *    effects the same — an edit it does not confirm is dropped;
- * 3. plain code applies the confirmed edits in order. Code no edit names
- *    cannot change, so business logic outside the listed edits is untouched.
- * The file header and the UI show every step with its before/after.
- */
+/** `aidev sql-optimize` — see `src/sql-optimize-command.ts`. */
 async function runSqlOptimizeCommand(argv: string[]): Promise<void> {
-  const args = parseSqlOptimizeArgs(argv);
-  const file = path.resolve(args.file);
-  if (!existsSync(file)) throw new Error(`SQL file not found: ${file}`);
-  const outPath = optimizedPathOf(file);
-  // Checked before the agent runs: refusing afterwards would throw away a paid answer.
-  if (existsSync(outPath) && !args.overwrite) {
-    throw new Error(`${outPath} already exists. Pass --overwrite to replace it.`);
-  }
-  const source = await readSqlFile(file);
-  if (!source.text.trim()) return report("errored", `SQL file is empty: ${file}`);
-  if (source.text.length > MAX_SQL_CHARS) {
-    return report(
-      "errored",
-      `SQL file is ${source.text.length.toLocaleString("en-US")} characters; this demo handles up to ${MAX_SQL_CHARS.toLocaleString("en-US")}. Split it and optimize the parts.`,
-    );
-  }
-
-  const detected = args.dialect ?? detectDialect(source.text);
-  onProgress(
-    `SQL optimize: ${path.basename(file)} — ${source.text.length.toLocaleString("en-US")} characters, dialect ${
-      args.dialect ? `${args.dialect} (chosen)` : (detected ?? "not detected, the model decides")
-    }`,
-  );
-  onProgress(
-    args.instructions
-      ? "SQL optimize: mode — performance, plus only the logic changes you requested"
-      : "SQL optimize: mode — performance only, business logic must stay exactly the same",
-  );
-  const input = {
-    sql: source.text,
-    fileName: path.basename(file),
-    dialect: detected,
-    dialectChosen: Boolean(args.dialect),
-    ...(args.instructions ? { instructions: args.instructions } : {}),
-  };
-
-  let proposal;
-  let checks;
-  try {
-    onProgress("SQL optimize: proposing edits — each one names its query and the exact code before and after");
-    proposal = await proposeSqlSteps(input);
-    const total = proposal.steps.length;
-    onProgress(`SQL optimize: ${total} edit(s) proposed`);
-    proposal.steps.forEach((step, index) =>
-      onProgress(`SQL optimize: step ${index + 1}/${total} proposed — ${step.statement} — ${step.title}`),
-    );
-    if (total) onProgress(`SQL optimize: independent check of ${total} edit(s) — do the results stay exactly the same?`);
-    checks = total ? await checkSqlSteps(input, proposal.steps) : new Map();
-  } catch (error) {
-    // Fail-closed: without a check, nothing is applied and no file is written.
-    if (error instanceof StageError) return report("errored", `${error.message}\nNo file was written.`);
-    throw error;
-  }
-
-  const numbered = proposal.steps.map((step, index) => ({
-    ...step,
-    index: index + 1,
-    ...(checks.get(index + 1) ? { check: checks.get(index + 1) } : {}),
-  }));
-  const rejected = new Map<number, string>();
-  for (const step of numbered) {
-    const reason = rejectionOf(step, step.check, args.instructions);
-    if (reason) rejected.set(step.index, reason);
-  }
-  const { text, outcomes } = applySteps(source.text, numbered, rejected);
-  for (const step of outcomes) {
-    onProgress(
-      step.status === "applied"
-        ? `SQL optimize: step ${step.index}/${outcomes.length} applied (${step.edits.length} edit(s), line ${step.lines?.join(", ")}) — ${step.title}`
-        : `SQL optimize: step ${step.index}/${outcomes.length} NOT applied — ${step.rejectedBecause}`,
-    );
-  }
-
-  const optimizationReport = {
-    dialect: proposal.dialect,
-    steps: outcomes,
-    warnings: proposal.warnings,
-    indexSuggestions: proposal.indexSuggestions,
-  };
-  await writeSqlFile(outPath, renderOptimizedFile(optimizationReport, text, file), source);
-  onProgress(`SQL optimize: written to ${outPath}`);
-  if (streamEvents) {
-    emit({
-      type: "sql-steps",
-      outputPath: outPath,
-      steps: outcomes.map(({ check, ...step }) => ({
-        ...step,
-        ...(check ? { verdict: check.verdict, verdictReason: check.reason } : {}),
-      })),
-    });
-  }
-
-  const applied = outcomes.filter((step) => step.status === "applied");
-  report(
-    "done",
-    [
-      `Optimized file written to ${outPath} (${proposal.dialect}). The original is unchanged.`,
-      `${applied.length} of ${outcomes.length} proposed edit(s) applied; every other line is the original.`,
-      ...outcomes.flatMap((step) => [
-        "",
-        `Step ${step.index} [${step.status === "applied" ? `applied, line ${step.lines?.join(", ")}` : "NOT applied"}] ${step.title}`,
-        `  Query: ${step.statement}`,
-        ...(step.status === "rejected" ? [`  Not applied because: ${step.rejectedBecause}`] : []),
-        `  Faster because: ${step.why}`,
-        `  Same results because: ${step.equivalence}`,
-        ...step.edits.flatMap((edit, position) => [
-          `  Before${step.edits.length > 1 ? ` ${position + 1}/${step.edits.length}` : ""}:`,
-          ...edit.before.trim().split(/\r?\n/).map((line) => `    ${line}`),
-          "  After:",
-          ...edit.after.trim().split(/\r?\n/).map((line) => `    ${line}`),
-        ]),
-      ]),
-      ...(proposal.warnings.length ? ["", "Check before use:", ...proposal.warnings.map((warning) => `- ${warning}`)] : []),
-      ...(proposal.indexSuggestions.length
-        ? ["", `Index suggestions (${proposal.indexSuggestions.length}, not applied) are in the file header.`]
-        : []),
-    ].join("\n"),
-  );
+  await runSqlOptimize(parseSqlOptimizeArgs(argv), {
+    onProgress,
+    emitFiles: (files) => {
+      if (streamEvents) emit({ type: "sql-steps", files });
+    },
+    report,
+  });
 }
 
 /**
