@@ -251,8 +251,11 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
   for (const [index, task] of tasks.entries()) {
     if (completedTasks.some((done) => done.id === task.id)) continue;
 
-    let summary: string;
+    let summary = "";
     let taskSession: ActiveStep | undefined;
+    // Rounds after a failed build check, off by default (config.verifyGate.fixRounds):
+    // each one costs a resumed Coding session, which is the person's call to pay for.
+    for (let round = 0; ; round++) {
     try {
       // An interrupted task resumes its own saved session; when that
       // transcript is gone it starts a new one told to continue from the files
@@ -301,6 +304,13 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
         await saveProgress(taskSession);
         onProgress(`Build check: fail — ${task.id}`);
         logger?.recordCoding(1, task.id, `Build check failed after this task:\n${report}`);
+        if (taskSession && round < config.verifyGate.fixRounds) {
+          onProgress(
+            `Build check: fix round ${round + 1}/${config.verifyGate.fixRounds} — ${task.id} resumes its session with the failure`,
+          );
+          journal.offer(taskSession);
+          continue;
+        }
         return {
           status: "errored",
           message: gateFailedMessage(task.id, index, tasks.map((t) => t.id), completedTasks, report),
@@ -308,6 +318,8 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
       }
       onProgress(`Build check: pass — ${task.id}`);
       gateFailure = undefined;
+    }
+    break;
     }
     const files = await filesWrittenByTask(spec);
     completedTasks.push({ id: task.id, description: task.description, summary, ...(files.length ? { files } : {}) });

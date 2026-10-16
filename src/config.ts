@@ -109,12 +109,18 @@ export const config = {
     maxBashOutputChars: 8000,
   },
   // The build check the pipeline itself runs after each feature Coding task
-  // (`src/verify-gate.ts`). A failure stops the run — it is not retried (see
-  // CLAUDE.md, "Nothing after the design review is retried").
+  // (`src/verify-gate.ts`). By default a failure stops the run — it is not
+  // retried (see CLAUDE.md, "Nothing after the design review is retried").
   verifyGate: {
     enabled: true,
     timeoutMs: 15 * 60 * 1000,
     tailLines: 60,
+    // Fix rounds per task after a failed check: the task's own session is
+    // resumed with the failure, then the check runs again. 0 = stop at the
+    // first failure. Each round is a paid Coding session (up to its
+    // maxBudgetUsd) — raising it is the person's cost decision. Env:
+    // AIDEV_BUILD_FIX_ROUNDS.
+    fixRounds: Math.max(0, Math.min(3, Number(process.env.AIDEV_BUILD_FIX_ROUNDS ?? 0) || 0)),
   },
 };
 

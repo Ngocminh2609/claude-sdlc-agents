@@ -76,6 +76,15 @@ export class StepJournal {
   }
 
   /**
+   * Hands a step's own session back for its next `run` in this process — a
+   * build-check fix round continues the task's conversation exactly as the
+   * next run would after a stop.
+   */
+  offer(active: ActiveStep): void {
+    this.pending = active;
+  }
+
+  /**
    * Runs one agent step. `persist` writes the checkpoint with the given active
    * step; it is called before the session starts, because a killed process
    * never gets to save anything afterwards. The caller's next save, once the

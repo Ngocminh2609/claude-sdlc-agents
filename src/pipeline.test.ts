@@ -967,6 +967,32 @@ describe("runPipeline — build check after each task", () => {
     expect(last.gateFailure.report).toContain("npm run lint");
   });
 
+  it("with fix rounds turned on, resumes the failing task's own session with the failure, then checks again", async () => {
+    const { config } = await import("./config.js");
+    const before = config.verifyGate.fixRounds;
+    config.verifyGate.fixRounds = 1;
+    try {
+      loadCheckpoint.mockResolvedValue({ status: "found", savedAt: "2026-10-15T01:00:00Z", data: checked });
+      canResumeSession.mockResolvedValue(true);
+      const sessions = claimingSessions(runCoding, "implemented");
+      runVerifyGate.mockResolvedValueOnce({ ok: true, ran: 1 }).mockResolvedValueOnce(failure).mockResolvedValue({ ok: true, ran: 1 });
+      runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+      const progress: string[] = [];
+
+      const result = await runPipeline({ spec, onProgress: (message) => progress.push(message) });
+
+      expect(result.status).toBe("done");
+      expect(progress).toContain("Build check: fix round 1/1 — task-2 resumes its session with the failure");
+      expect(runCoding).toHaveBeenCalledTimes(3);
+      expect(runCoding.mock.calls[1][0].task.id).toBe("task-2");
+      expect(runCoding.mock.calls[1][0].buildCheckFailure).toContain("npm run lint");
+      // Same conversation, resumed — not a fresh session.
+      expect(sessions[1]).toMatchObject({ sessionId: (sessions[0] as { sessionId: string }).sessionId, resume: true });
+    } finally {
+      config.verifyGate.fixRounds = before;
+    }
+  });
+
   it("shows the failure to the task's next session and moves on once the check passes", async () => {
     loadCheckpoint.mockResolvedValue({
       status: "found",
