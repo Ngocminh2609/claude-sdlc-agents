@@ -33,6 +33,31 @@ describe("RunLogger", () => {
     expect(JSON.stringify(saved)).not.toContain("super-secret-password");
   });
 
+  it("keeps each build check and loop-guard intervention, so a run can be audited afterwards", async () => {
+    const logger = new RunLogger(spec, "/tmp/specs/activity.md");
+    logger.recordStepActivity({ step: "gate:baseline", phase: "end", ok: true });
+    logger.recordStepActivity({ step: "gate:task-1", phase: "end", ok: false });
+    logger.recordStepActivity({ step: "coding:task-1", phase: "turn", turns: 3, maxTurns: 60, note: "repeat" });
+    logger.recordStepActivity({ step: "e2e", phase: "turn", turns: 48, maxTurns: 60, note: "soft-cap" });
+    logger.recordStepActivity({ step: "coding:task-1", phase: "turn", turns: 4, maxTurns: 60 });
+    logger.finish("errored", "stopped");
+    writtenDir = await logger.write();
+
+    const { readFile } = await import("node:fs/promises");
+    const json = JSON.parse(await readFile(`${writtenDir}/log.json`, "utf-8"));
+    const markdown = await readFile(`${writtenDir}/report.md`, "utf-8");
+    expect(json.buildChecks.map((check: { step: string; ok: boolean }) => [check.step, check.ok])).toEqual([
+      ["gate:baseline", true],
+      ["gate:task-1", false],
+    ]);
+    expect(json.loopGuard).toEqual({
+      "coding:task-1": { repeat: 1, blocked: 0, softCap: 0 },
+      e2e: { repeat: 0, blocked: 0, softCap: 1 },
+    });
+    expect(markdown).toContain("- gate:task-1: **fail**");
+    expect(markdown).toContain("- e2e: 0 repeat warning(s), 0 refused call(s), 1 wrap-up nudge(s)");
+  });
+
   it("writes log.json and report.md, and never persists the raw db connection value", async () => {
     const logger = new RunLogger(spec, "/tmp/specs/my-feature.md");
     logger.recordSpecsArch(1, "a proposal");

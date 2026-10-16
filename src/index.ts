@@ -140,6 +140,7 @@ async function runFeature(argv: string[]): Promise<void> {
 
   try {
     const logger = new RunLogger(spec, args.specPath, { saveAsItGoes: true });
+    onStepActivity((report) => logger.recordStepActivity(report));
     for (const line of describeMetadataStandardsOverride(args.noMetadataStandards)) onProgress(line);
     onProgress(describeMetadataStandards(spec.metadataStandards));
     onProgress(describeSkillCatalog(spec.skillCatalog));

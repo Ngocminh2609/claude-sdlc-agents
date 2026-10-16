@@ -37,7 +37,9 @@ export const config = {
     // E2E gets one attempt only (a failure stops the run), and a real app can
     // need several servers started — Spring Boot + a Vite frontend ran out of
     // the original 40 turns before producing any verdict.
-    e2e: 60,
+    // Measured 2026-10-15/16 on three real runs: 46, 55 and 57 of 60 turns —
+    // too close to the cap. The USD cap (maxBudgetUsd.e2e) is unchanged.
+    e2e: 80,
     // Clone mode. Reading a whole target project to work out its conventions
     // is exploration-heavy; mapping and porting then work from a decided list,
     // so they spend turns on files rather than on searching.

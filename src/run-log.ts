@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import type { StepReport } from "./step-activity.js";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { describeWiring } from "./clone-wiring.js";
@@ -138,6 +139,20 @@ interface E2eEntry {
   verdict: E2eVerdict;
 }
 
+/** One run of the pipeline's own build check (`gate:baseline`, `gate:<task>`). */
+interface BuildCheckEntry {
+  step: string;
+  ok: boolean;
+  at: string;
+}
+
+/** Loop-guard interventions in one agent step (see `loop-guard.ts`). */
+interface GuardEntry {
+  repeat: number;
+  blocked: number;
+  softCap: number;
+}
+
 export class RunLogger {
   private readonly startedAt = new Date().toISOString();
   private finishedAt?: string;
@@ -149,6 +164,8 @@ export class RunLogger {
   private resumedFrom: { savedAt: string; doneTaskIds: string[] } | null = null;
   private readonly coding: CodingEntry[] = [];
   private readonly e2e: E2eEntry[] = [];
+  private readonly buildChecks: BuildCheckEntry[] = [];
+  private readonly guard: Record<string, GuardEntry> = {};
   private finalStatus = "in-progress";
   private readonly progress = new ProgressSaver();
   private finalMessage = "";
@@ -212,6 +229,24 @@ export class RunLogger {
     this.saveProgress();
   }
 
+  /**
+   * Keeps what otherwise only reached the live UI: each build check's pass or
+   * fail, and each loop-guard intervention per step — so a run can be audited
+   * (and the guard's effect measured) after it ends.
+   */
+  recordStepActivity(report: StepReport): void {
+    if (report.phase === "end" && report.step.startsWith("gate:") && typeof report.ok === "boolean") {
+      this.buildChecks.push({ step: report.step, ok: report.ok, at: new Date().toISOString() });
+      this.saveProgress();
+    } else if (report.phase === "turn" && report.note) {
+      const entry = (this.guard[report.step] ??= { repeat: 0, blocked: 0, softCap: 0 });
+      if (report.note === "repeat") entry.repeat++;
+      else if (report.note === "blocked") entry.blocked++;
+      else entry.softCap++;
+      this.saveProgress();
+    }
+  }
+
   finish(status: string, message: string): void {
     this.finalStatus = status;
     this.finalMessage = message;
@@ -251,11 +286,13 @@ export class RunLogger {
       tasks: this.tasks,
       coding: this.coding,
       e2e: this.e2e,
+      buildChecks: this.buildChecks,
+      loopGuard: this.guard,
       finalStatus: this.finalStatus,
       finalMessage: this.finalMessage,
     };
 
-    return persist(this.runDir, data, this.toMarkdown(data));
+    return persist(this.runDir, data, this.toMarkdown(data) + activityMarkdown(this.buildChecks, this.guard));
   }
 
   private toMarkdown(data: {
@@ -672,4 +709,22 @@ export class CloneRunLogger {
 
     return lines.join("\n");
   }
+}
+
+/** The build-check and loop-guard section of a feature run's report.md. */
+function activityMarkdown(checks: BuildCheckEntry[], guard: Record<string, GuardEntry>): string {
+  const lines: string[] = [];
+  if (checks.length) {
+    lines.push("", "## Build check", "", ...checks.map((check) => `- ${check.step}: **${check.ok ? "pass" : "fail"}** (${check.at})`));
+  }
+  const steps = Object.entries(guard);
+  if (steps.length) {
+    lines.push(
+      "",
+      "## Loop guard",
+      "",
+      ...steps.map(([step, entry]) => `- ${step}: ${entry.repeat} repeat warning(s), ${entry.blocked} refused call(s), ${entry.softCap} wrap-up nudge(s)`),
+    );
+  }
+  return lines.length ? `${lines.join("\n")}\n` : "";
 }
