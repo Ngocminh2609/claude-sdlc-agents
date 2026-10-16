@@ -32,6 +32,8 @@ const MEMORY_VERSION = 1;
 const MAX_TASK_SUMMARY = 600;
 /** How many earlier features a prompt lists, newest first. */
 const MAX_FEATURES_IN_PROMPT = 12;
+/** A start-up recipe, not a test report: servers, commands, ports, prerequisites. */
+const MAX_E2E_RECIPE = 2000;
 
 export interface FeatureTask {
   id: string;
@@ -56,6 +58,12 @@ export interface ProjectMemory {
   /** `role:path` of every target folder this map describes. */
   roots: string[];
   conventions?: { text: string; manifestKey: string; savedAt: string; verifyCommands?: VerifyCommand[] };
+  /**
+   * How the last passing E2E run started the whole app. Working that out again
+   * was 15 of 55 turns of a real E2E session (README, harness scripts, config
+   * seeds, ports), on a project whose start-up had not changed since the run before.
+   */
+  e2e?: { recipe: string; savedAt: string };
   features: FeatureRecord[];
 }
 
@@ -123,6 +131,29 @@ export async function rememberConventions(
       ...(verifyCommands ? { verifyCommands } : {}),
     };
   });
+}
+
+/** Keeps how a passing E2E run started the app, replacing the older one. */
+export async function rememberE2eRecipe(roots: ProjectRoot[], recipe: string): Promise<void> {
+  const text = shorten(recipe, MAX_E2E_RECIPE);
+  if (!text) return;
+  await update(roots, (memory) => {
+    memory.e2e = { recipe: text, savedAt: new Date().toISOString() };
+  });
+}
+
+/** The E2E stage's head start: how the app was started the last time E2E passed here. */
+export function e2eRecipePromptSection(memory: ProjectMemory | null | undefined): string[] {
+  const saved = memory?.e2e;
+  if (!saved?.recipe) return [];
+  return [
+    "",
+    `--- How the last passing E2E run started this app (${saved.savedAt.slice(0, 10)}) ---`,
+    "Start from this instead of working it out again: the Playwright config it names is likely still on disk",
+    "and starting every server. Reuse it, change only what this feature needs, and re-derive only a part that",
+    "no longer works.",
+    saved.recipe,
+  ];
 }
 
 /** Records a finished task under its feature, creating the feature on its first task. */
@@ -219,6 +250,9 @@ function renderMarkdown(memory: ProjectMemory): string {
   if (memory.conventions) {
     lines.push(`## Conventions (saved ${memory.conventions.savedAt.slice(0, 10)}, reused while build files are unchanged)`, "");
     lines.push(memory.conventions.text, "");
+  }
+  if (memory.e2e) {
+    lines.push(`## Starting the app for E2E (last pass ${memory.e2e.savedAt.slice(0, 10)})`, "", memory.e2e.recipe, "");
   }
   lines.push("## Features", "");
   for (const feature of [...memory.features].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))) {

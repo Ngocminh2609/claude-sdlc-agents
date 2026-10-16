@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, limitsOf } from "../config.js";
+import { stageOptions } from "../config.js";
 import { indexFor, indexPromptSection, withIndexAccess } from "../project-index.js";
 import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { CloneInput, TargetConventions } from "../types.js";
@@ -85,8 +85,7 @@ export async function readTargetConventions(clone: CloneInput): Promise<TargetCo
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
-    model: config.model,
-    ...limitsOf("targetConventions"),
+    ...stageOptions("targetConventions"),
   };
 
   const roots = rootsOf(clone);

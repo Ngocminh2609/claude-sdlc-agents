@@ -1,9 +1,11 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
+import { config, networkExfilBashBlocklist, stageOptions } from "../config.js";
 import { databasePromptSection } from "../database-scripts.js";
 import { projectContextPromptSection } from "./project-context.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
+import { TOKEN_BUDGET_RULES } from "../prompts/token-budget.js";
+import { e2eRecipePromptSection } from "../project-memory.js";
 import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { rootPath, rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import { combineVerdict, prepareE2e, runE2eCheck } from "../e2e-check.js";
@@ -17,7 +19,8 @@ the developer's claims.
 1. Work out how to start the WHOLE app from its own build and run files
    (package.json, pom.xml, build.gradle, README, ...). An app can need more
    than one server — e.g. a Spring Boot API plus a Vite frontend — and every
-   one of them must be running for a browser test to mean anything.
+   one of them must be running for a browser test to mean anything. When the
+   prompt says how the last passing run started this app, start from that.
 2. If Playwright isn't already set up, install it (@playwright/test) and
    install browser binaries, then create/update playwright.config with a
    "webServer" entry for EACH server the app needs (webServer accepts an
@@ -26,14 +29,25 @@ the developer's claims.
 3. Write your OWN Playwright test files (do not trust or reuse tests the
    Coding agent wrote) under an "e2e/" directory, covering every acceptance
    criterion in the spec by driving the real user flows through the browser.
-4. Run "${config.playwrightTestCommand}" and read the results.
+4. Run "${config.playwrightTestCommand}" once all your tests are written, with
+   "--reporter=line" and the output piped through "tail -n 80". While fixing a
+   failure, re-run only the failing tests (-g "<title>" or the file), then the
+   full suite once at the end. Do not re-run a passing suite or check for
+   flakiness (no --repeat-each): the pipeline runs the whole suite again itself
+   afterwards and fails a flaky test.
 5. Map every acceptance criterion to concrete evidence (the Playwright test
    name that exercises it). A criterion with no covering test must be marked
    covered=false.
+6. In "runRecipe", say how you started the whole app, for the next E2E run on
+   this project: each server with its folder, start command, port or env var,
+   what had to be running already (containers, database), the Playwright config
+   file, and what did not work. Only start-up facts, nothing about this feature.
 
 You may only write files under an "e2e/" directory, files named "*.spec.ts"
 or "*.spec.js", or a "playwright.config" file — you cannot edit application
-source. You are reporting defects, not fixing them.`;
+source. You are reporting defects, not fixing them.
+
+${TOKEN_BUDGET_RULES}`;
 
 const E2E_SCHEMA = {
   type: "object",
@@ -53,6 +67,7 @@ const E2E_SCHEMA = {
       },
     },
     failedScenarios: { type: "array", items: { type: "string" } },
+    runRecipe: { type: "string" },
   },
   required: ["verdict", "summary"],
 };
@@ -125,8 +140,7 @@ export async function runE2eTest(
     allowedTools: ["Read", "Glob", "Grep", "Bash"],
     disallowedTools: [...networkExfilBashBlocklist],
     canUseTool: restrictWritesToE2eFiles,
-    model: config.model,
-    ...limitsOf("e2e"),
+    ...stageOptions("e2e"),
   };
 
   // Separate BE/FE folders: both servers have to be started, so both folders
@@ -150,6 +164,7 @@ export async function runE2eTest(
     // relevant-files list is a coding concern and would blur this stage's
     // independence from what the Coding stage claims to have done.
     ...projectContextPromptSection(projectContext, { includeRelevantFiles: false }),
+    ...e2eRecipePromptSection(spec.projectMemory),
     ...skillCatalogPromptSection(spec.skillCatalog),
     ...runtimePortsPromptSection(runtimePorts),
     ...guardPromptSection(e2eRoot),

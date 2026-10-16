@@ -1,7 +1,7 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { databasePromptSection } from "../database-scripts.js";
-import { config, limitsOf } from "../config.js";
+import { stageOptions } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
 import { FEATURE_TEST_POLICY } from "../prompts/feature-test-policy.js";
@@ -91,9 +91,8 @@ export async function runSpecsArch(
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
-    model: config.model,
     // A second tree to read needs more room than a single project does.
-    ...limitsOf(referenceDirs.length ? "specsArchWithReference" : "specsArch"),
+    ...stageOptions(referenceDirs.length ? "specsArchWithReference" : "specsArch"),
   };
 
   if (extraDirs.length) options.additionalDirectories = extraDirs;

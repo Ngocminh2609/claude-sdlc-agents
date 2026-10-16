@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
-import { config, limitsOf } from "../config.js";
+import { stageOptions } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { StageError } from "../stage-error.js";
 import { extraDirectories, referencePromptSection } from "../reference-repos.js";
@@ -81,8 +81,7 @@ export async function runSpecDraft(input: SpecDraftInput): Promise<string> {
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
-    model: config.model,
-    ...limitsOf("specDraft"),
+    ...stageOptions("specDraft"),
   };
 
   if (extraDirs.length) options.additionalDirectories = extraDirs;

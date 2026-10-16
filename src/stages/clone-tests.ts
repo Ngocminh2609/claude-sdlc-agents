@@ -1,8 +1,9 @@
 import path from "node:path";
 import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
+import { networkExfilBashBlocklist, stageOptions } from "../config.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
+import { TOKEN_BUDGET_RULES } from "../prompts/token-budget.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { isInsideReference } from "../reference-repos.js";
 import { isTestFile } from "../test-files.js";
@@ -75,7 +76,9 @@ How:
 
 Report ok=true only if every new test passes. List each failing test in
 "failures" as "<test name>: <assertion or error message>" verbatim, and say in the
-summary which failures point at the ported code.`;
+summary which failures point at the ported code.
+
+${TOKEN_BUDGET_RULES}`;
 
 const RERUN_PROMPT = `You are re-running unit tests in an automated port pipeline, after the
 ported code was fixed. Run exactly the commands given, read the output, and report.
@@ -124,8 +127,7 @@ export async function runCloneTests(request: CloneTestRequest): Promise<CloneTes
       ...networkExfilBashBlocklist,
     ],
     canUseTool: rerun ? denyAllWrites : guardTestWrites(clone.referencePaths),
-    model: config.model,
-    ...limitsOf(rerun ? "cloneTestsRerun" : "cloneTests"),
+    ...stageOptions(rerun ? "cloneTestsRerun" : "cloneTests"),
   };
   const secondary = secondaryRootDirs(roots);
   if (secondary.length) options.additionalDirectories = secondary;

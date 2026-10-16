@@ -101,6 +101,23 @@ describe("runE2eTest", () => {
     expect(options.systemPrompt).toMatch(/EACH server/);
   });
 
+  it("hands over how the last passing run started the app, and asks for this run's recipe", async () => {
+    const projectMemory = {
+      version: 1,
+      roots: [],
+      features: [],
+      e2e: { recipe: "playwright.config.ts starts vite and the jar", savedAt: "2026-10-15T08:00:00.000Z" },
+    };
+    await run({ ...spec, projectMemory });
+
+    const [prompt, options, schema] = runStructuredQuery.mock.calls[0];
+    expect(prompt).toContain("How the last passing E2E run started this app (2026-10-15)");
+    expect(prompt).toContain("playwright.config.ts starts vite and the jar");
+    expect(schema.properties.runRecipe).toEqual({ type: "string" });
+    expect(options.systemPrompt).toContain("no --repeat-each");
+    expect(options.systemPrompt).toContain("TOKEN BUDGET");
+  });
+
   it("fails closed (does not silently pass) when the underlying query fails", async () => {
     runStructuredQuery.mockResolvedValue({ ok: false, error: "boom" });
 

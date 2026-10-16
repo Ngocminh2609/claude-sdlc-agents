@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>aidev — bảng điều khiển pipeline</title>
+    <title>aidev</title>
     <link rel="stylesheet" href="/styles.css" />
     <link
       rel="icon"
@@ -12,575 +12,341 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark">aidev</span>
-        <span class="brand-sub">bảng điều khiển pipeline</span>
-      </div>
+      <span class="brand-mark">aidev</span>
+      <nav class="tabs" id="tabs">
+        <button class="tab is-active" data-tab="feature">Task mới</button>
+        <button class="tab" data-tab="clone">Clone</button>
+        <button class="tab" data-tab="sql">Tối ưu SQL</button>
+        <span class="tab-sep" aria-hidden="true"></span>
+        <button class="tab" data-tab="history">Lịch sử</button>
+        <button class="tab" data-tab="guide">Hướng dẫn</button>
+      </nav>
       <div class="topbar-meta" id="topbar-meta"></div>
     </header>
 
-    <nav class="tabs" id="tabs">
-      <button class="tab tab-flow is-active" data-tab="feature">
-        Làm task mới <span class="tab-sub">spec → code → E2E</span>
-      </button>
-      <button class="tab tab-flow" data-tab="clone">
-        Clone từ dự án khác <span class="tab-sub">repo mẫu → port → build</span>
-      </button>
-      <button class="tab tab-flow" data-tab="sql">
-        Tối ưu SQL <span class="tab-sub">file .sql → _optimized.sql</span>
-      </button>
-      <span class="tab-sep" aria-hidden="true"></span>
-      <button class="tab" data-tab="history">Lịch sử chạy</button>
-      <button class="tab" data-tab="guide">Hướng dẫn</button>
-    </nav>
-
     <main>
-      <!-- ================= LÀM TASK MỚI ================= -->
+      <!-- ================= TASK MỚI ================= -->
       <section class="panel-group is-active" id="tab-feature" data-flow="feature">
-        <div class="callout callout-info">
-          <div class="callout-body">
-            <strong>Làm task mới</strong> — xây một tính năng <em>chưa có</em>. Đầu vào là một file
-            spec (<code>.md</code>, tự viết hoặc để AI sinh từ yêu cầu ở bước 2) và thư mục dự án đích;
-            hệ thống tự thiết kế → duyệt thiết kế → chia việc → viết code (và chạy script tạo bảng vào
-            DB nếu có chuỗi kết nối) → kiểm thử E2E bằng trình duyệt thật. Muốn bê nguyên một tính năng
-            <em>đã có</em> ở dự án khác sang? Dùng tab
-            <a href="#" data-goto="clone">Clone từ dự án khác →</a>
+        <div class="page-head">
+          <div>
+            <h1>Task mới</h1>
+            <span class="page-sub">Spec → thiết kế → code → E2E</span>
+          </div>
+          <div class="preset-bar">
+            <select id="feature-preset-select" title="Thiết lập đã lưu">
+              <option value="">Thiết lập đã lưu…</option>
+            </select>
+            <button class="btn btn-ghost btn-sm" id="feature-preset-save">Lưu</button>
+            <button class="btn btn-ghost btn-sm" id="feature-preset-delete">Xoá</button>
           </div>
         </div>
 
-        <!-- Bước 1 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">1</span>
-            <div>
-              <h2>Chọn thư mục dự án đích</h2>
-              <p class="step-desc">
-                Nơi AI sẽ ghi code: <strong>BE</strong> (server), <strong>FE</strong> (giao diện) và
-                <strong>SQL</strong> (script tạo bảng). BE/FE là thư mục có file build riêng
-                (<code>pom.xml</code>, <code>package.json</code>…).
-              </p>
+        <div class="form-col">
+          <div class="card">
+            <h2 class="card-title"><span class="step-num">1</span>Dự án đích</h2>
+            <div class="grid-2">
+              <div class="field">
+                <label for="feature-project-be">BE</label>
+                <div class="row">
+                  <input id="feature-project-be" type="text" spellcheck="false" placeholder="D:\...\BE" />
+                  <button class="btn btn-icon" data-browse="feature-project-be" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="feature-project-fe">FE</label>
+                <div class="row">
+                  <input id="feature-project-fe" type="text" spellcheck="false" placeholder="D:\...\FE" />
+                  <button class="btn btn-icon" data-browse="feature-project-fe" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="feature-project-sql">SQL <span class="optional">khi dùng DB</span></label>
+                <div class="row">
+                  <input id="feature-project-sql" type="text" spellcheck="false" placeholder="D:\...\SQL" />
+                  <button class="btn btn-icon" data-browse="feature-project-sql" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="reference-path" title="AI chỉ đọc để học pattern, không ghi vào">Tham khảo <span class="optional">chỉ đọc</span></label>
+                <div class="row">
+                  <input id="reference-path" type="text" spellcheck="false" placeholder="D:\...\du-an-mau" />
+                  <button class="btn btn-icon" data-browse="reference" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="field">
-            <label for="feature-project-be">Thư mục BE</label>
-            <div class="row">
-              <input id="feature-project-be" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\BE-CSDL" />
-              <button class="btn btn-ghost" data-browse="feature-project-be">Chọn thư mục…</button>
-            </div>
-          </div>
-          <div class="field">
-            <label for="feature-project-fe">Thư mục FE</label>
-            <div class="row">
-              <input id="feature-project-fe" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\FE-CSDL" />
-              <button class="btn btn-ghost" data-browse="feature-project-fe">Chọn thư mục…</button>
-            </div>
-          </div>
-          <div class="field">
-            <label for="feature-project-sql">
-              Thư mục SQL <span class="optional">bắt buộc nếu nhập chuỗi kết nối ở bước 4</span>
-            </label>
-            <div class="row">
-              <input id="feature-project-sql" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\SQL" />
-              <button class="btn btn-ghost" data-browse="feature-project-sql">Chọn thư mục…</button>
-            </div>
-          </div>
-          <p class="hint">
-            Chỉ có BE hoặc chỉ có FE thì để trống ô còn lại. Nếu BE và FE nằm chung một thư mục
-            gốc, chọn cùng thư mục đó cho cả hai ô. Để trống ô SQL thì script DB nằm trong thư mục BE.
-            ⚠️ AI sửa trực tiếp vào các thư mục này, không tạo nhánh riêng và không sao lưu.
-          </p>
 
-          <div class="field sub-field">
-            <label for="reference-path">
-              Dự án tham khảo pattern <span class="optional">không bắt buộc</span>
-            </label>
+          <div class="card">
+            <h2 class="card-title"><span class="step-num">2</span>Spec</h2>
             <div class="row">
-              <input id="reference-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\TKDT" />
-              <button class="btn btn-ghost" data-browse="reference">Chọn thư mục…</button>
+              <input id="spec-path" type="text" spellcheck="false" placeholder="D:\...\spec.md" />
+              <button class="btn btn-icon" data-browse="spec" title="Chọn file" aria-label="Chọn file"></button>
             </div>
-            <p class="hint">
-              Cho AI <strong>đọc</strong> thêm một dự án khác để học cách team viết code (cấu trúc
-              module, cách gọi API, component dùng chung…), cả lúc sinh spec lẫn lúc viết code. Bị chặn
-              ghi vào đó — mọi file sinh ra đều nằm trong dự án đích. Nếu mục tiêu là <em>bê nguyên</em>
-              một tính năng đã có thì dùng tab <a href="#" data-goto="clone">Clone</a>.
-            </p>
+            <details class="more">
+              <summary>Chưa có spec? Sinh từ yêu cầu</summary>
+              <div class="field">
+                <label for="spec-dir">Lưu vào</label>
+                <div class="row">
+                  <input id="spec-dir" type="text" spellcheck="false" placeholder="D:\...\plans\specs" />
+                  <button class="btn btn-icon" data-browse="spec-dir" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="spec-request">Yêu cầu</label>
+                <textarea id="spec-request" class="request-input" placeholder="VD: Màn hình quản lý đơn vị tính: danh sách, tìm theo tên, thêm/sửa/xoá; mã không trùng."></textarea>
+              </div>
+              <div class="actions">
+                <button class="btn btn-secondary" id="spec-draft-start" disabled>Sinh spec</button>
+              </div>
+              <p class="error-text hidden" id="spec-draft-error"></p>
+              <p class="hint hidden" id="spec-draft-result"></p>
+            </details>
           </div>
-        </div>
 
-        <!-- Bước 2 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">2</span>
-            <div>
-              <h2>Sinh file spec từ yêu cầu <span class="optional">bỏ qua nếu đã có spec</span></h2>
-              <p class="step-desc">
-                Mô tả bằng lời thường anh muốn làm gì. AI <strong>chỉ đọc</strong> các thư mục ở bước 1
-                để spec gọi đúng tên module, màn hình, bảng có thật — không sửa file nào — rồi lưu spec
-                vào thư mục anh chọn và điền sẵn vào bước 3.
-              </p>
-            </div>
-          </div>
-          <div class="field">
-            <label for="spec-dir">Thư mục lưu file spec</label>
-            <div class="row">
-              <input id="spec-dir" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\plans\specs" />
-              <button class="btn btn-ghost" data-browse="spec-dir">Chọn thư mục…</button>
-            </div>
-          </div>
-          <div class="field">
-            <label for="spec-request">Yêu cầu</label>
-            <textarea
-              id="spec-request"
-              class="request-input"
-              placeholder="Ví dụ: Thêm màn hình quản lý danh mục đơn vị tính: xem danh sách, tìm theo tên, thêm/sửa/xoá; mã không được trùng."
-            ></textarea>
-          </div>
-          <div class="actions">
-            <button class="btn btn-primary" id="spec-draft-start" disabled>🤖 Sinh spec</button>
-          </div>
-          <p class="error-text hidden" id="spec-draft-error"></p>
-          <p class="hint hidden" id="spec-draft-result"></p>
-        </div>
-
-        <!-- Bước 3 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">3</span>
-            <div>
-              <h2>Chọn file spec (.md)</h2>
-              <p class="step-desc">
-                Spec vừa sinh ở bước 2 được điền sẵn ở đây. <strong>Đọc và sửa trước khi chạy</strong> —
-                nhất là mục <em>Câu hỏi mở</em> và các chỗ ghi <em>(giả định)</em>: tiêu chí nghiệm thu
-                trong spec là thứ bước E2E dùng để chấm đạt hay không.
-              </p>
-            </div>
-          </div>
-          <div class="row">
-            <input id="spec-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\plans\tinh-nang-abc\spec.md" />
-            <button class="btn btn-ghost" data-browse="spec">Chọn file…</button>
-          </div>
-        </div>
-
-        <!-- Bước 4 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">4</span>
-            <div>
-              <h2>Cơ sở dữ liệu <span class="optional">không bắt buộc</span></h2>
-              <p class="step-desc">
-                Chỉ chọn khi tính năng có đụng tới database. Bỏ qua nếu không cần.
-              </p>
-            </div>
-          </div>
-          <div class="row">
+          <div class="card">
+            <h2 class="card-title"><span class="step-num">3</span>Database <span class="optional">tuỳ chọn</span></h2>
             <select id="db-mode">
-              <option value="none">Không dùng database</option>
-              <option value="connection">Có database (thường là trống) — hệ thống tự chạy script tạo bảng</option>
-              <option value="schema-file">Chỉ có file schema — AI thiết kế theo, không chạy gì vào DB</option>
+              <option value="none">Không dùng</option>
+              <option value="connection">Chuỗi kết nối — tự chạy script tạo bảng</option>
+              <option value="schema-file">File schema — chỉ để thiết kế</option>
             </select>
-          </div>
-          <div class="row hidden" id="db-connection-row">
-            <input id="db-connection" type="password" spellcheck="false" placeholder="postgresql://user:pass@host:5432/db  ·  jdbc:sqlserver://host:1433;databaseName=db;user=…;password=…  ·  mysql://…" />
-            <button class="btn btn-ghost" id="db-reveal" type="button">Hiện</button>
-          </div>
-          <div class="hint hidden" id="db-connection-hint">
-            <p>
-              Hệ thống <strong>tự nhận loại DB từ chuỗi kết nối</strong> (PostgreSQL, SQL Server, MySQL),
-              bảo AI viết script đúng cú pháp loại đó vào <strong>thư mục SQL ở bước 1</strong>, rồi
-              <strong>tự chạy các file .sql mới</strong> vào DB ngay sau mỗi task code — mỗi file một
-              transaction, theo thứ tự tên file. Kết nối được kiểm tra ngay lúc bắt đầu, sai thì dừng
-              trước khi tốn token.
+            <div class="row hidden" id="db-connection-row">
+              <input id="db-connection" type="password" spellcheck="false" placeholder="postgresql://… · jdbc:sqlserver://… · mysql://…" />
+              <button class="btn btn-ghost" id="db-reveal" type="button">Hiện</button>
+            </div>
+            <p class="hint hidden" id="db-connection-hint">
+              🔒 Không lưu. Script <code>.sql</code> mới chạy sau mỗi task; chặn <code>DROP</code>/<code>TRUNCATE</code>/<code>DELETE</code>.
             </p>
-            <p>
-              An toàn: file có <code>DROP</code> / <code>TRUNCATE</code> / <code>DELETE</code> bị từ chối,
-              không chạy. File tên chứa <code>rollback</code> không bao giờ được chạy. Script đã có sẵn
-              trong thư mục trước lần chạy không bị chạy lại. Script đã chạy mà bị sửa thì dừng và báo.
-            </p>
-            <p>
-              🔒 Chuỗi kết nối chỉ nằm trong bộ nhớ của lần chạy hiện tại: không lưu vào preset, không
-              lưu vào trình duyệt, không gửi cho AI, và bị che nếu lỡ xuất hiện trong output.
-            </p>
-          </div>
-          <div class="row hidden" id="db-schema-row">
-            <input id="db-schema-path" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\schema.sql" />
-            <button class="btn btn-ghost" data-browse="schema">Chọn file…</button>
-          </div>
-        </div>
-
-        <!-- Bước 5 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">5</span>
-            <div>
-              <h2>Kiểm tra rồi chạy</h2>
-              <p class="step-desc">
-                Một lần chạy có thể mất từ vài phút tới vài chục phút. Có thể đóng tab — pipeline vẫn
-                chạy, mở lại trang là thấy tiếp.
-              </p>
+            <div class="row hidden" id="db-schema-row">
+              <input id="db-schema-path" type="text" spellcheck="false" placeholder="D:\...\schema.sql" />
+              <button class="btn btn-icon" data-browse="schema" title="Chọn file" aria-label="Chọn file"></button>
             </div>
           </div>
 
-          <label class="precheck">
-            <input type="checkbox" id="feature-precheck" />
-            <span>
-              Tôi đã <strong>commit hoặc stash</strong> các thay đổi đang dở trong thư mục dự án đích.
-              <span class="hint-inline">Bắt buộc — công cụ ghi đè trực tiếp và không có bản sao lưu.</span>
-            </span>
-          </label>
+          <div class="card">
+            <h2 class="card-title"><span class="step-num">4</span>Chạy</h2>
+            <label class="precheck">
+              <input type="checkbox" id="feature-precheck" />
+              <span>Đã <strong>commit/stash</strong> dự án đích <span class="hint-inline">AI ghi thẳng vào thư mục, không sao lưu</span></span>
+            </label>
 
-          <label class="precheck">
-            <input type="checkbox" id="feature-fresh" />
-            <span>
-              Chạy lại từ đầu (bỏ tiến độ đã lưu)
-              <span class="hint-inline">
-                Mặc định: nếu lần trước bị dừng giữa chừng với cùng dự án + cùng spec, hệ thống tự
-                chạy tiếp từ chỗ dừng (bỏ qua thiết kế và các task đã xong). Tick khi anh đã xoá code và
-                muốn làm lại sạch từ đầu.
-              </span>
-            </span>
-          </label>
+            <details class="more" id="feature-more">
+              <summary>Tuỳ chọn</summary>
+              <div class="field">
+                <label for="feature-answers">Trả lời câu hỏi nghiệp vụ</label>
+                <textarea id="feature-answers" class="request-input" rows="3" placeholder="Khi lần trước dừng ở “Chờ trả lời” — trả lời theo số câu hỏi"></textarea>
+              </div>
+              <div class="grid-2">
+                <div class="field">
+                  <label for="feature-max-run-usd">Ngân sách (USD)</label>
+                  <input type="number" id="feature-max-run-usd" min="0" step="0.5" placeholder="Không giới hạn" />
+                </div>
+                <div class="field">
+                  <label for="feature-metadata-standards">Metadata standards</label>
+                  <select id="feature-metadata-standards">
+                    <option value="apply">Theo .metadata-standards.yml</option>
+                    <option value="skip">Bỏ qua lần này</option>
+                  </select>
+                </div>
+              </div>
+              <label class="checkbox">
+                <input type="checkbox" id="feature-fresh" />
+                <span title="Mặc định chạy tiếp từ chỗ dừng lần trước">Chạy lại từ đầu (bỏ tiến độ đã lưu)</span>
+              </label>
+            </details>
 
-          <div class="field">
-            <label for="feature-answers">Trả lời câu hỏi nghiệp vụ</label>
-            <textarea id="feature-answers" class="request-input" rows="3" placeholder="Chỉ điền khi lần chạy trước dừng để hỏi — trả lời theo số thứ tự câu hỏi"></textarea>
-            <p class="hint">
-              Hệ thống tự quyết mọi chuyện kỹ thuật; nó chỉ dừng hỏi khi spec bỏ ngỏ một
-              <strong>quyết định nghiệp vụ</strong>. Câu trả lời sửa bản thiết kế đã lưu, không làm lại từ đầu.
-            </p>
-          </div>
-
-          <div class="field">
-            <label for="feature-max-run-usd">Ngân sách tối đa cho lần chạy (USD)</label>
-            <input type="number" id="feature-max-run-usd" min="0" step="0.5" placeholder="Để trống = không giới hạn" />
-            <p class="hint">
-              Khi tổng chi phí ước tính chạm mức này, hệ thống <strong>dừng trước bước AI kế tiếp</strong>
-              (bước đang chạy vẫn chạy nốt) và <strong>giữ nguyên tiến độ</strong> — chạy lại với mức cao
-              hơn hoặc để trống sẽ đi tiếp từ đúng bước đó. Ngoài ra mỗi bước AI có trần riêng, nên một
-              bước chạy lố không thể đốt hết hạn mức.
-            </p>
-          </div>
-
-          <div class="field">
-            <label for="feature-metadata-standards">Áp dụng metadata standards (DDI/GSIM/SDC…)</label>
-            <select id="feature-metadata-standards">
-              <option value="apply">Có — theo file .metadata-standards.yml của thư mục dự án (mặc định)</option>
-              <option value="skip">Không — bỏ qua cho riêng lần chạy này, dù thư mục dự án có file đó</option>
-            </select>
-            <p class="hint">
-              Dự án chưa có file <code>.metadata-standards.yml</code> thì chọn "Có" cũng không tác động
-              gì — không có gì để áp dụng. Chọn "Không" không xoá hay sửa file đó, chỉ bỏ qua cho một
-              lần chạy này.
-            </p>
-          </div>
-
-          <div class="actions">
-            <button class="btn btn-primary" id="feature-run-start" disabled>▶ Chạy task mới</button>
-          </div>
-          <p class="error-text hidden" id="feature-run-error"></p>
-
-          <div class="preset-bar">
-            <span class="preset-label">Bộ thiết lập task mới:</span>
-            <select id="feature-preset-select" title="Các bộ dự án + spec đã lưu">
-              <option value="">— Chọn —</option>
-            </select>
-            <button class="btn btn-ghost" id="feature-preset-save">Lưu thiết lập hiện tại</button>
-            <button class="btn btn-ghost" id="feature-preset-delete">Xoá</button>
+            <div class="actions">
+              <button class="btn btn-primary" id="feature-run-start" disabled>▶ Chạy</button>
+            </div>
+            <p class="error-text hidden" id="feature-run-error"></p>
           </div>
         </div>
       </section>
 
-      <!-- ================= CLONE TỪ DỰ ÁN KHÁC ================= -->
+      <!-- ================= CLONE ================= -->
       <section class="panel-group" id="tab-clone" data-flow="clone">
-        <div class="callout callout-info">
-          <div class="callout-body">
-            <strong>Clone từ dự án khác</strong> — bê một tính năng <em>đã có</em> ở repo mẫu sang dự
-            án đích. <strong>Không cần spec</strong>: mã nguồn bên mẫu chính là bản đặc tả. Hệ thống tự
-            truy tìm → đọc dự án đích → lập bảng ánh xạ → port → kiểm phủ → kiểm nối FE↔BE → kiểm biên
-            dịch → unit test. Không có bước thiết kế, không chạy E2E. Muốn làm tính năng mới theo spec
-            thì dùng tab <a href="#" data-goto="feature">Làm task mới →</a>
+        <div class="page-head">
+          <div>
+            <h1>Clone</h1>
+            <span class="page-sub">Repo mẫu → port → build → test</span>
           </div>
-        </div>
-
-        <!-- Bước 1 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">1</span>
-            <div>
-              <h2>Chọn thư mục dự án đích</h2>
-              <p class="step-desc">
-                Nơi code được port sang. Chọn riêng thư mục <strong>BE</strong> và <strong>FE</strong>
-                — mỗi ô là thư mục có file build riêng (<code>pom.xml</code>, <code>package.json</code>…).
-              </p>
-            </div>
-          </div>
-          <div class="field">
-            <label for="clone-project-be">Thư mục BE</label>
-            <div class="row">
-              <input id="clone-project-be" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\BE-CSDL" />
-              <button class="btn btn-ghost" data-browse="clone-project-be">Chọn thư mục…</button>
-            </div>
-          </div>
-          <div class="field">
-            <label for="clone-project-fe">Thư mục FE</label>
-            <div class="row">
-              <input id="clone-project-fe" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\CSDL-VIMO\FE-CSDL" />
-              <button class="btn btn-ghost" data-browse="clone-project-fe">Chọn thư mục…</button>
-            </div>
-          </div>
-          <p class="hint">
-            Chỉ có BE hoặc chỉ có FE thì để trống ô còn lại. Nếu BE và FE nằm chung một thư mục
-            gốc, chọn cùng thư mục đó cho cả hai ô. ⚠️ Code được ghi trực tiếp vào các thư mục này,
-            không tạo nhánh riêng và không sao lưu.
-          </p>
-        </div>
-
-        <!-- Bước 2 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">2</span>
-            <div>
-              <h2>Clone cái gì, từ đâu</h2>
-              <p class="step-desc">
-                Hệ thống tự lục repo mẫu tìm mọi thứ liên quan (SQL, BE, FE), đọc cấu trúc dự án đích,
-                tự quyết định đặt code vào đâu, rồi port sang.
-              </p>
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="clone-what">Từ khoá tính năng cần clone</label>
-            <input id="clone-what" type="text" placeholder="Ví dụ: nghề nghiệp, đơn vị tính, occupation…" />
-            <p class="hint">
-              Tiếng Việt hoặc tiếng Anh, chỉ cần từ khoá — không cần đúng tên chức năng. Hệ thống tự
-              dịch, tìm cả dạng không dấu (<code>nghe_nghiep</code>, <code>NgheNghiep</code>…) trong tên
-              file, class, bảng, route, file dịch; nếu khớp nhiều tính năng thì chọn cái khớp nhất và
-              liệt kê các ứng viên khác trong báo cáo.
-            </p>
-          </div>
-
-          <div class="field">
-            <label for="clone-from-be">Repo mẫu — thư mục BE</label>
-            <div class="row">
-              <input id="clone-from-be" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\TKDT\BE" />
-              <button class="btn btn-ghost" data-browse="clone-from-be">Chọn thư mục…</button>
-            </div>
-          </div>
-          <div class="field">
-            <label for="clone-from-fe">Repo mẫu — thư mục FE</label>
-            <div class="row">
-              <input id="clone-from-fe" type="text" spellcheck="false" placeholder="Ví dụ: D:\Source_Code\FIS\TKDT\FE" />
-              <button class="btn btn-ghost" data-browse="clone-from-fe">Chọn thư mục…</button>
-            </div>
-            <p class="hint">
-              Điền ít nhất một ô. Trỏ vào thư mục con chứa tính năng thì nhanh và chính xác hơn trỏ vào
-              gốc repo. Repo mẫu chỉ được đọc — mọi lệnh ghi vào đó đều bị chặn.
-            </p>
-          </div>
-
-          <label class="precheck">
-            <input type="checkbox" id="clone-skip-build" />
-            <span>
-              Bỏ qua bước kiểm biên dịch
-              <span class="hint-inline">Tick khi máy này không build được dự án đích.</span>
-            </span>
-          </label>
-
-          <label class="precheck">
-            <input type="checkbox" id="clone-skip-tests" />
-            <span>
-              Bỏ qua bước unit test
-              <span class="hint-inline">Mặc định hệ thống viết và chạy unit test CRUD cho BE (controller, service) và FE (API client), rồi tự sửa code nếu test fail.</span>
-            </span>
-          </label>
-        </div>
-
-        <!-- Bước 3 -->
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">3</span>
-            <div>
-              <h2>Kiểm tra rồi chạy</h2>
-              <p class="step-desc">
-                Một lần clone có thể mất từ vài phút tới vài chục phút. Có thể đóng tab — pipeline vẫn
-                chạy, mở lại trang là thấy tiếp.
-              </p>
-            </div>
-          </div>
-
-          <label class="precheck">
-            <input type="checkbox" id="clone-precheck" />
-            <span>
-              Tôi đã <strong>commit hoặc stash</strong> các thay đổi đang dở trong thư mục dự án đích.
-              <span class="hint-inline">Bắt buộc — công cụ ghi đè trực tiếp và không có bản sao lưu.</span>
-            </span>
-          </label>
-
-          <label class="precheck">
-            <input type="checkbox" id="clone-fresh" />
-            <span>
-              Chạy lại từ đầu (bỏ tiến độ đã lưu)
-              <span class="hint-inline">
-                Mặc định: nếu lần trước bị dừng giữa chừng với cùng dự án + cùng từ khoá + cùng repo
-                mẫu, hệ thống tự chạy tiếp từ chỗ dừng (dùng lại bảng ánh xạ và các nhóm file đã port).
-                Tick khi anh đã xoá code đã port và muốn làm lại sạch từ đầu.
-              </span>
-            </span>
-          </label>
-
-          <div class="field">
-            <label for="clone-max-run-usd">Ngân sách tối đa cho lần chạy (USD)</label>
-            <input type="number" id="clone-max-run-usd" min="0" step="0.5" placeholder="Để trống = không giới hạn" />
-            <p class="hint">
-              Khi tổng chi phí ước tính chạm mức này, hệ thống <strong>dừng trước bước AI kế tiếp</strong>
-              (bước đang chạy vẫn chạy nốt) và <strong>giữ nguyên tiến độ</strong> — chạy lại với mức cao
-              hơn hoặc để trống sẽ đi tiếp từ đúng bước đó. Ngoài ra mỗi bước AI có trần riêng, nên một
-              bước chạy lố không thể đốt hết hạn mức.
-            </p>
-          </div>
-
-          <div class="field">
-            <label for="clone-metadata-standards">Áp dụng metadata standards (DDI/GSIM/SDC…)</label>
-            <select id="clone-metadata-standards">
-              <option value="apply">Có — theo file .metadata-standards.yml của thư mục dự án (mặc định)</option>
-              <option value="skip">Không — bỏ qua cho riêng lần chạy này, dù thư mục dự án có file đó</option>
-            </select>
-            <p class="hint">
-              Khi áp dụng, bước port vẫn giữ đúng code bên mẫu — chỉ <em>báo</em> chỗ vi phạm chuẩn,
-              không tự cấu trúc lại. Dự án chưa có file <code>.metadata-standards.yml</code> thì chọn
-              "Có" cũng không tác động gì.
-            </p>
-          </div>
-
-          <div class="actions">
-            <button class="btn btn-primary" id="clone-run-start" disabled>▶ Chạy clone</button>
-          </div>
-          <p class="error-text hidden" id="clone-run-error"></p>
-
           <div class="preset-bar">
-            <span class="preset-label">Bộ thiết lập clone:</span>
-            <select id="clone-preset-select" title="Các bộ dự án đích + repo mẫu + từ khoá đã lưu">
-              <option value="">— Chọn —</option>
+            <select id="clone-preset-select" title="Thiết lập đã lưu">
+              <option value="">Thiết lập đã lưu…</option>
             </select>
-            <button class="btn btn-ghost" id="clone-preset-save">Lưu thiết lập hiện tại</button>
-            <button class="btn btn-ghost" id="clone-preset-delete">Xoá</button>
+            <button class="btn btn-ghost btn-sm" id="clone-preset-save">Lưu</button>
+            <button class="btn btn-ghost btn-sm" id="clone-preset-delete">Xoá</button>
+          </div>
+        </div>
+
+        <div class="form-col">
+          <div class="card">
+            <h2 class="card-title"><span class="step-num">1</span>Dự án đích</h2>
+            <div class="grid-2">
+              <div class="field">
+                <label for="clone-project-be">BE</label>
+                <div class="row">
+                  <input id="clone-project-be" type="text" spellcheck="false" placeholder="D:\...\BE" />
+                  <button class="btn btn-icon" data-browse="clone-project-be" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="clone-project-fe">FE</label>
+                <div class="row">
+                  <input id="clone-project-fe" type="text" spellcheck="false" placeholder="D:\...\FE" />
+                  <button class="btn btn-icon" data-browse="clone-project-fe" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2 class="card-title"><span class="step-num">2</span>Nguồn</h2>
+            <div class="field">
+              <label for="clone-what">Từ khoá tính năng</label>
+              <input id="clone-what" type="text" placeholder="VD: nghề nghiệp, đơn vị tính, occupation" />
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label for="clone-from-be">Repo mẫu BE <span class="optional">chỉ đọc</span></label>
+                <div class="row">
+                  <input id="clone-from-be" type="text" spellcheck="false" placeholder="D:\...\mau\BE" />
+                  <button class="btn btn-icon" data-browse="clone-from-be" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="clone-from-fe">Repo mẫu FE <span class="optional">chỉ đọc</span></label>
+                <div class="row">
+                  <input id="clone-from-fe" type="text" spellcheck="false" placeholder="D:\...\mau\FE" />
+                  <button class="btn btn-icon" data-browse="clone-from-fe" title="Chọn thư mục" aria-label="Chọn thư mục"></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2 class="card-title"><span class="step-num">3</span>Chạy</h2>
+            <label class="precheck">
+              <input type="checkbox" id="clone-precheck" />
+              <span>Đã <strong>commit/stash</strong> dự án đích <span class="hint-inline">Code ghi thẳng vào thư mục, không sao lưu</span></span>
+            </label>
+
+            <details class="more">
+              <summary>Tuỳ chọn</summary>
+              <div class="grid-2">
+                <div class="field">
+                  <label for="clone-max-run-usd">Ngân sách (USD)</label>
+                  <input type="number" id="clone-max-run-usd" min="0" step="0.5" placeholder="Không giới hạn" />
+                </div>
+                <div class="field">
+                  <label for="clone-metadata-standards">Metadata standards</label>
+                  <select id="clone-metadata-standards">
+                    <option value="apply">Theo .metadata-standards.yml</option>
+                    <option value="skip">Bỏ qua lần này</option>
+                  </select>
+                </div>
+              </div>
+              <div class="checks">
+                <label class="checkbox"><input type="checkbox" id="clone-skip-build" /> Bỏ qua build</label>
+                <label class="checkbox"><input type="checkbox" id="clone-skip-tests" /> Bỏ qua unit test</label>
+                <label class="checkbox">
+                  <input type="checkbox" id="clone-fresh" />
+                  <span title="Mặc định chạy tiếp từ chỗ dừng lần trước">Chạy lại từ đầu</span>
+                </label>
+              </div>
+            </details>
+
+            <div class="actions">
+              <button class="btn btn-primary" id="clone-run-start" disabled>▶ Chạy clone</button>
+            </div>
+            <p class="error-text hidden" id="clone-run-error"></p>
           </div>
         </div>
       </section>
-
 
       <!-- ================= TỐI ƯU SQL ================= -->
       <section class="panel-group" id="tab-sql">
-        <div class="callout callout-info">
-          <div class="callout-body">
-            <strong>Tối ưu SQL</strong> <span class="optional">bản demo</span> — đọc một file SQL
-            (procedure, function, view, câu truy vấn) của <strong>SQL Server</strong>, <strong>MySQL</strong>
-            hoặc <strong>PostgreSQL</strong> và viết bản tối ưu để giảm tải DB, giảm thời gian chạy: điều kiện
-            lọc dùng được index, bỏ cursor/vòng lặp từng dòng, <code>EXISTS</code> thay <code>COUNT(*)</code>,
-            bỏ <code>SELECT *</code> khi biết cột… Kết quả ghi ra <code>&lt;tên file&gt;_optimized.sql</code>
-            cạnh file gốc; <strong>file gốc không bị sửa</strong>.
+        <div class="page-head">
+          <div>
+            <h1>Tối ưu SQL</h1>
+            <span class="page-sub">SQL Server · MySQL · PostgreSQL → <code>_optimized.sql</code>, file gốc giữ nguyên</span>
           </div>
         </div>
 
-        <div class="card step">
-          <div class="step-head">
-            <span class="step-num">1</span>
-            <div>
-              <h2>Chọn file SQL</h2>
-              <p class="step-desc">
-                Không giới hạn độ dài theo AI (trần kỹ thuật ~500 triệu ký tự); file lớn được tự chia theo procedure/batch, tối ưu và kiểm từng phần rồi ghép lại thành một file. AI chỉ thấy nội dung file — không kết nối DB — nên gì phụ thuộc
-                schema thật (cột đằng sau <code>SELECT *</code>, index đang có) sẽ được <em>ghi chú để anh
-                kiểm</em> thay vì đoán.
-              </p>
+        <div class="form-col">
+          <div class="card">
+            <div class="field">
+              <label for="sql-file">File .sql hoặc thư mục</label>
+              <div class="row">
+                <input id="sql-file" type="text" spellcheck="false" placeholder="D:\...\usp_GetOrders.sql" />
+                <button class="btn btn-icon" data-browse="sql-file" title="Chọn file" aria-label="Chọn file"></button>
+              </div>
             </div>
-          </div>
-          <div class="field">
-            <label for="sql-plan">Execution plan <span class="optional">tuỳ chọn — đọc trước tiên</span></label>
-            <div class="row">
-              <input id="sql-plan" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\plans\usp_GetCustomerOrders.sqlplan" />
-              <button class="btn btn-ghost" data-browse="sql-plan">Chọn file…</button>
+            <div class="grid-2">
+              <div class="field">
+                <label for="sql-dialect">CSDL</label>
+                <select id="sql-dialect">
+                  <option value="auto">Tự nhận biết</option>
+                  <option value="sqlserver">SQL Server</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="postgresql">PostgreSQL</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="sql-max-run-usd">Ngân sách (USD)</label>
+                <input type="number" id="sql-max-run-usd" min="0" step="0.5" placeholder="Không giới hạn" />
+              </div>
             </div>
-            <p class="hint">
-              SQL Server <code>.sqlplan</code> (Save Execution Plan As… trong SSMS, nên là actual plan), PostgreSQL
-              <code>EXPLAIN (ANALYZE, FORMAT JSON)</code>, MySQL <code>EXPLAIN FORMAT=JSON</code> hoặc plan dạng text.
-              Hệ thống tự rút ra điểm nóng (toán tử tốn nhất, quét toàn bảng, ước lượng lệch, chuyển kiểu ngầm, index
-              thiếu) và tối ưu vào đúng chỗ đó trước; mỗi bước ghi rõ nó xử lý điểm nóng nào. Nếu ô File SQL là thư mục,
-              ô này là thư mục plan đặt tên giống file SQL (<code>orders.sql</code> ↔ <code>orders.sqlplan</code>).
-            </p>
-          </div>
-
-          <div class="field">
-            <label for="sql-file">File SQL hoặc thư mục (tối ưu mọi file .sql trong đó)</label>
-            <div class="row">
-              <input id="sql-file" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\SQL\usp_GetCustomerOrders.sql" />
-              <button class="btn btn-ghost" data-browse="sql-file">Chọn file…</button>
+            <div class="field">
+              <label for="sql-instructions">Đổi logic nghiệp vụ <span class="optional">trống = giữ nguyên</span></label>
+              <textarea id="sql-instructions" class="request-input" rows="2" placeholder="VD: chỉ lấy khách hàng đang hoạt động"></textarea>
             </div>
-          </div>
-          <div class="field">
-            <label for="sql-dialect">Hệ quản trị CSDL</label>
-            <select id="sql-dialect">
-              <option value="auto">Tự nhận biết từ cú pháp (mặc định)</option>
-              <option value="sqlserver">SQL Server</option>
-              <option value="mysql">MySQL</option>
-              <option value="postgresql">PostgreSQL</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="sql-instructions">Yêu cầu đổi logic nghiệp vụ <span class="optional">để trống = chỉ tối ưu hiệu năng</span></label>
-            <textarea id="sql-instructions" class="request-input" rows="3" placeholder="Chỉ điền khi anh muốn ĐỔI logic, ví dụ: chỉ lấy khách hàng đang hoạt động. Để trống thì logic nghiệp vụ giữ nguyên tuyệt đối."></textarea>
-          </div>
-          <div class="field">
-            <label for="sql-schema">File schema / DDL <span class="optional">tuỳ chọn</span></label>
-            <div class="row">
-              <input id="sql-schema" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\SQL\01-create-tables.sql" />
-              <button class="btn btn-ghost" data-browse="sql-schema">Chọn file…</button>
+
+            <details class="more">
+              <summary>Execution plan &amp; schema</summary>
+              <div class="field">
+                <label for="sql-plan" title=".sqlplan, EXPLAIN (ANALYZE, FORMAT JSON), EXPLAIN FORMAT=JSON hoặc text">Execution plan</label>
+                <div class="row">
+                  <input id="sql-plan" type="text" spellcheck="false" placeholder="D:\...\usp_GetOrders.sqlplan" />
+                  <button class="btn btn-icon" data-browse="sql-plan" title="Chọn file" aria-label="Chọn file"></button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="sql-schema">Schema / DDL</label>
+                <div class="row">
+                  <input id="sql-schema" type="text" spellcheck="false" placeholder="D:\...\create-tables.sql" />
+                  <button class="btn btn-icon" data-browse="sql-schema" title="Chọn file" aria-label="Chọn file"></button>
+                </div>
+              </div>
+            </details>
+
+            <details class="more">
+              <summary>Kiểm chứng trên DB thử nghiệm</summary>
+              <p class="notice">Mỗi bước chạy trong transaction rồi rollback. <strong>Không dùng production.</strong></p>
+              <div class="field">
+                <label for="sql-verify-db">Chuỗi kết nối <span class="optional">SQL Server / PostgreSQL · không lưu</span></label>
+                <input id="sql-verify-db" type="password" spellcheck="false" autocomplete="off" placeholder="postgresql://… · Server=…;Database=…" />
+              </div>
+              <div class="field" id="sql-test-calls-row">
+                <label for="sql-test-calls">Lệnh chạy thử <span class="optional">mỗi dòng một lệnh</span></label>
+                <textarea id="sql-test-calls" class="request-input" rows="2" spellcheck="false" placeholder="EXEC dbo.usp_GetOrders @Year = 2024"></textarea>
+              </div>
+            </details>
+
+            <label class="precheck hidden" id="sql-test-db-row">
+              <input type="checkbox" id="sql-test-db-confirm" />
+              <span>Đây là DB <strong>thử nghiệm</strong>, không phải production</span>
+            </label>
+
+            <div class="actions">
+              <button class="btn btn-primary" id="sql-start" disabled>⚡ Tối ưu</button>
             </div>
-            <p class="hint">Cho AI biết cột thật, NULL hay NOT NULL, index đang có — mở khoá thay <code>SELECT *</code>, <code>NOT IN → NOT EXISTS</code>, đề xuất index không trùng.</p>
+            <p class="error-text hidden" id="sql-error"></p>
           </div>
-
-          <div class="field">
-            <label for="sql-verify-db">Kiểm chứng trên DB <strong>THỬ NGHIỆM</strong> <span class="optional">tuỳ chọn — SQL Server / PostgreSQL</span></label>
-            <input id="sql-verify-db" type="password" spellcheck="false" autocomplete="off" placeholder="postgresql://user:pass@host:5432/testdb  hoặc  Server=...;Database=...;User Id=...;Password=..." />
-            <p class="hint">
-              Có chuỗi này thì hệ thống <strong>đọc schema thật</strong> và <strong>chạy thử từng bước</strong>: bản gốc, rồi
-              thêm từng bước một — mỗi lần trong một transaction <strong>luôn rollback</strong>. Bước nào cho kết quả khác bản
-              gốc dù chỉ một dòng thì bị loại; thời gian chạy trước/sau được đo. Rollback không trả lại số identity/sequence
-              đã dùng hay mail đã gửi — <strong>chỉ dùng DB thử nghiệm, không dùng production</strong>. Chuỗi không được lưu lại.
-            </p>
-          </div>
-          <div class="field" id="sql-test-calls-row">
-            <label for="sql-test-calls">Lệnh chạy thử <span class="optional">mỗi dòng một lệnh — cần khi file định nghĩa procedure/function</span></label>
-            <textarea id="sql-test-calls" class="request-input" rows="3" spellcheck="false" placeholder="EXEC dbo.usp_GetCustomerOrders @Year = 2024&#10;EXEC dbo.usp_GetCustomerOrders @Year = 2024, @CustomerCode = 'C001'"></textarea>
-          </div>
-          <label class="precheck hidden" id="sql-test-db-row">
-            <input type="checkbox" id="sql-test-db-confirm" />
-            <span>Tôi xác nhận đây là DB <strong>thử nghiệm</strong>, không phải production.</span>
-          </label>
-
-          <p class="hint">
-            Cách làm: AI đề xuất từng bước sửa (đúng đoạn code trước → sau, thuộc câu truy vấn nào); một lượt
-            AI <strong>độc lập</strong> kiểm từng bước xem kết quả có giữ nguyên không — bước nào không được xác nhận
-            thì <strong>bị loại</strong>; code chỉ áp các bước đã qua kiểm, lần lượt, nên phần không nằm trong bước nào
-            giữ nguyên từng ký tự. Mọi bước (kể cả bị loại) hiện bên dưới khi chạy xong và ở đầu file kết quả.
-          </p>
-          <div class="field">
-            <label for="sql-max-run-usd">Ngân sách tối đa cho lần chạy (USD) <span class="optional">tuỳ chọn</span></label>
-            <input type="number" id="sql-max-run-usd" min="0" step="0.5" placeholder="Để trống = không giới hạn" />
-            <p class="hint">
-              Không giới hạn độ dài file theo AI: file dài được chia phần, chi phí tăng theo độ dài (khoảng 2 lượt AI mỗi
-              phần ~60.000 ký tự — số phần hiện trong Tiến trình trước khi AI chạy). Chạm ngân sách thì các phần chưa tới
-              <strong>giữ nguyên</strong>, phần đã xong vẫn được ghi ra file.
-            </p>
-          </div>
-
-          <div class="actions">
-            <button class="btn btn-primary" id="sql-start" disabled>⚡ Tối ưu</button>
-          </div>
-          <p class="error-text hidden" id="sql-error"></p>
         </div>
       </section>
 
-      <!-- Tiến trình + nhật ký của lần chạy hiện tại. Dùng chung cho các tab chạy
-           (task mới, clone, tối ưu SQL): app.js chuyển khối này vào tab đang mở. -->
+      <!-- Tiến trình + nhật ký: dùng chung, app.js chuyển khối này vào tab đang mở. -->
       <div class="run-monitor" id="run-monitor">
         <div class="card" id="status-card">
           <div class="card-head">
@@ -591,24 +357,22 @@
             </div>
             <div class="card-head-actions">
               <span class="status-pill" id="status-pill">chưa chạy</span>
-              <button class="btn btn-danger" id="run-stop" disabled>■ Dừng</button>
+              <button class="btn btn-danger btn-sm" id="run-stop" disabled>■ Dừng</button>
             </div>
           </div>
-          <p class="hint hidden" id="run-elsewhere"></p>
-          <div class="run-meta" id="run-meta"></div>
-          <div class="view-toggle" id="view-toggle" role="group" aria-label="Kiểu hiển thị tiến trình">
-            <button type="button" class="chip" data-view="map">Sơ đồ tư duy</button>
-            <button type="button" class="chip" data-view="strip">Dải giai đoạn</button>
+          <p class="notice hidden" id="run-elsewhere"></p>
+          <div class="monitor-bar">
+            <div class="run-meta" id="run-meta"></div>
+            <div class="view-toggle" id="view-toggle" role="group" aria-label="Kiểu hiển thị">
+              <button type="button" class="chip" data-view="map">Sơ đồ</button>
+              <button type="button" class="chip" data-view="strip">Giai đoạn</button>
+            </div>
           </div>
           <ol class="stages" id="stages"></ol>
           <div class="mindmap-wrap" id="mindmap-wrap">
             <div class="mindmap" id="mindmap"></div>
-            <p class="hint mindmap-legend">
-              Ô sáng xanh, nhấp nháy = bước đang chạy. <strong>≈%</strong> của bước AI đang chạy là số lượt
-              đã dùng trên giới hạn lượt (không phải phần việc đã xong); bước chỉ thành 100% khi kết thúc.
-              <strong>KT build</strong> = hệ thống tự chạy lệnh build/lint của dự án sau mỗi task.
-              ⟳ lặp lại cùng lệnh · ⛔ lệnh bị chặn vì lặp · ⏱ đã nhắc AI chốt vì gần hết lượt.
-              Rê chuột lên một ô để xem giải thích.
+            <p class="hint mindmap-legend" title="≈% của bước AI đang chạy = lượt đã dùng / giới hạn lượt, không phải phần việc đã xong">
+              ≈% = lượt đã dùng · ⟳ lặp lệnh · ⛔ bị chặn · ⏱ nhắc chốt · rê chuột xem chi tiết
             </p>
           </div>
           <div class="result hidden" id="result"></div>
@@ -616,17 +380,11 @@
 
         <div class="card card-log">
           <div class="card-head">
-            <h2>Nhật ký trực tiếp</h2>
+            <h2>Nhật ký</h2>
             <div class="log-tools">
-              <label class="checkbox">
-                <input type="checkbox" id="log-only-progress" />
-                Chỉ mốc giai đoạn
-              </label>
-              <label class="checkbox">
-                <input type="checkbox" id="log-follow" checked />
-                Tự cuộn
-              </label>
-              <button class="btn btn-ghost" id="log-copy">Sao chép</button>
+              <label class="checkbox"><input type="checkbox" id="log-only-progress" /> Chỉ mốc</label>
+              <label class="checkbox"><input type="checkbox" id="log-follow" checked /> Tự cuộn</label>
+              <button class="btn btn-ghost btn-sm" id="log-copy">Sao chép</button>
             </div>
           </div>
           <div class="log" id="log"><div class="log-empty">Chưa có lần chạy nào.</div></div>
@@ -645,8 +403,8 @@
                   <option value="feature">Task mới</option>
                   <option value="clone">Clone</option>
                 </select>
-                <button class="btn btn-ghost" id="runs-refresh">Tải lại</button>
-                <button class="btn btn-danger" id="runs-clear">Xóa tất cả</button>
+                <button class="btn btn-ghost btn-sm" id="runs-refresh" title="Tải lại">↻</button>
+                <button class="btn btn-danger btn-sm" id="runs-clear">Xoá hết</button>
               </div>
             </div>
             <ul class="run-list" id="run-list"></ul>
@@ -654,7 +412,7 @@
           <div class="card card-report">
             <div class="card-head"><h2 id="report-title">Báo cáo</h2></div>
             <div class="report" id="report">
-              <p class="hint">Chọn một lần chạy ở cột bên trái để xem báo cáo đầy đủ.</p>
+              <p class="hint">Chọn một lần chạy.</p>
             </div>
           </div>
         </div>
@@ -663,133 +421,66 @@
       <!-- ================= HƯỚNG DẪN ================= -->
       <section class="panel-group" id="tab-guide">
         <div class="card guide">
-          <h2 class="guide-title">Hướng dẫn sử dụng aidev</h2>
+          <h2 class="guide-title">Hướng dẫn</h2>
 
-          <h3>1. Chọn đúng tab</h3>
           <table class="guide-table">
-            <tr>
-              <td><strong>Làm task mới</strong></td>
-              <td>Xây tính năng <strong>chưa có</strong> từ một file spec. Kết thúc bằng E2E trên trình duyệt thật.</td>
-            </tr>
-            <tr>
-              <td><strong>Clone từ dự án khác</strong></td>
-              <td>Bê tính năng <strong>đã có</strong> từ repo mẫu sang. Không cần spec. Kết thúc bằng kiểm phủ, build, unit test.</td>
-            </tr>
-            <tr>
-              <td><strong>Tối ưu SQL</strong></td>
-              <td>Tối ưu hiệu năng file SQL (SQL Server, MySQL, PostgreSQL). Ra file <code>_optimized.sql</code>, file gốc giữ nguyên.</td>
-            </tr>
+            <tr><td><strong>Task mới</strong></td><td>Tính năng <strong>chưa có</strong>, từ file spec. Kết thúc bằng E2E.</td></tr>
+            <tr><td><strong>Clone</strong></td><td>Bê tính năng <strong>đã có</strong> từ repo mẫu. Không cần spec.</td></tr>
+            <tr><td><strong>Tối ưu SQL</strong></td><td>Ra file <code>_optimized.sql</code>, file gốc giữ nguyên.</td></tr>
           </table>
-          <p>
-            Mỗi tab có tiến trình, nhật ký và nút Dừng <strong>riêng</strong>. Tối ưu SQL chạy song song được với mọi thứ;
-            Task mới và Clone cùng ghi vào thư mục dự án nên mỗi lúc chỉ chạy một trong hai.
-          </p>
+          <p>Task mới và Clone ghi vào dự án nên mỗi lúc chạy một. Tối ưu SQL chạy song song được.</p>
 
-          <h2 class="guide-part">Làm task mới</h2>
-
-          <h3>2. Các bước</h3>
+          <h3>Task mới</h3>
           <ol class="guide-stages">
-            <li><strong>Đọc dự án</strong> — index file (code thuần, không tốn token) + quét quy ước một lần, lưu lại cho lần sau.</li>
-            <li><strong>Thiết kế</strong> — tự quyết mọi chuyện kỹ thuật. Spec bỏ ngỏ <em>quyết định nghiệp vụ</em> thì dừng và hỏi anh (xem mục 4).</li>
-            <li><strong>Duyệt thiết kế</strong> — AI khác review; lỗi nhỏ thì duyệt kèm yêu cầu sửa. Mỗi lần chạy 1 vòng.</li>
-            <li><strong>Chia việc</strong> — cắt thành các task nhỏ.</li>
-            <li>
-              <strong>Viết code</strong> — từng task: kiểm git xem có gì đổi, tra index tìm đúng file cần sửa, chỉ sửa trong phạm vi
-              task. Sau mỗi task hệ thống tự chạy <strong>build check</strong> (compile/lint của dự án); lỗi thì dừng.
-            </li>
-            <li><strong>E2E</strong> — Playwright chạy theo tiêu chí nghiệm thu; hệ thống tự chạy lại test để chấm, không tin lời AI.</li>
+            <li><strong>Đọc dự án</strong> — index + quy ước, lưu cho lần sau.</li>
+            <li><strong>Thiết kế</strong> — spec thiếu quyết định nghiệp vụ thì dừng hỏi (<em>Chờ trả lời</em>).</li>
+            <li><strong>Duyệt thiết kế</strong> — AI khác review, 1 vòng mỗi lần chạy.</li>
+            <li><strong>Chia việc</strong> → <strong>Viết code</strong> — build check sau mỗi task; lỗi thì dừng.</li>
+            <li><strong>E2E</strong> — Playwright theo tiêu chí nghiệm thu.</li>
           </ol>
-
-          <h3>3. Viết spec</h3>
           <pre><code># Tên tính năng
-## Bối cảnh      — màn hình/API/module liên quan
-## Yêu cầu       — hành vi quan sát được
-## Ràng buộc     — quy ước của dự án
+## Bối cảnh
+## Yêu cầu
+## Ràng buộc
 ## Tiêu chí nghiệm thu
 - [ ] Bấm X thì thấy Y.</code></pre>
           <ul>
-            <li>Tiêu chí phải kiểm được bằng thao tác giao diện — thiếu thì E2E đánh trượt.</li>
-            <li>Chưa có spec: bước 2 → mô tả bằng lời → <strong>Sinh spec</strong>, đọc lại file rồi mới chạy.</li>
-            <li><strong>Dự án tham khảo</strong> (tuỳ chọn): AI chỉ đọc để học cách làm. Muốn bê nguyên tính năng thì dùng Clone.</li>
-            <li><strong>Database</strong> (tuỳ chọn): dán chuỗi kết nối + chọn thư mục SQL; script mới được chạy sau mỗi task, lệnh xoá dữ liệu bị chặn.</li>
+            <li>Tiêu chí phải kiểm được trên giao diện.</li>
+            <li><em>Chờ trả lời</em>: điền <em>Tuỳ chọn → Trả lời câu hỏi nghiệp vụ</em>, chạy lại cùng spec.</li>
+            <li>DB: chuỗi kết nối + thư mục SQL; script mới chạy sau mỗi task, lệnh xoá dữ liệu bị chặn.</li>
           </ul>
 
-          <h3>4. Câu hỏi nghiệp vụ</h3>
-          <p>
-            Trạng thái <strong>Chờ trả lời</strong>: thiết kế cần quyết định nghiệp vụ. Ghi câu trả lời vào ô
-            <em>Trả lời câu hỏi nghiệp vụ</em>, chạy lại cùng spec — thiết kế được sửa theo, không làm lại.
-          </p>
+          <h3>Clone</h3>
+          <p>Truy tìm → đọc dự án đích → bảng ánh xạ → port → kiểm phủ, nối FE↔BE → build → unit test. Đọc bảng ánh xạ trong báo cáo.</p>
 
-          <h2 class="guide-part">Clone từ dự án khác</h2>
-
-          <h3>5. Các bước</h3>
-          <p>
-            Truy tìm file trong repo mẫu → đọc quy ước dự án đích → lập <strong>bảng ánh xạ</strong> (file nào đi đâu) → port
-            (DB → BE → FE) → kiểm phủ và kiểm nối FE↔BE bằng code → build → unit test (tối đa 2 vòng sửa). Build và unit test bỏ qua được.
-            Đọc bảng ánh xạ trong báo cáo: kiểm phủ bắt được <em>thiếu file</em>, không bắt được <em>đặt sai chỗ</em>.
-          </p>
-
-          <h2 class="guide-part">Tối ưu SQL</h2>
-
-          <h3>6. Quy trình mỗi file</h3>
-          <ol class="guide-stages">
-            <li><strong>Đọc execution plan</strong> (tuỳ chọn) — <code>.sqlplan</code>, <code>EXPLAIN (ANALYZE, FORMAT JSON)</code>, MySQL JSON hoặc text; rút ra điểm nóng.</li>
-            <li><strong>Đọc file SQL</strong> — file dài tự chia phần theo procedure/batch.</li>
-            <li>
-              <strong>Tối ưu</strong> — AI đề xuất từng <em>bước</em> (đoạn code trước → sau, thuộc câu truy vấn nào, xử lý điểm nóng nào).
-              Một AI khác kiểm độc lập; code kiểm thêm không mất bảng/cột/hằng chuỗi. Bước không chắc giữ nguyên kết quả thì <strong>bị loại</strong>.
-            </li>
-            <li><strong>Ghi file</strong> — <code>&lt;tên&gt;_optimized.sql</code>; đầu file liệt kê mọi bước, cả bước bị loại và lý do.</li>
-          </ol>
+          <h3>Tối ưu SQL</h3>
           <ul>
-            <li><strong>Logic nghiệp vụ giữ nguyên</strong> — chỉ đổi khi anh ghi rõ ở ô <em>Yêu cầu đổi logic nghiệp vụ</em>.</li>
-            <li><strong>Schema / DDL</strong> (tuỳ chọn): cho AI biết cột thật, NULL, index đang có.</li>
-            <li>
-              <strong>DB thử nghiệm</strong> (tuỳ chọn, SQL Server/PostgreSQL): mỗi bước được chạy thật trong transaction luôn rollback;
-              chỉ giữ bước cho <em>đúng y</em> kết quả bản gốc và không chậm hơn. Cần <em>lệnh chạy thử</em> nếu file định nghĩa procedure.
-              <strong>Không dùng production.</strong>
-            </li>
-            <li>Ô file là <strong>thư mục</strong> thì tối ưu mọi <code>.sql</code> trong đó (plan đặt tên giống file SQL).</li>
-            <li>Không giới hạn độ dài theo AI; chi phí tăng theo độ dài — đặt <strong>Ngân sách tối đa</strong> cho file lớn.</li>
+            <li>AI đề xuất từng bước; AI khác kiểm độc lập; bước không chắc giữ nguyên kết quả bị loại.</li>
+            <li>Logic nghiệp vụ giữ nguyên trừ khi ghi ở <em>Đổi logic nghiệp vụ</em>.</li>
+            <li>DB thử nghiệm: mỗi bước chạy thật rồi rollback; chỉ giữ bước cho đúng kết quả và không chậm hơn. <strong>Không dùng production.</strong></li>
           </ul>
 
-          <h2 class="guide-part">Chung</h2>
-
-          <h3>7. Trước khi chạy</h3>
-          <ul>
-            <li><strong>Commit/stash</strong> dự án đích — Task mới và Clone ghi thẳng vào thư mục, không sao lưu.</li>
-            <li>Cần <code>ANTHROPIC_API_KEY</code> hoặc <code>CLAUDE_CODE_OAUTH_TOKEN</code> trong <code>.env</code> (góc phải trên cho biết).</li>
-            <li><strong>Ngân sách tối đa</strong> (tuỳ chọn): chạm mức thì dừng trước bước AI kế tiếp, giữ tiến độ.</li>
-          </ul>
-
-          <h3>8. Trong lúc chạy</h3>
-          <ul>
-            <li><strong>Sơ đồ tư duy</strong> (hoặc dải giai đoạn) tô sáng bước đang chạy, kèm % hoàn thành.</li>
-            <li>Đóng trình duyệt không dừng lần chạy. <strong>Dừng</strong> chỉ dừng lần chạy của tab đang mở; file đã ghi không bị hoàn tác.</li>
-            <li>Bị dừng/lỗi: chạy lại cùng thiết lập là <strong>tiếp từ chỗ dừng</strong> (Task mới, Clone). Muốn làm lại sạch: tick <em>Chạy lại từ đầu</em>.</li>
-          </ul>
-
-          <h3>9. Trạng thái kết quả</h3>
+          <h3>Trạng thái</h3>
           <table class="guide-table">
-            <tr><td><span class="badge" data-status="done">Hoàn tất</span></td><td>Xong. Xem <code>git diff</code> (hoặc file <code>_optimized.sql</code>), review rồi commit.</td></tr>
-            <tr><td><span class="badge" data-status="needs-answers">Chờ trả lời</span></td><td>Cần quyết định nghiệp vụ — mục 4.</td></tr>
-            <tr><td><span class="badge" data-status="escalated-specs">Chưa duyệt</span></td><td>Thiết kế bị từ chối; chạy lại để sửa tiếp, hoặc làm rõ spec.</td></tr>
-            <tr><td><span class="badge" data-status="escalated-e2e">E2E chưa đạt</span></td><td>Code còn trên đĩa; báo cáo nói tiêu chí nào trượt.</td></tr>
-            <tr><td><span class="badge" data-status="incomplete">Chưa trọn vẹn</span></td><td>Clone thiếu file / nối hỏng / build-test lỗi; báo cáo chỉ đúng chỗ.</td></tr>
-            <tr><td><span class="badge" data-status="budget-stopped">Chạm ngân sách</span></td><td>Dừng trước bước kế tiếp; tăng ngân sách rồi chạy lại.</td></tr>
-            <tr><td><span class="badge" data-status="errored">Lỗi</span></td><td>Dừng giữa chừng (ví dụ <code>rate_limit</code>, build check lỗi); chạy lại để tiếp tục.</td></tr>
-            <tr><td><span class="badge" data-status="progress-kept">Giữ tiến độ</span></td><td>Tiến độ cũ không khớp lần chạy này; tick <em>Chạy lại từ đầu</em> nếu là việc mới.</td></tr>
+            <tr><td><span class="badge" data-status="done">Hoàn tất</span></td><td>Xem <code>git diff</code>, review, commit.</td></tr>
+            <tr><td><span class="badge" data-status="needs-answers">Chờ trả lời</span></td><td>Trả lời câu hỏi nghiệp vụ rồi chạy lại.</td></tr>
+            <tr><td><span class="badge" data-status="escalated-specs">Chưa duyệt</span></td><td>Chạy lại để sửa thiết kế, hoặc làm rõ spec.</td></tr>
+            <tr><td><span class="badge" data-status="escalated-e2e">E2E chưa đạt</span></td><td>Code còn trên đĩa; xem tiêu chí trượt.</td></tr>
+            <tr><td><span class="badge" data-status="incomplete">Chưa trọn vẹn</span></td><td>Clone thiếu file / nối hỏng / build-test lỗi.</td></tr>
+            <tr><td><span class="badge" data-status="budget-stopped">Chạm ngân sách</span></td><td>Tăng ngân sách rồi chạy lại.</td></tr>
+            <tr><td><span class="badge" data-status="errored">Lỗi</span></td><td>Chạy lại để tiếp tục.</td></tr>
+            <tr><td><span class="badge" data-status="progress-kept">Giữ tiến độ</span></td><td>Tiến độ cũ không khớp; tick <em>Chạy lại từ đầu</em> nếu là việc mới.</td></tr>
           </table>
-          <p>Mọi lần chạy (cả Tối ưu SQL) có báo cáo đầy đủ ở tab <strong>Lịch sử chạy</strong>. Chuỗi kết nối DB không bao giờ được lưu.</p>
+          <p>Chạy lại cùng thiết lập là tiếp từ chỗ dừng. Đóng trình duyệt không dừng lần chạy.</p>
 
-          <h3>10. An toàn</h3>
+          <h3>An toàn</h3>
           <ul>
-            <li>Trang chỉ mở ở <code>127.0.0.1</code>, không đăng nhập, chặn yêu cầu từ trang web khác. <strong>Không đưa ra mạng.</strong></li>
-            <li>Chỉ trỏ vào dự án anh chấp nhận cho AI sửa trực tiếp (AI được chạy lệnh shell trong đó).</li>
-            <li>Không dán vào spec văn bản từ nguồn không tin cậy — nó đi thẳng vào prompt.</li>
+            <li>Chỉ mở ở <code>127.0.0.1</code>, không đăng nhập. <strong>Không đưa ra mạng.</strong></li>
+            <li>AI được chạy lệnh shell trong dự án đích.</li>
+            <li>Không dán văn bản không tin cậy vào spec.</li>
           </ul>
 
-          <h3>11. Dòng lệnh</h3>
+          <h3>Dòng lệnh</h3>
           <pre><code>aidev --spec spec.md --project-be "D:\...\BE" --project-fe "D:\...\FE" [--max-run-usd 10]
 aidev clone --what "nghề nghiệp" --from-be "D:\...\mau\BE" --project-be "D:\...\BE"
 aidev sql-optimize --file "D:\...\usp_X.sql" [--plan x.sqlplan] [--schema ddl.sql]
@@ -804,17 +495,17 @@ aidev ui --port 5000 --no-open</code></pre>
       <div class="modal-card">
         <div class="modal-head">
           <h3 id="picker-title">Chọn thư mục</h3>
-          <button class="btn btn-ghost" id="picker-close">Đóng</button>
+          <button class="btn btn-ghost btn-sm" id="picker-close" aria-label="Đóng">✕</button>
         </div>
         <div class="modal-path">
-          <button class="btn btn-ghost" id="picker-up">↑ Lên</button>
+          <button class="btn btn-ghost" id="picker-up" title="Lên một cấp">↑</button>
           <input id="picker-path" type="text" spellcheck="false" />
-          <button class="btn btn-ghost" id="picker-go">Đi tới</button>
+          <button class="btn btn-ghost" id="picker-go">Đi</button>
         </div>
         <ul class="picker-list" id="picker-list"></ul>
         <div class="modal-foot">
           <span class="hint" id="picker-error"></span>
-          <button class="btn btn-primary" id="picker-choose">Dùng thư mục này</button>
+          <button class="btn btn-primary" id="picker-choose">Chọn thư mục này</button>
         </div>
       </div>
     </div>

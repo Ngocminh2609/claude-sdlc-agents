@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, limitsOf } from "../config.js";
+import { stageOptions } from "../config.js";
 import { StageError } from "../stage-error.js";
 import {
   OPTIMIZE_DIALECTS,
@@ -209,8 +209,8 @@ export interface SqlProposal {
 
 function optionsFor(systemPrompt: string, stage: "sqlOptimize" | "sqlCheck"): Options {
   // The file is in the prompt; there is nothing to read and nothing to run.
-  const model = stage === "sqlCheck" ? config.sqlCheckModel : config.model;
-  return { systemPrompt, allowedTools: [], model, ...limitsOf(stage) };
+  // The check runs on the strong tier even when proposing runs on a cheaper one.
+  return { systemPrompt, allowedTools: [], ...stageOptions(stage) };
 }
 
 function contextSection(context: string | undefined): string[] {

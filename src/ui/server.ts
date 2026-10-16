@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
-import { config } from "../config.js";
+import { config, modelsInUse } from "../config.js";
 import { browse, BrowseError, type BrowseKind } from "./browse.js";
 import { refusalOf } from "./request-guard.js";
 import { deletePreset, listPresets, savePreset } from "./presets.js";
@@ -105,7 +105,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         repoRoot,
         specsDir,
         platform: process.platform,
-        model: config.model,
+        // Model ids, strong tier first (one id when CLAUDE_MODEL puts every stage on one model).
+        models: modelsInUse(),
         // Booleans only: whether a credential exists is useful to show, the
         // value itself must never leave this process.
         credentials: {

@@ -14,6 +14,7 @@ import { refreshProjectIndexes, taskLocations } from "./project-index.js";
 import {
   manifestKeyOf,
   rememberConventions,
+  rememberE2eRecipe,
   rememberFeatureStatus,
   rememberTask,
   reusableConventions,
@@ -357,6 +358,9 @@ async function runPipelineInner(opts: PipelineOptions): Promise<RunOutcome> {
   if (e2e.verdict !== "pass") {
     return { status: "escalated-e2e", message: e2eFailedMessage(e2e) };
   }
+  // Only a start-up the pipeline's own re-run confirmed is worth handing to the next run.
+  const recipe = e2e.runRecipe;
+  if (spec.projectMemory && recipe) await bestEffort(() => rememberE2eRecipe(rootsOf(spec), recipe));
 
   // Finished: nothing left to resume, and a later run of the same spec should
   // plan from the code as it now is.

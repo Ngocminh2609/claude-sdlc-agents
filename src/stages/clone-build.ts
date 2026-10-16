@@ -1,7 +1,8 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
+import { networkExfilBashBlocklist, stageOptions } from "../config.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
+import { TOKEN_BUDGET_RULES } from "../prompts/token-budget.js";
 import { isSplit, rootPath, secondaryRootDirs, type ProjectRoot } from "../target-roots.js";
 import type { CloneMapping, TargetConventions } from "../types.js";
 
@@ -47,7 +48,9 @@ the project still builds, and report honestly.
 You cannot edit any file. Do not attempt to fix what you find; your job is the
 verdict, and someone else acts on it. If you cannot determine a build command
 at all, report ok=false with the reason — that is an honest "unknown", and a
-run that could not be checked must not be reported as one that passed.`;
+run that could not be checked must not be reported as one that passed.
+
+${TOKEN_BUDGET_RULES}`;
 
 const BUILD_SCHEMA = {
   type: "object",
@@ -89,8 +92,7 @@ export async function verifyCloneBuild(
       behavior: "deny",
       message: `Tool "${toolName}" is not permitted in the Clone Build stage — it reports, it does not fix.`,
     }),
-    model: config.model,
-    ...limitsOf("cloneBuild"),
+    ...stageOptions("cloneBuild"),
   };
 
   const split = isSplit(roots);

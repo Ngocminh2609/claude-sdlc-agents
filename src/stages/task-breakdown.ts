@@ -1,7 +1,7 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
 import { databasePromptSection } from "../database-scripts.js";
-import { config, limitsOf } from "../config.js";
+import { stageOptions } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { FEATURE_TEST_POLICY } from "../prompts/feature-test-policy.js";
 import { extraDirectories, referencePromptSection } from "../reference-repos.js";
@@ -51,8 +51,7 @@ export async function breakDownTasks(
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
-    model: config.model,
-    ...limitsOf("taskBreakdown"),
+    ...stageOptions("taskBreakdown"),
   };
 
   // Read-only stage: the directory list is enough here, no write guard needed.

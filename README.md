@@ -23,6 +23,11 @@ aidev ui                 # web UI at http://127.0.0.1:4319 (Windows: aidev-ui.cm
 
 `npm test` runs the unit tests (SDK calls mocked). Remove the command with `npm unlink -g claude-sdlc-agents`.
 
+**Models:** each stage has a tier (`MODEL_TIER` in `src/config.ts`).
+- Strong (`claude-opus-5-5`): spec draft, Specs & Arch, design review, clone mapping, SQL check.
+- Standard (`claude-sonnet-5-5`): everything else — project scan, task breakdown, Coding, E2E, clone port/build/tests/fix, SQL propose.
+- Change a tier with `AIDEV_MODEL_STRONG` / `AIDEV_MODEL_STANDARD`. `CLAUDE_MODEL` forces one model on every stage except the SQL check (`AIDEV_SQL_CHECK_MODEL`).
+
 ## New feature
 
 ```bash

@@ -3,10 +3,11 @@ import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runTextQuery } from "../sdk-helpers.js";
 import { isTestFile } from "../test-files.js";
 import { databasePromptSection } from "../database-scripts.js";
-import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
+import { networkExfilBashBlocklist, stageOptions } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
 import { FEATURE_TEST_POLICY } from "../prompts/feature-test-policy.js";
+import { TOKEN_BUDGET_RULES } from "../prompts/token-budget.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { StageError } from "../stage-error.js";
@@ -29,14 +30,7 @@ E2E/QA stage that runs after you. Keep changes scoped to your assigned task.
 If the task description asks for new unit test files, skip that part: the
 rule below wins, and creating a new test file is refused.
 
-TOKEN BUDGET — every turn re-sends your whole context, so the cost of this
-session is roughly (number of turns) x (context size). Work in few, full turns:
-- Batch. Put every independent tool call of a step in ONE response: read all
-  the files you need at once (several Read calls side by side), then write or
-  edit all independent files at once. One call per turn is the expensive way.
-- Read files only with the Read tool, once each. Edit needs a Read anyway, so
-  never cat/head/sed/type a file through Bash as well — that pays for it twice.
-  For a large file, Read only the range you need (offset/limit).
+${TOKEN_BUDGET_RULES}
 - Do not explore. The design, your task and the earlier tasks' summaries name
   the files you need. To find where a symbol, route or table lives, Grep the
   project index (one call) instead of listing folders or searching the tree.
@@ -45,10 +39,6 @@ session is roughly (number of turns) x (context size). Work in few, full turns:
   touch, and no reading of modules it does not concern.
 - Decide technical questions yourself from the code, the index and the design;
   there is no one to ask mid-task.
-- Command output stays in your context for the rest of the session: use quiet
-  flags (mvn -q, npm --silent, gradle -q), pipe long output through
-  "tail -n 60" or grep for the errors, and run the full build once you are done
-  editing rather than after every file.
 
 ${FEATURE_TEST_POLICY}
 
@@ -180,8 +170,7 @@ export async function runCoding(request: CodingRequest): Promise<string> {
     ],
     canUseTool: guardNewTestFiles(guardReferenceRepos(spec.referencePaths, spec.skillCatalog?.readOnlyDirs)),
     systemPrompt: SYSTEM_PROMPT,
-    model: config.model,
-    ...limitsOf("coding"),
+    ...stageOptions("coding"),
   };
 
   // Reference repos and the skills catalog are readable only (canUseTool

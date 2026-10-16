@@ -3,11 +3,6 @@ export const config = {
   // A rejected design stops the run with the reviewer's feedback saved; running
   // again revises that proposal instead of the pipeline looping on its own.
   maxSpecAttempts: 1,
-  model: process.env.CLAUDE_MODEL ?? "claude-sonnet-5",
-  // The SQL optimizer's independent equivalence check (`stages/sql-optimize.ts`)
-  // is what protects the business logic, so it gets a strong model even when
-  // the proposing step runs on a cheaper one. Env: AIDEV_SQL_CHECK_MODEL.
-  sqlCheckModel: process.env.AIDEV_SQL_CHECK_MODEL ?? "claude-opus-5-5",
   playwrightTestCommand: "npx playwright test",
   // The three planning stages get Read/Glob/Grep and throw on exhaustion,
   // which crashes the pipeline outright — maxSpecAttempts only retries a
@@ -132,9 +127,110 @@ export const config = {
 
 export type StageLimitKey = keyof typeof config.maxTurns;
 
-/** A stage's turn and spend caps, for its SDK `Options`. */
-export function limitsOf(stage: StageLimitKey): { maxTurns: number; maxBudgetUsd: number } {
-  return { maxTurns: config.maxTurns[stage], maxBudgetUsd: config.maxBudgetUsd[stage] };
+/**
+ * How a stage's session caches its prompt. Left unset, Claude Code writes a
+ * 1-hour cache on a subscription, and a 1-hour cache write is billed at twice
+ * the input price (5-minute: 1.25x; a read: 0.1x). Measured 2026-10-16:
+ * - "off": a stage with no tools answers in one call, so its cache is written
+ *   and never read. A one-call probe cost $0.21 cached and $0.10 without.
+ * - "5m": across ~60 real stage sessions, consecutive calls were under 5
+ *   minutes apart in every one but a single E2E run, so the cheaper write
+ *   never expired between turns.
+ * - "1h": stages that run whole builds, test suites or app servers in one call;
+ *   an E2E run had three gaps of 6–10 minutes, where a 5-minute cache would be
+ *   re-written in full.
+ */
+type PromptCache = "off" | "5m" | "1h";
+const PROMPT_CACHE: Partial<Record<StageLimitKey, PromptCache>> = {
+  sqlOptimize: "off",
+  sqlCheck: "off",
+  e2e: "1h",
+  cloneBuild: "1h",
+  cloneTests: "1h",
+  cloneTestsRerun: "1h",
+  cloneFix: "1h",
+};
+
+/** The session environment that applies a stage's cache policy (the SDK replaces, not merges, `env`). */
+export function promptCacheEnv(stage: StageLimitKey): Record<string, string | undefined> {
+  const policy = PROMPT_CACHE[stage] ?? "5m";
+  return policy === "off"
+    ? { ...process.env, DISABLE_PROMPT_CACHING: "1" }
+    : { ...process.env, CLAUDE_CODE_PROMPT_CACHE_TTL: policy };
+}
+
+/**
+ * Which model a stage runs on (user decision, 2026-10-16: model per stage
+ * instead of Opus everywhere).
+ * - "strong" (Opus): judgment in few turns whose mistakes every later step
+ *   inherits — the spec draft, the design, its review, the clone file mapping,
+ *   and the SQL equivalence check that protects the business logic.
+ * - "standard" (Sonnet): many turns carrying out a plan that is already
+ *   decided, each checked by plain code afterwards (build check, the E2E
+ *   re-run, coverage/wiring, the SQL check). On the measured 2026-10-15 run
+ *   these stages were $4.80 of $5.44.
+ * A probe of the same uncached prompt on 2026-10-16: Opus 5.5 $0.0209,
+ * Sonnet 5.5 $0.0112, Haiku 5.5 $0.0180 — Haiku is not a cheaper tier here.
+ */
+type ModelTier = "strong" | "standard";
+const MODEL_TIER: Record<StageLimitKey, ModelTier> = {
+  specDraft: "strong",
+  specsArch: "strong",
+  specsArchWithReference: "strong",
+  orchestratorReview: "strong",
+  cloneMapping: "strong",
+  sqlCheck: "strong",
+  referenceInventory: "standard",
+  projectContext: "standard",
+  targetConventions: "standard",
+  taskBreakdown: "standard",
+  coding: "standard",
+  e2e: "standard",
+  clonePort: "standard",
+  cloneBuild: "standard",
+  cloneTests: "standard",
+  cloneTestsRerun: "standard",
+  cloneFix: "standard",
+  sqlOptimize: "standard",
+};
+
+/**
+ * Env overrides, most specific first: AIDEV_SQL_CHECK_MODEL for the SQL check;
+ * CLAUDE_MODEL puts every other stage on one model (its meaning before tiers);
+ * AIDEV_MODEL_STRONG / AIDEV_MODEL_STANDARD replace one tier's model.
+ */
+export function modelOf(stage: StageLimitKey, env: NodeJS.ProcessEnv = process.env): string {
+  if (stage === "sqlCheck" && env.AIDEV_SQL_CHECK_MODEL) return env.AIDEV_SQL_CHECK_MODEL;
+  if (stage !== "sqlCheck" && env.CLAUDE_MODEL) return env.CLAUDE_MODEL;
+  return tierModel(MODEL_TIER[stage], env);
+}
+
+function tierModel(tier: ModelTier, env: NodeJS.ProcessEnv): string {
+  return tier === "strong"
+    ? env.AIDEV_MODEL_STRONG || "claude-opus-5-5"
+    : env.AIDEV_MODEL_STANDARD || "claude-sonnet-5-5";
+}
+
+/** The distinct models a feature/clone run uses, strong tier first — for display. */
+export function modelsInUse(env: NodeJS.ProcessEnv = process.env): string[] {
+  const stages = Object.keys(MODEL_TIER) as StageLimitKey[];
+  const strongFirst = [...stages.filter((s) => MODEL_TIER[s] === "strong"), ...stages.filter((s) => MODEL_TIER[s] !== "strong")];
+  return [...new Set(strongFirst.map((stage) => modelOf(stage, env)))];
+}
+
+/** A stage's model, turn and spend caps, and prompt-cache policy, for its SDK `Options`. */
+export function stageOptions(stage: StageLimitKey): {
+  model: string;
+  maxTurns: number;
+  maxBudgetUsd: number;
+  env: Record<string, string | undefined>;
+} {
+  return {
+    model: modelOf(stage),
+    maxTurns: config.maxTurns[stage],
+    maxBudgetUsd: config.maxBudgetUsd[stage],
+    env: promptCacheEnv(stage),
+  };
 }
 
 // Defense-in-depth for stages that get Bash: the spec/DB content flowing

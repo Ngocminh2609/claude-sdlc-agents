@@ -295,6 +295,8 @@ export interface E2eVerdict {
   summary: string;
   acceptanceCriteria?: AcceptanceCriterionCheck[];
   failedScenarios?: string[];
+  /** How the agent started the whole app, kept in the project map after a pass for the next E2E run. */
+  runRecipe?: string;
   /** The pipeline's own Playwright run (`src/e2e-check.ts`); absent only on a verdict from before it existed. */
   check?: E2eCheck;
 }

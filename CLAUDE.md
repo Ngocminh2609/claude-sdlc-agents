@@ -44,6 +44,27 @@
   at 32.8K tokens of context against 7.7K isolated, re-read on every turn. Do
   not drop it to "inherit the user's setup"; a stage that really needs a tool
   declares it.
+- Each stage's prompt cache is set in `config.ts` (`PROMPT_CACHE`, applied
+  through `stageOptions` as the session `env`). Left unset, Claude Code writes a
+  1-hour cache on a subscription, billed at 2x the input price. Tool-less
+  stages (SQL propose/check) answer in one call, so caching is off; stages
+  whose turns stay under 5 minutes apart use "5m" (1.25x); E2E and the clone
+  build/test/fix stages keep "1h" because one call can run a whole suite. Measured on
+  the same 24.5K-token prompt: $0.198 at 1h, $0.125 at 5m, $0.102 off. The SDK
+  replaces `env` instead of merging it, so `promptCacheEnv` spreads
+  `process.env` — dropping that loses the credentials and PATH.
+- Each stage's model comes from `MODEL_TIER` in `config.ts` through
+  `stageOptions` (user decision, 2026-10-16): Opus for the judgment stages whose
+  mistakes every later step inherits (spec draft, design, review, clone mapping,
+  SQL check), Sonnet for the many-turn stages that carry out a decided plan and
+  are checked by plain code afterwards. A stage never sets `model` itself.
+  Haiku 5.5 is not a cheaper tier: the same uncached prompt cost $0.0180 on it
+  against $0.0112 on Sonnet 5.5 and $0.0209 on Opus 5.5. `CLAUDE_MODEL` keeps
+  its old meaning (one model for every stage) — set, it disables the tiers.
+- Every stage with Bash carries `TOKEN_BUDGET_RULES` (`src/prompts/token-budget.ts`):
+  batch independent calls, Read each file once, quiet and tailed command output.
+  E2E was the most expensive step of every measured run while it lacked them
+  (the same files read 2–3 times, an extra `--repeat-each=3` run).
 - Clone mode (`src/clone-pipeline.ts`) is a second pipeline, not a flag on the
   first. Keep it that way: a port has no design to approve and a feature has no
   file mapping to verify, and merging them would give both a set of stages that
@@ -182,7 +203,10 @@
   by task. The Project Context agent scan runs only when the map has no
   conventions for the current manifest set; otherwise the saved ones are
   reused (relevant files are then looked up in the index). Specs-arch, task
-  breakdown and Coding get the feature list. After each coding task the
+  breakdown and Coding get the feature list. After an E2E pass that the
+  pipeline's own re-run confirmed, the agent's `runRecipe` (how it started the
+  whole app) is kept as `e2e.recipe` and given to the next E2E prompt — working
+  that out again was 15 of 55 turns of a real E2E session. After each coding task the
   pipeline refreshes the project index (plain code) and records what the task
   really wrote (`changedLines`: `path | kind | tags`) — in the map and in
   `CompletedTask.files`, which later tasks get instead of opening the files.
@@ -289,8 +313,8 @@
   the loop guard (`src/loop-guard.ts`: repeat warn/refuse, wrap-up nudge at
   `softCapRatio` of `maxTurns`, Bash output cut to head + tail) attached by
   `isolatedOptions` to every stage with a `maxTurns`; a per-step
-  `maxBudgetUsd` (`limitsOf` in `config.ts` — a new stage takes its turn and
-  spend caps from there, and a missing budget key fails to compile); the run
+  `maxBudgetUsd` (`stageOptions` in `config.ts` — a new stage takes its model,
+  turn and spend caps from there, and a missing budget or tier key fails to compile); the run
   budget (`--max-run-usd`, `src/run-budget.ts`, checked in `StepJournal.run`
   before anything is saved for the step, ends the run `budget-stopped` with
   progress kept); and the feature build check (`src/verify-gate.ts`). The

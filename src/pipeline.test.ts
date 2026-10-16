@@ -211,7 +211,7 @@ describe("runPipeline — project map", () => {
         if (task.id === "task-1") await writeFile(path.join(project, "src", "rooms-api.ts"), "export function listRooms() {}\n");
         return "implemented";
       });
-      runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+      runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good", runRecipe: "npm run dev on E2E_PORT" });
 
       await runPipeline({
         spec: { ...spec, projectPath: project, targetRoots: [root], projectIndexes, projectMemory },
@@ -225,6 +225,8 @@ describe("runPipeline — project map", () => {
       const saved = await loadProjectMemory([root]);
       expect(saved.features[0]).toMatchObject({ status: "done" });
       expect(saved.features[0].tasks[0].files).toEqual(earlier.files);
+      // A passing E2E leaves its start-up recipe for the next run's E2E.
+      expect(saved.e2e?.recipe).toBe("npm run dev on E2E_PORT");
     } finally {
       delete process.env.AIDEV_MEMORY_DIR;
       delete process.env.AIDEV_INDEX_DIR;
@@ -235,7 +237,7 @@ describe("runPipeline — project map", () => {
   it("neither reads nor writes a project map when the run was not given one", async () => {
     reviewSpecs.mockResolvedValue({ decision: "approve", feedback: "" });
     runCoding.mockResolvedValue("implemented");
-    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good" });
+    runE2eTest.mockResolvedValue({ verdict: "pass", summary: "all good", runRecipe: "npm run dev" });
 
     // AIDEV_MEMORY_DIR is unset here: any write would throw (see project-memory.ts) and fail the run.
     const result = await runPipeline({ spec });

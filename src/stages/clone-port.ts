@@ -1,8 +1,9 @@
 import path from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, networkExfilBashBlocklist, limitsOf } from "../config.js";
+import { networkExfilBashBlocklist, stageOptions } from "../config.js";
 import { CODE_QUALITY_RULES } from "../prompts/code-quality.js";
+import { TOKEN_BUDGET_RULES } from "../prompts/token-budget.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { runtimePortsPromptSection } from "../prompts/runtime-ports.js";
 import { StageError } from "../stage-error.js";
@@ -97,6 +98,8 @@ the file is normally generated and which command regenerates it.
 Never create, edit or delete anything inside a reference repository. Every file
 you write goes into the target project (the current working directory).
 
+${TOKEN_BUDGET_RULES}
+
 The rules below apply to what you write, with one exception: where the source
 file and the target project's conventions disagree on formatting, follow the
 TARGET project.
@@ -168,8 +171,7 @@ export async function portCloneGroup(request: ClonePortRequest): Promise<ClonePo
     // and writable.
     additionalDirectories: withSkillDirs(extraDirectories(clone.referencePaths, roots), clone.skillCatalog),
     systemPrompt: SYSTEM_PROMPT,
-    model: config.model,
-    ...limitsOf("clonePort"),
+    ...stageOptions("clonePort"),
   };
   withIndexAccess(options, clone.projectIndexes);
 
@@ -256,6 +258,8 @@ failed: the build, the unit tests, or both. Fix the PORTED CODE so they pass.
 
 Never create, edit or delete anything inside a reference repository.
 
+${TOKEN_BUDGET_RULES}
+
 ${CODE_QUALITY_RULES}`;
 
 export interface CloneFixRequest {
@@ -298,8 +302,7 @@ export async function fixCloneFailures(request: CloneFixRequest): Promise<string
     },
     additionalDirectories: withSkillDirs(extraDirectories(clone.referencePaths, roots), clone.skillCatalog),
     systemPrompt: FIX_PROMPT,
-    model: config.model,
-    ...limitsOf("cloneFix"),
+    ...stageOptions("cloneFix"),
   };
   withIndexAccess(options, clone.projectIndexes);
 

@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, limitsOf } from "../config.js";
+import { stageOptions } from "../config.js";
 import { metadataStandardsPromptSection } from "../metadata-standards.js";
 import { skillCatalogPromptSection, withSkillDirs } from "../skills-catalog.js";
 import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
@@ -41,8 +41,7 @@ export async function reviewSpecs(spec: SpecInput, proposal: string): Promise<Re
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
-    model: config.model,
-    ...limitsOf("orchestratorReview"),
+    ...stageOptions("orchestratorReview"),
   };
 
   // The reviewer checks the proposal's claims against the code itself, so it

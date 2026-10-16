@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { runStructuredQuery } from "../sdk-helpers.js";
-import { config, limitsOf } from "../config.js";
+import { stageOptions } from "../config.js";
 import { indexPromptSection, withIndexAccess } from "../project-index.js";
 import { rootsOf, secondaryRootDirs, targetRootsPromptSection } from "../target-roots.js";
 import type { ProjectContext, SpecInput } from "../types.js";
@@ -97,8 +97,7 @@ export async function inventoryProjectContext(spec: SpecInput): Promise<ProjectC
   const options: Options = {
     systemPrompt: SYSTEM_PROMPT,
     allowedTools: ["Read", "Glob", "Grep"],
-    model: config.model,
-    ...limitsOf("projectContext"),
+    ...stageOptions("projectContext"),
   };
 
   // Separate BE/FE folders: both are the project, so both are scanned. The

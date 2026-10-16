@@ -116,66 +116,36 @@ const hasMonitor = (name) => MONITOR_TABS.includes(name);
 // --- Wording ---------------------------------------------------------------
 
 const STAGE_TEXT = {
-  "sql-optimize": {
-    label: "Tối ưu SQL",
-    tip: "Đọc file SQL, viết lại để giảm tải và thời gian chạy mà vẫn ra đúng kết quả cũ, ghi ra <tên>_optimized.sql cạnh file gốc.",
-  },
-  "spec-draft": {
-    label: "Sinh spec từ yêu cầu",
-    tip: "Đọc dự án đích (chỉ đọc, không sửa file) rồi viết spec theo khung: bối cảnh, yêu cầu, ràng buộc, tiêu chí nghiệm thu, câu hỏi mở.",
-  },
-  inventory: {
-    label: "1. Kiểm kê repo mẫu",
-    tip: "Quét repo mẫu một lần, lập danh sách file cần clone cho các giai đoạn sau. Bỏ qua khi không khai báo repo mẫu.",
-  },
-  "specs-arch": { label: "2. Thiết kế & kiến trúc", tip: "Đọc spec và mã nguồn, đề xuất phương án." },
-  review: {
-    label: "3. Duyệt thiết kế",
-    tip: "Một AI khác review phương án, tối đa 3 lần. Lỗi nhỏ đã rõ cách sửa thì duyệt kèm yêu cầu sửa, chỉ reject khi cần thiết kế lại.",
-  },
-  tasks: { label: "4. Chia việc", tip: "Cắt thiết kế đã duyệt thành các task nhỏ." },
-  coding: { label: "5. Viết code & unit test", tip: "Làm lần lượt từng task." },
-  e2e: {
-    label: "6. Kiểm thử E2E",
-    tip: "AI viết test Playwright theo tiêu chí nghiệm thu, rồi hệ thống tự chạy lại toàn bộ test với bộ canh API: API nào trả 5xx, lỗi mạng, 4xx không khai báo, hoặc trang lỗi JS đều làm test trượt. Lưu trace, ảnh, video từng test để xem lại ở tab Lịch sử.",
-  },
+  "sql-optimize": { label: "Tối ưu SQL", tip: "Viết lại SQL nhanh hơn, giữ nguyên kết quả → <tên>_optimized.sql." },
+  "spec-draft": { label: "Sinh spec", tip: "Đọc dự án (không sửa) rồi viết spec." },
+  inventory: { label: "1. Đọc dự án", tip: "Quét dự án đích (và repo mẫu nếu có); bỏ qua khi đã có trong bản đồ dự án." },
+  "specs-arch": { label: "2. Thiết kế", tip: "Đọc spec và code, đề xuất phương án." },
+  review: { label: "3. Duyệt thiết kế", tip: "AI khác review phương án." },
+  tasks: { label: "4. Chia việc", tip: "Cắt thiết kế thành task nhỏ." },
+  coding: { label: "5. Viết code", tip: "Từng task, build check sau mỗi task." },
+  e2e: { label: "6. E2E", tip: "Playwright theo tiêu chí nghiệm thu; trace/ảnh/video ở tab Lịch sử." },
 
-  locate: { label: "1. Truy tìm", tip: "Lục repo mẫu tìm mọi file thuộc tính năng này: SQL, BE, FE." },
-  conventions: {
-    label: "2. Đọc dự án đích",
-    tip: "Đọc cấu trúc dự án đích: layout module, package gốc, quy ước FE và SQL.",
-  },
-  mapping: {
-    label: "3. Lập bảng ánh xạ",
-    tip: "Quyết định từng file nguồn đi đâu trong dự án đích và phải đổi những gì.",
-  },
-  port: { label: "4. Port code", tip: "Ghi từng nhóm file sang dự án đích theo bảng ánh xạ." },
-  coverage: {
-    label: "5. Kiểm phủ",
-    tip: "Đối chiếu bằng code: mỗi dòng trong bảng ánh xạ đã có file thật trên đĩa chưa.",
-  },
-  wiring: {
-    label: "6. Kiểm nối FE↔BE",
-    tip: "Đối chiếu bằng code: mọi import trong file FE vừa port có trỏ tới file thật không, và mọi API FE gọi có controller BE nào map không. Chạy cả khi bỏ qua build.",
-  },
-  build: { label: "7. Kiểm biên dịch", tip: "Build lại dự án đích; chỉ lỗi ở file vừa port (hoặc do chúng gây ra) mới tính là lỗi." },
-  tests: {
-    label: "8. Unit test",
-    tip: "Viết và chạy unit test CRUD: BE (controller qua MockMvc, service với Mockito) và FE (mỗi hàm API gọi đúng URL/method của BE). Test fail → agent sửa code (không được sửa test), rồi chạy lại build + test, tối đa 2 vòng.",
-  },
+  locate: { label: "1. Truy tìm", tip: "Tìm file SQL/BE/FE của tính năng trong repo mẫu." },
+  conventions: { label: "2. Đọc dự án đích", tip: "Cấu trúc module, package, quy ước." },
+  mapping: { label: "3. Bảng ánh xạ", tip: "File nguồn nào đi đâu, đổi gì." },
+  port: { label: "4. Port code", tip: "Ghi từng nhóm file theo bảng ánh xạ." },
+  coverage: { label: "5. Kiểm phủ", tip: "Mỗi dòng ánh xạ đã có file thật chưa." },
+  wiring: { label: "6. Kiểm nối FE↔BE", tip: "Import và API FE gọi có trỏ tới đích thật không." },
+  build: { label: "7. Build", tip: "Chỉ lỗi do file vừa port mới tính." },
+  tests: { label: "8. Unit test", tip: "Test CRUD BE + FE; fail thì sửa code, tối đa 2 vòng." },
 };
 
 const STATUS_TEXT = {
   idle: "chưa chạy",
   running: "đang chạy",
   done: "hoàn tất",
-  "escalated-specs": "dừng — thiết kế chưa được duyệt",
-  "escalated-e2e": "dừng — E2E chưa đạt",
+  "escalated-specs": "thiết kế chưa duyệt",
+  "escalated-e2e": "E2E chưa đạt",
   incomplete: "chưa trọn vẹn",
   errored: "lỗi",
-  "progress-kept": "dừng — giữ tiến độ cũ",
-  "budget-stopped": "dừng — chạm ngân sách",
-  "needs-answers": "dừng — chờ anh trả lời câu hỏi nghiệp vụ",
+  "progress-kept": "giữ tiến độ cũ",
+  "budget-stopped": "chạm ngân sách",
+  "needs-answers": "chờ trả lời",
   stopped: "đã dừng",
   unknown: "không rõ",
 };
@@ -207,67 +177,53 @@ const flowOfMode = (mode) => (mode === "spec" ? "feature" : mode);
  */
 const NEXT_STEPS = {
   feature: {
-    done: "E2E đã đạt. Bước tiếp theo: mở thư mục dự án, chạy <code>git diff</code> để xem AI đã sửa gì, tự review rồi commit.",
-    "escalated-specs":
-      "Bên duyệt từ chối thiết kế (mỗi lần chạy chỉ thiết kế 1 vòng, không tự lặp). Code <strong>chưa bị đụng tới</strong>. Tiến độ thiết kế đã lưu: bấm Chạy lại với cùng spec sẽ <strong>sửa tiếp từ bản thiết kế cuối</strong> theo phản hồi, không làm lại từ đầu. Nếu phản hồi cho thấy spec còn mơ hồ, sửa spec rồi tick \"Chạy lại từ đầu\".",
-    "escalated-e2e":
-      "E2E chưa đạt — hệ thống <strong>dừng ngay, không tự code lại từ task đầu</strong>. Code đã viết <strong>vẫn nằm trên đĩa, không bị hoàn tác</strong>. Bước tiếp theo: xem kết quả bên dưới để biết kịch bản/tiêu chí nào trượt, sửa (hoặc làm rõ spec) rồi chạy lại — tiến độ đã lưu, chạy lại sẽ vào thẳng bước E2E.",
-    errored:
-      "Pipeline dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở giai đoạn/task nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Tiến độ đã lưu: bấm Chạy lại với cùng spec sẽ <strong>tiếp tục từ chỗ dừng</strong>, bỏ qua thiết kế và các task đã xong.",
+    done: "Xem <code>git diff</code>, review rồi commit.",
+    "escalated-specs": "Code chưa bị đụng tới. Chạy lại để sửa tiếp thiết kế, hoặc làm rõ spec rồi chạy lại từ đầu.",
+    "escalated-e2e": "Code vẫn trên đĩa. Xem tiêu chí trượt bên dưới, sửa rồi chạy lại — vào thẳng E2E.",
+    errored: "Xem lý do bên dưới. Chạy lại để tiếp từ chỗ dừng.",
     "progress-kept":
-      "Có tiến độ đã lưu nhưng <strong>không khớp</strong> với lần chạy này (spec, DB, thư mục, reference, metadata standards hoặc skill đã đổi), hoặc file của các task đã xong không còn trên đĩa. Hệ thống <strong>dừng ngay, không tốn token, không làm lại</strong> và giữ nguyên tiến độ cũ. Hoàn tác thay đổi rồi Chạy lại để tiếp tục; hoặc tick \"Chạy lại từ đầu\" nếu thật sự muốn bỏ tiến độ cũ.",
-    "budget-stopped":
-      "Lần chạy đã chạm <strong>ngân sách tối đa</strong> anh đặt và dừng <strong>trước</strong> bước AI kế tiếp — không bước nào bị bỏ dở. Tiến độ đã lưu: bấm Chạy lại với cùng spec (tăng ngân sách hoặc để trống) sẽ <strong>đi tiếp từ đúng bước đó</strong>.",
-    "needs-answers":
-      "Thiết kế cần <strong>quyết định nghiệp vụ</strong> mà spec và code không trả lời được (danh sách câu hỏi ở kết quả bên dưới). Code <strong>chưa bị đụng tới</strong>. Ghi câu trả lời vào ô \"Trả lời câu hỏi nghiệp vụ\" rồi bấm Chạy lại với cùng spec — bản thiết kế đã lưu sẽ được <strong>sửa theo câu trả lời</strong>, không làm lại từ đầu.",
-    stopped:
-      "Anh đã bấm Dừng. Các file AI đã ghi vào dự án <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án. Bấm Chạy lại với cùng spec sẽ tiếp tục từ task đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
+      "Tiến độ cũ không khớp lần chạy này (spec, DB, thư mục… đã đổi). Hoàn tác rồi chạy lại, hoặc tick <em>Chạy lại từ đầu</em>.",
+    "budget-stopped": "Tăng ngân sách (hoặc để trống) rồi chạy lại — đi tiếp từ đúng bước đó.",
+    "needs-answers": "Trả lời các câu hỏi bên dưới vào ô <em>Trả lời câu hỏi nghiệp vụ</em>, rồi chạy lại.",
+    stopped: "File đã ghi không bị hoàn tác (<code>git status</code>). Chạy lại để tiếp từ task đang dở.",
   },
   clone: {
-    done: "Đã port đủ file, nối FE↔BE ổn, build và unit test qua (trừ bước anh chọn bỏ qua). Bước tiếp theo: mở thư mục dự án đích, chạy <code>git diff</code>, liếc lại bảng ánh xạ trong báo cáo (nhất là các dòng đánh dấu không chắc chắn) rồi commit.",
-    incomplete:
-      "Còn thiếu: có file trong bảng ánh xạ chưa được ghi ra, nối FE↔BE hỏng, hoặc build/unit test không qua. Code đã port <strong>vẫn nằm trên đĩa</strong>. Mở báo cáo xem đúng chỗ thiếu, hoàn thiện nốt, rồi bấm Chạy clone lại với cùng thiết lập — bảng ánh xạ và các nhóm đã port được dùng lại, chỉ chạy lại phần kiểm tra.",
-    errored:
-      "Clone dừng giữa chừng và <strong>không tự chạy lại</strong>. Kết quả bên dưới nói rõ dừng ở nhóm file nào và vì sao (ví dụ <code>rate_limit</code> — chờ hạn mức tài khoản reset rồi chạy lại). Các nhóm đã port vẫn nằm trên đĩa và tiến độ đã lưu: bấm Chạy clone lại với cùng thiết lập sẽ <strong>tiếp tục từ nhóm đang dở</strong>, dùng lại bảng ánh xạ.",
-    "budget-stopped":
-      "Lần clone đã chạm <strong>ngân sách tối đa</strong> anh đặt và dừng <strong>trước</strong> bước AI kế tiếp. Các nhóm đã port vẫn trên đĩa, tiến độ đã lưu: bấm Chạy clone lại (tăng ngân sách hoặc để trống) sẽ <strong>đi tiếp từ đúng bước đó</strong>.",
-    stopped:
-      "Anh đã bấm Dừng. Các file đã port <strong>không bị hoàn tác</strong> — kiểm tra bằng <code>git status</code> trong thư mục dự án đích. Bấm Chạy clone lại với cùng thiết lập sẽ tiếp tục từ nhóm đang dở; tick \"Chạy lại từ đầu\" nếu muốn làm lại sạch.",
+    done: "Xem <code>git diff</code> và bảng ánh xạ trong báo cáo, rồi commit.",
+    incomplete: "Code vẫn trên đĩa. Xem chỗ thiếu trong báo cáo, sửa rồi chạy lại — chỉ chạy lại phần kiểm tra.",
+    errored: "Xem lý do bên dưới. Chạy lại để tiếp từ nhóm đang dở.",
+    "budget-stopped": "Tăng ngân sách (hoặc để trống) rồi chạy lại — đi tiếp từ đúng bước đó.",
+    stopped: "File đã port không bị hoàn tác (<code>git status</code>). Chạy lại để tiếp từ nhóm đang dở.",
   },
   spec: {
-    done: "Đã sinh spec và điền vào bước 3 — <strong>chưa có code nào được viết</strong>. Mở file spec ở bước 3 bằng trình soạn thảo: đọc kỹ, sửa chỗ sai, trả lời mục <em>Câu hỏi mở</em> và kiểm các chỗ ghi <em>(giả định)</em>. Xong thì làm tiếp bước 4 và 5.",
-    errored:
-      "Sinh spec không thành công, <strong>không có file nào bị sửa</strong>. Kết quả bên dưới ghi lý do (ví dụ <code>rate_limit</code> — chờ hạn mức reset). Có thể viết rõ hơn yêu cầu rồi bấm Sinh spec lại.",
-    stopped: "Anh đã dừng việc sinh spec. Không có file nào bị sửa.",
+    done: "Spec đã điền vào ô Spec. <strong>Đọc và sửa file</strong> (nhất là <em>Câu hỏi mở</em>, <em>(giả định)</em>) trước khi chạy.",
+    errored: "Không có file nào bị sửa. Xem lý do bên dưới.",
+    stopped: "Không có file nào bị sửa.",
   },
   sql: {
-    done: "Đã ghi file <code>_optimized.sql</code> cạnh file gốc (file gốc giữ nguyên). Mở file: phần đầu là chú thích liệt kê từng thay đổi, các điểm cần kiểm (\"Check before use\") và index đề xuất. <strong>So sánh với bản gốc và chạy thử trên dữ liệu thật trước khi dùng.</strong>",
-    errored:
-      "Tối ưu không thành công, <strong>không có file nào được ghi</strong>. Kết quả bên dưới ghi lý do (file quá lớn, file rỗng, hoặc <code>rate_limit</code> — chờ hạn mức reset rồi chạy lại).",
-    stopped: "Anh đã dừng. Không có file nào được ghi.",
-    "budget-stopped":
-      "Đã chạm <strong>ngân sách tối đa</strong>: các phần đã tối ưu xong vẫn được ghi vào file <code>_optimized.sql</code>, các phần (hoặc file) chưa tới <strong>giữ nguyên như bản gốc</strong> — xem cảnh báo ở đầu file. Chạy lại với ngân sách cao hơn (hoặc để trống) để tối ưu nốt.",
+    done: "Đã ghi <code>_optimized.sql</code>. Đầu file liệt kê thay đổi và điểm cần kiểm. <strong>Chạy thử trước khi dùng.</strong>",
+    errored: "Không có file nào được ghi. Xem lý do bên dưới.",
+    stopped: "Không có file nào được ghi.",
+    "budget-stopped": "Phần đã xong vẫn được ghi, phần còn lại giữ nguyên. Tăng ngân sách rồi chạy lại.",
   },
 };
 
 const RUN_ERROR_TEXT = {
-  busy: () => "Tab này đang có một lần chạy. Bấm Dừng để kết thúc nó trước khi chạy lần mới.",
-  "busy-other-pipeline": (detail) =>
-    `Luồng ${FLOW_TEXT[detail] ?? detail} đang chạy và ghi vào thư mục dự án — chờ nó xong hoặc dừng nó ở tab của nó.`,
+  busy: () => "Tab này đang chạy. Bấm Dừng trước.",
+  "busy-other-pipeline": (detail) => `${FLOW_TEXT[detail] ?? detail} đang chạy — chờ xong hoặc dừng ở tab đó.`,
   "spec-not-found": (detail) => `Không tìm thấy file spec: ${detail}`,
   "project-not-found": (detail) => `Không tìm thấy thư mục dự án: ${detail}`,
   "schema-not-found": (detail) => `Không tìm thấy file schema: ${detail}`,
   "reference-not-found": (detail) => `Không tìm thấy thư mục repo mẫu: ${detail}`,
   "reference-required": () => "Chế độ clone bắt buộc phải có repo mẫu.",
   "what-required": () => "Nhập tên tính năng cần clone.",
-  "db-connection-required": () => "Anh chọn “đã có database sẵn” thì phải nhập chuỗi kết nối.",
+  "db-connection-required": () => "Nhập chuỗi kết nối DB.",
   "request-required": () => "Mô tả yêu cầu trước khi bấm Sinh spec.",
   "spec-path-required": () => "Chưa có đường dẫn để lưu spec.",
   "spec-exists": (detail) => `File spec đã tồn tại: ${detail}`,
   "sql-file-not-found": (detail) => `Không tìm thấy file SQL: ${detail}`,
   "sql-optimized-exists": (detail) => `File kết quả đã có: ${detail}`,
   "plan-not-found": (detail) => `Không tìm thấy file/thư mục execution plan: ${detail}`,
-  "sql-folder-required": () => "Có chuỗi kết nối DB thì phải chọn thư mục SQL ở bước 1 — script tạo bảng được lưu và chạy từ đó.",
+  "sql-folder-required": () => "Dùng chuỗi kết nối DB thì cần chọn thư mục SQL.",
 };
 
 let appConfig = null;
@@ -449,8 +405,8 @@ const FLOW_INPUTS_FILLED = {
 };
 
 const FLOW_MISSING_HINT = {
-  feature: "Điền thư mục BE/FE, file spec (bước 3), thư mục SQL nếu có chuỗi kết nối DB, và tick ô xác nhận",
-  clone: "Điền thư mục BE/FE đích, từ khoá tính năng, repo mẫu (BE/FE) và tick ô xác nhận",
+  feature: "Cần: BE/FE, spec, thư mục SQL (nếu dùng DB) và tick commit/stash",
+  clone: "Cần: BE/FE đích, từ khoá, repo mẫu và tick commit/stash",
 };
 
 /**
@@ -467,11 +423,7 @@ function syncRunButtons() {
     const hasTarget = form.projectBe.value.trim() || form.projectFe.value.trim();
     const ready = hasTarget && FLOW_INPUTS_FILLED[flow]() && form.precheck.checked && !running;
     form.runStart.disabled = !ready;
-    form.runStart.title = ready
-      ? "Bắt đầu chạy"
-      : running
-        ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
-        : FLOW_MISSING_HINT[flow];
+    form.runStart.title = ready ? "Bắt đầu chạy" : running ? "Đang có một lần chạy" : FLOW_MISSING_HINT[flow];
   }
 
   // Drafting only reads the project, so it needs no commit/stash tick.
@@ -485,8 +437,8 @@ function syncRunButtons() {
   el.specDraftStart.title = canDraft
     ? "AI đọc dự án và sinh spec — chưa viết code"
     : running
-      ? "Đang có một lần chạy — xem khối Tiến trình bên dưới"
-      : "Điền thư mục BE/FE ở bước 1, thư mục lưu spec và yêu cầu";
+      ? "Đang có một lần chạy"
+      : "Cần: BE/FE, thư mục lưu và yêu cầu";
 
   // Optimizing writes only a new _optimized file next to the original, so it needs no commit/stash tick either.
   // A test database must be confirmed as one: every step runs on it (rolled back, but still run).
@@ -498,7 +450,7 @@ function syncRunButtons() {
   el.sqlStart.title = canOptimize
     ? "AI đọc file SQL và ghi bản tối ưu ra file mới"
     : sqlRunning
-      ? "Đang có một lần tối ưu SQL — xem khối Tiến trình bên dưới"
+      ? "Đang có một lần tối ưu SQL"
       : usesDb
         ? "Tick xác nhận đây là DB thử nghiệm"
         : "Chọn file SQL trước";
@@ -585,7 +537,7 @@ function renderPresets() {
   for (const flow of FLOWS) {
     const select = forms[flow].presetSelect;
     const selected = select.value;
-    select.innerHTML = '<option value="">— Chọn —</option>';
+    select.innerHTML = '<option value="">Thiết lập đã lưu…</option>';
     for (const preset of presets.filter((p) => (p.mode ?? "feature") === flow)) {
       const option = document.createElement("option");
       option.value = preset.id;
@@ -981,7 +933,7 @@ function useFinishedDraft(state) {
   el.specPath.value = state.specPath;
   saveForm();
   syncRunButtons();
-  el.specDraftResult.innerHTML = `✔ Đã sinh <code>${escapeHtml(state.specPath)}</code> và điền vào bước 3. Mở file bằng trình soạn thảo để đọc lại trước khi chạy.`;
+  el.specDraftResult.innerHTML = `✔ Đã sinh <code>${escapeHtml(state.specPath)}</code> — đọc lại trước khi chạy.`;
   el.specDraftResult.classList.remove("hidden");
 }
 
@@ -1048,6 +1000,8 @@ function renderState(state) {
   el.runStop.disabled = !running;
   syncRunButtons();
   if (running) for (const flow of FLOWS) forms[flow].runError.classList.add("hidden");
+  // The answers box sits under the collapsed options; open it when it is the next thing to fill.
+  if (state.mode === "feature" && state.status === "needs-answers") $("feature-more").open = true;
 
   if (state.startedAt) {
     const started = new Date(state.startedAt).toLocaleTimeString("vi-VN");
@@ -1087,7 +1041,7 @@ function renderRunSubject(state) {
   const rivalRunning = rival !== null && isRunning(rival);
   el.runElsewhere.classList.toggle("hidden", !rivalRunning);
   if (rivalRunning) {
-    el.runElsewhere.innerHTML = `Luồng <strong>${escapeHtml(FLOW_TEXT[rival])}</strong> đang chạy ở tab của nó và ghi vào thư mục dự án — nút chạy của tab này bị khoá tới khi lần đó xong hoặc bị dừng. Tối ưu SQL không bị ảnh hưởng.`;
+    el.runElsewhere.innerHTML = `<strong>${escapeHtml(FLOW_TEXT[rival])}</strong> đang chạy — tab này khoá tới khi nó xong.`;
   }
 }
 
@@ -1148,7 +1102,7 @@ applyProgressView();
 function renderProgressMap(state) {
   if (progressView !== "map") return;
   if (!hasRun(state) || !state.mindMap) {
-    el.mindmap.innerHTML = `<div class="mindmap-empty">Sơ đồ sẽ hiện khi bắt đầu chạy.</div>`;
+    el.mindmap.innerHTML = `<div class="mindmap-empty">Chưa chạy.</div>`;
     return;
   }
   const spent = state.usage?.costUsd ?? 0;
@@ -1191,7 +1145,7 @@ function renderResult(state) {
 
   const guidance = NEXT_STEPS[state.mode]?.[state.status] ?? "";
   const report = state.logRunId
-    ? `<p class="result-report">Báo cáo đầy đủ: <a href="#" data-run="${escapeHtml(state.logRunId)}">${escapeHtml(state.logRunId)}</a></p>`
+    ? `<p class="result-report"><a href="#" data-run="${escapeHtml(state.logRunId)}">Xem báo cáo →</a></p>`
     : "";
 
   el.result.dataset.status = state.status;
@@ -1202,7 +1156,7 @@ function renderResult(state) {
     ${guidance ? `<p class="result-guidance">${guidance}</p>` : ""}
     ${sqlSteps}
     <details class="result-raw">
-      <summary>Nguyên văn pipeline báo về</summary>
+      <summary>Chi tiết</summary>
       <pre>${escapeHtml(state.finalMessage)}</pre>
     </details>
     ${report}`;
@@ -1222,7 +1176,7 @@ function renderSqlFile({ source, outputPath, verification, plan, error, steps })
   const applied = steps.filter((step) => step.status === "applied").length;
   const head = `${name}<p class="sql-steps-head">${applied}/${steps.length} bước được áp dụng${
     outputPath ? ` — file: <code>${escapeHtml(outputPath)}</code>` : ""
-  }. Mọi dòng không thuộc bước nào giữ nguyên như bản gốc.</p>${
+  }</p>${
     plan ? `<p class="sql-steps-head"><strong>Execution plan:</strong> ${escapeHtml(plan)}</p>` : ""
   }${
     verification ? `<p class="sql-steps-head"><strong>DB thử nghiệm:</strong> ${escapeHtml(verification)}</p>` : ""
@@ -1410,7 +1364,7 @@ el.runList.addEventListener("click", async (event) => {
     await api("/api/runs/delete", { method: "POST", body: JSON.stringify({ id: deleteId }) });
     if (el.runList.querySelector(".run-item.is-active")?.dataset.id === deleteId) {
       el.reportTitle.textContent = "Báo cáo";
-      el.report.innerHTML = '<p class="hint">Chọn một lần chạy ở cột bên trái để xem báo cáo đầy đủ.</p>';
+      el.report.innerHTML = '<p class="hint">Chọn một lần chạy.</p>';
     }
     await loadRuns();
     return;
@@ -1441,7 +1395,7 @@ $("runs-clear").addEventListener("click", async () => {
   if (!confirm("Xóa TOÀN BỘ lịch sử chạy? Không thể hoàn tác.")) return;
   await api("/api/runs/clear", { method: "POST" });
   el.reportTitle.textContent = "Báo cáo";
-  el.report.innerHTML = '<p class="hint">Chọn một lần chạy ở cột bên trái để xem báo cáo đầy đủ.</p>';
+  el.report.innerHTML = '<p class="hint">Chọn một lần chạy.</p>';
   await loadRuns();
 });
 
@@ -1555,15 +1509,12 @@ async function init() {
   stagesByMode = appConfig.stages;
 
   const { apiKey, oauthToken } = appConfig.credentials;
-  const credentialText = apiKey
-    ? "đang dùng ANTHROPIC_API_KEY"
-    : oauthToken
-      ? "đang dùng CLAUDE_CODE_OAUTH_TOKEN"
-      : "chưa có credential trong .env";
+  const credentialText = apiKey ? "API key" : oauthToken ? "OAuth token" : "Thiếu credential trong .env";
   el.topbarMeta.innerHTML = `
-    <span>Model: ${escapeHtml(appConfig.model)}</span>
-    <span class="${apiKey || oauthToken ? "good" : "bad"}">${escapeHtml(credentialText)}</span>
-    <span title="Thư mục cài đặt aidev">${escapeHtml(appConfig.repoRoot)}</span>`;
+    <span title="Model theo bước: thiết kế/duyệt dùng model đầu, còn lại dùng model sau · aidev: ${escapeHtml(appConfig.repoRoot)}">${escapeHtml(
+      (appConfig.models ?? []).map((id) => id.replace(/^claude-/, "")).join(" · "),
+    )}</span>
+    <span class="${apiKey || oauthToken ? "good" : "bad"}">${apiKey || oauthToken ? "● " : ""}${escapeHtml(credentialText)}</span>`;
 
   restoreForm();
   restoreTab();

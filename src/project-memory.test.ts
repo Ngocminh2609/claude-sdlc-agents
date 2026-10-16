@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  e2eRecipePromptSection,
   loadProjectMemory,
+  rememberE2eRecipe,
   manifestKeyOf,
   projectMemoryPromptSection,
   rememberConventions,
@@ -41,6 +43,21 @@ afterEach(async () => {
 });
 
 describe("project memory", () => {
+  it("keeps the latest E2E start-up recipe and hands it to the next E2E prompt", async () => {
+    expect(e2eRecipePromptSection(await loadProjectMemory(roots))).toEqual([]);
+    await rememberE2eRecipe(roots, "old recipe");
+    await rememberE2eRecipe(roots, "FE: playwright.config.ts starts vite on E2E_PORT; BE: java -jar app.jar");
+
+    const section = e2eRecipePromptSection(await loadProjectMemory(roots)).join("\n");
+    expect(section).toContain("How the last passing E2E run started this app");
+    expect(section).toContain("playwright.config.ts starts vite");
+    expect(section).not.toContain("old recipe");
+  });
+
+  it("saves no E2E recipe for an empty answer", async () => {
+    await rememberE2eRecipe(roots, "   ");
+    expect((await loadProjectMemory(roots)).e2e).toBeUndefined();
+  });
   it("reuses conventions only while the build manifests are the ones they were read under", async () => {
     const key = manifestKeyOf([index(roots[0], "m1"), index(roots[1], "m2")], roots);
     expect(key).not.toBeNull();
