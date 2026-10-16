@@ -161,6 +161,12 @@ describe("logic reference guard", () => {
     ).toEqual([]);
   });
 
+  it("does not take the FROM of extract/trim/substring for a table", () => {
+    const before = "WHERE extract(year FROM o.order_date) = 2024 AND trim(both ' ' FROM c.code) = 'A'";
+    expect([...logicReferences(before)].filter((ref) => ref.startsWith("table:"))).toEqual([]);
+    expect(droppedReferences(before, "WHERE o.order_date >= '2024-01-01' AND o.order_date < '2025-01-01' AND trim(both ' ' FROM c.code) = 'A'")).toEqual([]);
+  });
+
   it("does not take a declared variable for a table", () => {
     const loop = "DECLARE r record; n bigint; BEGIN FOR r IN SELECT o.id FROM orders o LOOP SELECT count(*) INTO n FROM lines l WHERE l.id = r.id; END LOOP; END";
     const setBased = "BEGIN RETURN QUERY SELECT o.id, (SELECT count(*) FROM lines l WHERE l.id = o.id) FROM orders o; END";

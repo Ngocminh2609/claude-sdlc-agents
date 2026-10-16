@@ -78,6 +78,8 @@ export interface SqlFileView {
   dialect?: string;
   /** How the steps were measured on the test database, or why they were not. */
   verification?: string;
+  /** The execution plan read for this file, and its format. */
+  plan?: string;
   warnings?: string[];
   /** Why the file was not optimized at all. */
   error?: string;
@@ -99,6 +101,7 @@ export interface SqlStepView {
   rejectedBecause?: string;
   verdict?: string;
   verdictReason?: string;
+  planEvidence?: string;
   /** Measured on the test database: same results or not, and the time before/after this step. */
   db?: { verdict: string; detail: string; msBefore: number; msAfter: number };
 }
@@ -187,6 +190,7 @@ function parseSqlStepsEvent(candidate: Record<string, unknown>): PipelineSqlStep
       outputPath: typeof raw.outputPath === "string" ? raw.outputPath : null,
       ...optional("dialect"),
       ...optional("verification"),
+      ...optional("plan"),
       ...optional("error"),
       ...(Array.isArray(raw.warnings) ? { warnings: raw.warnings.filter((w): w is string => typeof w === "string") } : {}),
       steps,
@@ -229,6 +233,7 @@ function parseSqlSteps(value: unknown): SqlStepView[] | null {
       ...(text(raw.rejectedBecause) ? { rejectedBecause: raw.rejectedBecause as string } : {}),
       ...(text(raw.verdict) ? { verdict: raw.verdict as string } : {}),
       ...(text(raw.verdictReason) ? { verdictReason: raw.verdictReason as string } : {}),
+      ...(text(raw.planEvidence) ? { planEvidence: raw.planEvidence as string } : {}),
       ...(isDbCheck(raw.db) ? { db: raw.db } : {}),
     });
   }

@@ -29,6 +29,7 @@ const el = {
   sqlDialect: $("sql-dialect"),
   sqlInstructions: $("sql-instructions"),
   sqlSchema: $("sql-schema"),
+  sqlPlan: $("sql-plan"),
   sqlVerifyDb: $("sql-verify-db"),
   sqlTestCalls: $("sql-test-calls"),
   sqlTestDbRow: $("sql-test-db-row"),
@@ -260,6 +261,7 @@ const RUN_ERROR_TEXT = {
   "spec-exists": (detail) => `File spec đã tồn tại: ${detail}`,
   "sql-file-not-found": (detail) => `Không tìm thấy file SQL: ${detail}`,
   "sql-optimized-exists": (detail) => `File kết quả đã có: ${detail}`,
+  "plan-not-found": (detail) => `Không tìm thấy file/thư mục execution plan: ${detail}`,
   "sql-folder-required": () => "Có chuỗi kết nối DB thì phải chọn thư mục SQL ở bước 1 — script tạo bảng được lưu và chạy từ đó.",
 };
 
@@ -371,6 +373,7 @@ function saveForm() {
       sqlFile: el.sqlFile.value,
       sqlDialect: el.sqlDialect.value,
       sqlSchema: el.sqlSchema.value,
+      sqlPlan: el.sqlPlan.value,
     }),
   );
 }
@@ -399,6 +402,7 @@ function restoreForm() {
     el.sqlFile.value = saved.sqlFile || "";
     el.sqlDialect.value = saved.sqlDialect || "auto";
     el.sqlSchema.value = saved.sqlSchema || "";
+    el.sqlPlan.value = saved.sqlPlan || "";
   } catch {
     // Unreadable storage is not worth failing the page over.
   }
@@ -755,12 +759,18 @@ for (const button of document.querySelectorAll("[data-browse]")) {
       return;
     }
 
-    if (what === "sql-file" || what === "sql-schema") {
-      const field = what === "sql-file" ? el.sqlFile : el.sqlSchema;
+    if (what === "sql-file" || what === "sql-schema" || what === "sql-plan") {
+      const field = what === "sql-file" ? el.sqlFile : what === "sql-schema" ? el.sqlSchema : el.sqlPlan;
       const chosen = await openPicker({
         mode: "file",
-        kind: "markdown",
-        title: what === "sql-file" ? "Chọn file SQL (.sql) — hoặc gõ đường dẫn thư mục vào ô" : "Chọn file schema / DDL",
+        // Plans come as .sqlplan, .xml, .json or .txt.
+        kind: what === "sql-plan" ? "any" : "markdown",
+        title:
+          what === "sql-file"
+            ? "Chọn file SQL (.sql) — hoặc gõ đường dẫn thư mục vào ô"
+            : what === "sql-plan"
+              ? "Chọn file execution plan (.sqlplan, .json, .txt)"
+              : "Chọn file schema / DDL",
         startPath: parentOf(field.value) || parentOf(el.sqlFile.value),
       });
       if (chosen) {
@@ -906,6 +916,7 @@ async function startSqlOptimize(overwrite = false) {
         sqlDialect: el.sqlDialect.value,
         sqlInstructions: el.sqlInstructions.value,
         sqlSchemaPath: el.sqlSchema.value,
+        sqlPlanPath: el.sqlPlan.value,
         sqlVerifyDb: el.sqlVerifyDb.value,
         sqlTestCalls: el.sqlTestCalls.value,
         overwrite,
@@ -926,7 +937,7 @@ el.sqlStart.addEventListener("click", () => startSqlOptimize());
 // The connection string and the test-DB tick are never saved: each run states them again.
 for (const field of [el.sqlVerifyDb, el.sqlTestDbConfirm]) field.addEventListener("input", syncRunButtons);
 el.sqlTestDbConfirm.addEventListener("change", syncRunButtons);
-for (const field of [el.sqlFile, el.sqlDialect, el.sqlSchema]) {
+for (const field of [el.sqlFile, el.sqlDialect, el.sqlSchema, el.sqlPlan]) {
   field.addEventListener("input", () => {
     saveForm();
     syncRunButtons();
@@ -1184,13 +1195,15 @@ const VERDICT_TEXT = {
 };
 
 /** One file of a SQL run: every proposed step in order — the query, before → after, and why it was or was not applied. */
-function renderSqlFile({ source, outputPath, verification, error, steps }) {
+function renderSqlFile({ source, outputPath, verification, plan, error, steps }) {
   const name = `<h4 class="sql-file-name">${escapeHtml(baseName(source))}</h4>`;
   if (error) return `<div class="sql-steps">${name}<p class="error-text">Không tối ưu: ${escapeHtml(error)}</p></div>`;
   const applied = steps.filter((step) => step.status === "applied").length;
   const head = `${name}<p class="sql-steps-head">${applied}/${steps.length} bước được áp dụng${
     outputPath ? ` — file: <code>${escapeHtml(outputPath)}</code>` : ""
   }. Mọi dòng không thuộc bước nào giữ nguyên như bản gốc.</p>${
+    plan ? `<p class="sql-steps-head"><strong>Execution plan:</strong> ${escapeHtml(plan)}</p>` : ""
+  }${
     verification ? `<p class="sql-steps-head"><strong>DB thử nghiệm:</strong> ${escapeHtml(verification)}</p>` : ""
   }`;
   if (!steps.length) return `<div class="sql-steps">${head}<p class="hint">AI không đề xuất bước nào — file kết quả giống bản gốc.</p></div>`;
@@ -1207,6 +1220,7 @@ function renderSqlFile({ source, outputPath, verification, error, steps }) {
           ${escapeHtml(step.title)} ${logic}
         </div>
         <div class="sql-step-row"><strong>Câu truy vấn:</strong> ${escapeHtml(step.statement)}</div>
+        ${step.planEvidence ? `<div class="sql-step-row"><strong>Điểm nóng trong plan:</strong> ${escapeHtml(step.planEvidence)}</div>` : ""}
         ${ok ? "" : `<div class="sql-step-row sql-step-why-not"><strong>Lý do không áp dụng:</strong> ${escapeHtml(step.rejectedBecause ?? "")}</div>`}
         <div class="sql-step-row"><strong>Nhanh hơn vì:</strong> ${escapeHtml(step.why)}</div>
         <div class="sql-step-row"><strong>Kết quả giữ nguyên vì:</strong> ${escapeHtml(step.equivalence)}</div>

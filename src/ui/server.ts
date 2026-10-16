@@ -165,6 +165,7 @@ async function startRun(req: IncomingMessage, res: ServerResponse): Promise<void
       ...(typeof body.sqlVerifyDb === "string" ? { sqlVerifyDb: body.sqlVerifyDb } : {}),
       ...(typeof body.sqlTestCalls === "string" ? { sqlTestCalls: body.sqlTestCalls } : {}),
       ...(typeof body.sqlSchemaPath === "string" ? { sqlSchemaPath: body.sqlSchemaPath } : {}),
+      ...(typeof body.sqlPlanPath === "string" ? { sqlPlanPath: body.sqlPlanPath } : {}),
       request: String(body.request ?? ""),
       overwrite: body.overwrite === true,
       skipBuild: body.skipBuild === true,

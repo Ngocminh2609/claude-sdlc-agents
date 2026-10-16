@@ -127,6 +127,8 @@ export interface ProposedStep {
   why: string;
   /** Why the results and side effects stay the same. */
   equivalence: string;
+  /** The execution-plan hotspot the step addresses, when a plan was given. */
+  planEvidence?: string;
 }
 
 /** The independent check's verdict on one step. */
@@ -261,6 +263,9 @@ export function logicReferences(sql: string): Set<string> {
   // A cursor's FETCH ... FROM cur INTO @var names a cursor and variables, not
   // tables: removing a cursor loop must not read as dropping a table.
   code = code.replace(/\bFETCH\b[^;]*;?/gi, " ");
+  // `extract(year FROM o.d)`, `trim(x FROM s)`, `substring(s FROM 2)`: a FROM
+  // inside these functions is an argument, not a table. Columns stay counted.
+  code = code.replace(/\b(EXTRACT|TRIM|SUBSTRING|POSITION|OVERLAY)\s*\(([^()]*)\)/gi, (call) => call.replace(/\bFROM\b/gi, ","));
   const bare = (name: string) => name.replace(/[[\]"`]/g, "").split(".").pop()?.toLowerCase() ?? "";
   // Variables are not tables: `SELECT count(*) INTO n` (PL/pgSQL, MySQL) names one.
   // Table variables (`DECLARE @r TABLE`) stay tables.
@@ -308,6 +313,7 @@ export function renderOptimizedFile(report: OptimizationReport, sql: string, sou
       "--",
       `-- Step ${step.index}: ${step.title}${step.category === "requested-logic" ? "  [LOGIC CHANGE — requested]" : ""}`,
       `--   Query: ${step.statement}`,
+      ...(step.planEvidence?.trim() ? comment(`Plan hotspot addressed: ${step.planEvidence.trim()}`) : []),
       ...comment(`Faster because: ${step.why}`),
       ...comment(`Same results because: ${step.equivalence}`),
       ...(step.check ? comment(`Independent check: ${step.check.verdict} — ${step.check.reason}`) : []),

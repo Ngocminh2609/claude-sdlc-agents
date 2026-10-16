@@ -181,7 +181,7 @@ export function parseSpecDraftArgs(argv: string[]): SpecDraftArgs {
 }
 
 export const SQL_OPTIMIZE_USAGE =
-  "Usage: aidev sql-optimize --file <path.sql> [--dialect auto|sqlserver|mysql|postgresql] [--instructions <text>] [--verify-db <test-db-connection> [--test-call <sql>]...] [--schema <file>] [--overwrite]   (--file may be a folder: every .sql in it)";
+  "Usage: aidev sql-optimize --file <path.sql> [--dialect auto|sqlserver|mysql|postgresql] [--instructions <text>] [--verify-db <test-db-connection> [--test-call <sql>]...] [--plan <plan-file-or-folder>] [--schema <file>] [--overwrite]   (--file may be a folder: every .sql in it)";
 
 /** `aidev sql-optimize`: write `<name>_optimized.sql` next to one SQL file. */
 export interface SqlOptimizeArgs {
@@ -198,6 +198,8 @@ export interface SqlOptimizeArgs {
   testCalls?: string;
   /** A schema/DDL file describing the real tables. */
   schemaFile?: string;
+  /** An execution plan file — or a folder of them, matched to SQL files by base name. */
+  planPath?: string;
 }
 
 export function parseSqlOptimizeArgs(argv: string[]): SqlOptimizeArgs {
@@ -208,6 +210,7 @@ export function parseSqlOptimizeArgs(argv: string[]): SqlOptimizeArgs {
   let verifyDb: string | undefined;
   let testCalls: string | undefined;
   let schemaFile: string | undefined;
+  let planPath: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case "--instructions":
@@ -225,6 +228,9 @@ export function parseSqlOptimizeArgs(argv: string[]): SqlOptimizeArgs {
         break;
       case "--schema":
         schemaFile = argv[++i];
+        break;
+      case "--plan":
+        planPath = argv[++i];
         break;
       case "--file":
         file = argv[++i];
@@ -250,6 +256,7 @@ export function parseSqlOptimizeArgs(argv: string[]): SqlOptimizeArgs {
     ...(verifyDb?.trim() ? { verifyDb: verifyDb.trim() } : {}),
     ...(testCalls?.trim() ? { testCalls } : {}),
     ...(schemaFile?.trim() ? { schemaFile: schemaFile.trim() } : {}),
+    ...(planPath?.trim() ? { planPath: planPath.trim() } : {}),
   };
 }
 

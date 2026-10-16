@@ -494,6 +494,21 @@
             </div>
           </div>
           <div class="field">
+            <label for="sql-plan">Execution plan <span class="optional">tuỳ chọn — đọc trước tiên</span></label>
+            <div class="row">
+              <input id="sql-plan" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\plans\usp_GetCustomerOrders.sqlplan" />
+              <button class="btn btn-ghost" data-browse="sql-plan">Chọn file…</button>
+            </div>
+            <p class="hint">
+              SQL Server <code>.sqlplan</code> (Save Execution Plan As… trong SSMS, nên là actual plan), PostgreSQL
+              <code>EXPLAIN (ANALYZE, FORMAT JSON)</code>, MySQL <code>EXPLAIN FORMAT=JSON</code> hoặc plan dạng text.
+              Hệ thống tự rút ra điểm nóng (toán tử tốn nhất, quét toàn bảng, ước lượng lệch, chuyển kiểu ngầm, index
+              thiếu) và tối ưu vào đúng chỗ đó trước; mỗi bước ghi rõ nó xử lý điểm nóng nào. Nếu ô File SQL là thư mục,
+              ô này là thư mục plan đặt tên giống file SQL (<code>orders.sql</code> ↔ <code>orders.sqlplan</code>).
+            </p>
+          </div>
+
+          <div class="field">
             <label for="sql-file">File SQL hoặc thư mục (tối ưu mọi file .sql trong đó)</label>
             <div class="row">
               <input id="sql-file" type="text" spellcheck="false" placeholder="Ví dụ: D:\...\SQL\usp_GetCustomerOrders.sql" />

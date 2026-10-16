@@ -89,6 +89,8 @@ export interface RunRequest {
   sqlTestCalls?: string;
   /** SQL mode only: a schema/DDL file. */
   sqlSchemaPath?: string;
+  /** SQL mode only: an execution plan file, or a folder of plans named like the SQL files. */
+  sqlPlanPath?: string;
   dbMode: DbMode;
   /** Only set when dbMode is "connection". Never leaves this process. */
   dbConnection?: string;
@@ -184,7 +186,8 @@ export type RunRejectionCode =
   | "spec-exists"
   | "sql-folder-required"
   | "sql-file-not-found"
-  | "sql-optimized-exists";
+  | "sql-optimized-exists"
+  | "plan-not-found";
 
 /** The CLI flag that names each kind of target folder. */
 const TARGET_FLAG: Record<RootRole, string> = {
@@ -408,6 +411,11 @@ export class PipelineRunner {
     if (dialect !== "auto" && (OPTIMIZE_DIALECTS as string[]).includes(dialect)) args.push("--dialect", dialect);
     if (request.sqlInstructions?.trim()) args.push("--instructions", request.sqlInstructions.trim());
     if (schemaPath) args.push("--schema", schemaPath);
+    const planPath = request.sqlPlanPath?.trim() ? path.resolve(request.sqlPlanPath.trim()) : null;
+    if (planPath) {
+      if (!existsSync(planPath)) throw new RunRequestError(`Execution plan not found: ${planPath}`, "plan-not-found", planPath);
+      args.push("--plan", planPath);
+    }
     const verifyDb = request.sqlVerifyDb?.trim();
     if (verifyDb) {
       args.push("--verify-db", verifyDb);

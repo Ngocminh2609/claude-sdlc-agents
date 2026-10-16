@@ -19,6 +19,7 @@ import {
   writeSqlFile,
   type StepOutcome,
 } from "./sql-file.js";
+import { planFileFor, readPlanFile, type PlanSummary } from "./sql-plan.js";
 import { openProbe, type SqlProbe } from "./sql-probe.js";
 import { applyStepsVerified, parseTestCalls, testPlanFor } from "./sql-verify.js";
 
@@ -51,6 +52,10 @@ export async function runSqlOptimize(args: SqlOptimizeArgs, io: CommandIo): Prom
   const existing = files.map(optimizedPathOf).filter((out) => existsSync(out));
   if (existing.length && !args.overwrite) {
     throw new Error(`${existing.length} output file(s) already exist (${existing[0]}…). Pass --overwrite to replace them.`);
+  }
+  if (args.planPath && !existsSync(path.resolve(args.planPath))) throw new Error(`Execution plan not found: ${path.resolve(args.planPath)}`);
+  if (args.planPath && files.length > 1 && statSync(path.resolve(args.planPath)).isFile()) {
+    throw new Error("One plan file was given for a folder of SQL files: give a folder of plans named like the SQL files (orders.sql ↔ orders.sqlplan).");
   }
   const calls = parseTestCalls(args.testCalls);
   const givenSchema = args.schemaFile ? await readFile(path.resolve(args.schemaFile), "utf-8") : "";
@@ -102,13 +107,31 @@ interface Context {
 async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context, io: CommandIo): Promise<SqlFileView> {
   const outPath = optimizedPathOf(file);
   const base: SqlFileView = { source: file, outputPath: null, steps: [] };
+
+  // 1/4 — the execution plan, when there is one: where the time really goes.
+  const planFile = planFileFor(args.planPath, file);
+  let executionPlan: PlanSummary | null = null;
+  if (planFile) {
+    io.onProgress(`SQL optimize: 1/4 reading the execution plan — ${path.basename(planFile)}`);
+    try {
+      executionPlan = await readPlanFile(planFile);
+      io.onProgress(`SQL optimize: plan read (${executionPlan.format}, ${executionPlan.operators} operator(s)) — hotspots go to the optimizer`);
+    } catch (error) {
+      io.onProgress(`SQL optimize: could not read the plan (${error instanceof Error ? error.message : String(error)}) — continuing without it`);
+    }
+  } else {
+    io.onProgress(`SQL optimize: 1/4 no execution plan${args.planPath ? ` matching ${path.basename(file)}` : ""} — optimizing from the code alone`);
+  }
+
+  // 2/4 — the SQL file itself.
+  io.onProgress(`SQL optimize: 2/4 reading ${path.basename(file)}`);
   const source = await readSqlFile(file);
   if (!source.text.trim()) return { ...base, error: "the file is empty" };
   if (source.text.length > MAX_SQL_CHARS) {
     return { ...base, error: `${source.text.length.toLocaleString("en-US")} characters; the limit is ${MAX_SQL_CHARS.toLocaleString("en-US")} — split it` };
   }
 
-  const detected = args.dialect ?? detectDialect(source.text);
+  const detected = args.dialect ?? executionPlan?.dialect ?? detectDialect(source.text);
   io.onProgress(
     `SQL optimize: ${path.basename(file)} — ${source.text.length.toLocaleString("en-US")} characters, dialect ${
       args.dialect ? `${args.dialect} (chosen)` : (detected ?? "not detected, the model decides")
@@ -128,12 +151,13 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
     dialectChosen: Boolean(args.dialect),
     ...(args.instructions ? { instructions: args.instructions } : {}),
     ...(schema ? { schema } : {}),
+    ...(executionPlan ? { plan: executionPlan.text } : {}),
   };
 
   let proposal;
   let checks;
   try {
-    io.onProgress("SQL optimize: proposing steps — each names its query and the exact code before and after");
+    io.onProgress("SQL optimize: 3/4 optimizing — proposing steps, each naming its query and the exact code before and after");
     proposal = await proposeSqlSteps(input);
     const total = proposal.steps.length;
     io.onProgress(`SQL optimize: ${total} step(s) proposed`);
@@ -191,6 +215,7 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
     warnings: [...(verification ? [`Test database: ${verification}.`] : []), ...proposal.warnings],
     indexSuggestions: proposal.indexSuggestions,
   };
+  io.onProgress(`SQL optimize: 4/4 writing the optimized file`);
   await writeSqlFile(outPath, renderOptimizedFile(report, text, file), source);
   io.onProgress(`SQL optimize: written to ${outPath}`);
   return {
@@ -198,6 +223,7 @@ async function optimizeOne(file: string, args: SqlOptimizeArgs, context: Context
     outputPath: outPath,
     dialect: proposal.dialect,
     ...(verification ? { verification } : {}),
+    ...(planFile ? { plan: executionPlan ? `${path.basename(planFile)} (${executionPlan.format}, ${executionPlan.operators} operator(s))` : `${path.basename(planFile)} (unreadable)` } : {}),
     warnings: proposal.warnings,
     steps: outcomes.map(({ check, db, ...step }) => ({
       ...step,
@@ -270,12 +296,14 @@ async function writeRunRecord(
       `## ${path.basename(view.source)}`,
       "",
       view.error ? `Not optimized: ${view.error}` : `Output: \`${view.outputPath}\` (${view.dialect})`,
+      ...(view.plan ? ["", `Execution plan: ${view.plan}`] : []),
       ...(view.verification ? ["", `Test database: ${view.verification}`] : []),
       ...view.steps.flatMap((step) => [
         "",
         `### Step ${step.index} — ${step.title} — ${step.status === "applied" ? `applied (line ${step.lines?.join(", ")})` : "NOT applied"}`,
         "",
         `- Query: ${step.statement}`,
+        ...(step.planEvidence?.trim() ? [`- Plan hotspot addressed: ${step.planEvidence.trim()}`] : []),
         ...(step.rejectedBecause ? [`- Not applied because: ${step.rejectedBecause}`] : []),
         `- Faster because: ${step.why}`,
         `- Same results because: ${step.equivalence}`,

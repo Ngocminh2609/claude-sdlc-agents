@@ -213,6 +213,21 @@ cầu đổi logic nghiệp vụ") asks for a specific change. Three steps, none
    steps confirmed on 3 calls, 2,625 → 2,211 ms, the trap and the business rules untouched,
    nothing left in the database.
 
+**Execution plan first (optional, `--plan <file-or-folder>`, UI: "Execution plan").** Per file the
+workflow is: 1/4 read the plan → 2/4 read the SQL file → 3/4 optimize (propose, check, guard,
+measure) → 4/4 write the output. The plan is read by plain code (`src/sql-plan.ts`) into its
+hotspots — most expensive operators by own cost/time, full scans, estimates more than 10× off
+the actual rows, implicit conversions, spills, missing indexes — and only that summary goes to
+the model (a raw `.sqlplan` runs to megabytes). Formats: SQL Server showplan XML (`.sqlplan`,
+UTF-16 as SSMS saves it — an *actual* plan is more useful than an estimated one), PostgreSQL
+`EXPLAIN (ANALYZE, FORMAT JSON)`, MySQL `EXPLAIN FORMAT=JSON`, any text plan. The model works the
+hotspots first and each step names the one it addresses ("Plan hotspot addressed", shown in the
+UI, the file header and the report); missing indexes only become commented suggestions. With a
+folder of SQL files, `--plan` is a folder of plans with the same base names (`orders.sql` ↔
+`orders.sqlplan`). Real run (throwaway PostgreSQL, a real EXPLAIN ANALYZE of a report with
+correlated subqueries re-scanning 30,000 rows 63 times): pre-aggregated join, identical results,
+143 → 8.8 ms.
+
 The real schema (columns, NULL-ability, existing indexes) goes to both model calls when given:
 read from the test database's catalog for the tables the file uses, and/or from `--schema
 <ddl-file>`. It unlocks `SELECT *` → the real column list, `NOT IN` → `NOT EXISTS` on a NOT NULL

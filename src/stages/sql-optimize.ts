@@ -59,6 +59,11 @@ PostgreSQL wiki), each only when exactly equivalent:
   one pass can replace.
 - Cursors and row-by-row loops → one set-based statement when the logic maps
   exactly.
+- Correlated subqueries that run once per outer row (a plan shows them with many
+  loops) → one pre-aggregated derived table or CTE joined once (LEFT JOIN, grouped
+  by the correlation key). Mind the empty case: count of no rows is 0, so wrap it
+  in COALESCE(…, 0); sum/min/max/avg of no rows is NULL, so leave those bare.
+  Keep the outer row set exactly as it was (no duplicates from the join).
 - UNION → UNION ALL only when duplicates are impossible by construction.
 - SQL Server: SET NOCOUNT ON at the start of a procedure. Do not add NOLOCK
   (changes results) and do not add a schema prefix the file does not already use
@@ -74,6 +79,15 @@ the table's column order; NOT IN → NOT EXISTS is allowed when the column is NO
 NULL there; never suggest an index that already exists (or is a prefix of one);
 compare against the real column types for implicit conversions. Without it, do
 none of these — warn instead.
+
+When an "Execution plan" section is given, it is where the time really goes:
+work on its hotspots first — the most expensive operators, full scans, estimates
+far off from actual rows, implicit conversions, spills, missing indexes. For each
+step, "planEvidence" names the plan line it addresses (e.g. "Seq Scan on orders,
+62% of time"); leave it empty when the step does not come from the plan. Missing
+indexes the plan reports go to "indexSuggestions" (never into the code), unless
+the schema shows an equivalent index already exists. A plan explains cost; it
+never justifies changing results.
 
 Each step is ONE optimization, reviewed and applied all-or-nothing:
 - "edits": the code changes it needs, applied in order. Each "before" is code
@@ -134,6 +148,7 @@ const PROPOSE_SCHEMA = {
           },
           why: { type: "string" },
           equivalence: { type: "string" },
+          planEvidence: { type: "string" },
         },
         required: ["statement", "category", "title", "edits", "why", "equivalence"],
       },
@@ -174,6 +189,8 @@ export interface SqlOptimizeInput {
   instructions?: string;
   /** Real table definitions and indexes (test database catalog, or a file the person gave). */
   schema?: string;
+  /** The execution plan's hotspots, summarized by plain code (`sql-plan.ts`). */
+  plan?: string;
 }
 
 export interface SqlProposal {
@@ -187,6 +204,10 @@ function optionsFor(systemPrompt: string, stage: "sqlOptimize" | "sqlCheck"): Op
   // The file is in the prompt; there is nothing to read and nothing to run.
   const model = stage === "sqlCheck" ? config.sqlCheckModel : config.model;
   return { systemPrompt, allowedTools: [], model, ...limitsOf(stage) };
+}
+
+function planSection(plan: string | undefined): string[] {
+  return plan?.trim() ? ["", "--- Execution plan (hotspots, read from the person's plan file) ---", plan.trim()] : [];
 }
 
 function schemaSection(schema: string | undefined): string[] {
@@ -207,6 +228,7 @@ export async function proposeSqlSteps(input: SqlOptimizeInput): Promise<SqlPropo
     `File: ${input.fileName}`,
     dialectLine,
     ...requestedSection(input.instructions),
+    ...planSection(input.plan),
     ...schemaSection(input.schema),
     "",
     "--- SQL ---",
